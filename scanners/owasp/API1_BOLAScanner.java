@@ -79,12 +79,11 @@ public class API1_BOLAScanner implements SecurityScanner {
             ));
             vuln.setSeverity(Vulnerability.Severity.HIGH);
             vuln.setEndpoint(String.format("/accounts/%s", accountId));
-            vuln.setEvidence(Map.of(
-                "victimUser", user1,
-                "attackerUser", user2,
-                "accountId", accountId,
-                "endpoint", String.format("%s/accounts/%s", baseUrl, accountId)
-            ));
+            String evidence = String.format(
+                "{\"victimUser\":\"%s\",\"attackerUser\":\"%s\",\"accountId\":\"%s\",\"endpoint\":\"%s\"}",
+                user1, user2, accountId, String.format("%s/accounts/%s", baseUrl, accountId)
+            );
+            vuln.setEvidence(evidence);
 
             vulnerabilities.add(vuln);
             System.out.println("🚨 BOLA УЯЗВИМОСТЬ ОБНАРУЖЕНА!");
