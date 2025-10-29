@@ -14,29 +14,29 @@ public class AuthManager {
     /**
      * Получает access token через login endpoint (старый метод)
      */
-    public static String getBankAccessToken(String bankBaseUrl, String username, String password) {
-        System.out.println("🔐 Получение токена через login: " + bankBaseUrl);
+
+    /**
+     * Получает access token для хакатона через банковское API
+     */
+    public static String getBankHackathonToken(String bankBaseUrl, String clientId, String clientSecret) {
+        System.out.println("🔐 Получение токена для хакатона: " + bankBaseUrl);
         
         try {
-            String loginUrl = bankBaseUrl + "/auth/login";
+            // ПАРАМЕТРЫ В URL, а не в теле!
+            String tokenUrl = bankBaseUrl + "/auth/bank-token?client_id=" + clientId + "&client_secret=" + clientSecret;
             
-            // JSON тело запроса
-            String requestBody = String.format(
-                "{\"username\":\"%s\",\"password\":\"%s\"}",
-                username, password
-            );
-            
-            System.out.println("🌐 Запрос к: " + loginUrl);
-            System.out.println("👤 Username: " + username);
+            System.out.println("🌐 Запрос к: " + tokenUrl);
+            System.out.println("👤 Client ID: " + clientId);
                 
             HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
                 
+            // POST запрос БЕЗ тела (параметры в URL)
             HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(loginUrl))
-                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                .header("Content-Type", "application/json")
+                .uri(URI.create(tokenUrl))
+                .POST(HttpRequest.BodyPublishers.noBody())  // ← POST без тела
+                .header("Content-Type", "application/x-www-form-urlencoded")
                 .header("Accept", "application/json")
                 .timeout(Duration.ofSeconds(15))
                 .build();
@@ -49,11 +49,10 @@ public class AuthManager {
                 String jsonResponse = response.body();
                 System.out.println("✅ Успешная аутентификация!");
                 
-                // Парсим токен из ответа
+                // Парсим токен из ответа банковского API
                 String accessToken = extractAccessToken(jsonResponse);
                 if (accessToken != null) {
                     System.out.println("🎫 Токен получен, длина: " + accessToken.length() + " символов");
-                    System.out.println("🔍 Первые 20 символов токена: " + accessToken.substring(0, Math.min(20, accessToken.length())) + "...");
                     return accessToken;
                 } else {
                     System.out.println("❌ Не удалось извлечь токен из ответа");
@@ -75,57 +74,7 @@ public class AuthManager {
     /**
      * Получает access token для хакатона через банковское API
      */
-    public static String getBankHackathonToken(String bankBaseUrl, String clientId, String clientSecret) {
-        System.out.println("🔐 Получение токена для хакатона: " + bankBaseUrl);
-        
-        try {
-            String tokenUrl = bankBaseUrl + "/auth/bank-token?client_id=" + clientId + "&client_secret=" + clientSecret;
-            
-            System.out.println("🌐 Запрос к: " + tokenUrl);
-            System.out.println("👤 Client ID: " + clientId);
-                
-            HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
-                
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(tokenUrl))
-                .POST(HttpRequest.BodyPublishers.noBody()) // POST без тела
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .header("Accept", "application/json")
-                .timeout(Duration.ofSeconds(15))
-                .build();
-                
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            
-            System.out.println("📡 Ответ от сервера: " + response.statusCode());
-            
-            if (response.statusCode() == 200) {
-                String jsonResponse = response.body();
-                System.out.println("✅ Успешная аутентификация!");
-                
-                // Парсим токен из ответа банковского API
-                String accessToken = extractAccessToken(jsonResponse);
-                if (accessToken != null) {
-                    System.out.println("🎫 Токен получен, длина: " + accessToken.length() + " символов");
-                    System.out.println("🔍 Первые 20 символов токена: " + accessToken.substring(0, Math.min(20, accessToken.length())) + "...");
-                    return accessToken;
-                } else {
-                    System.out.println("❌ Не удалось извлечь токен из ответа");
-                    System.out.println("📄 Полный ответ: " + jsonResponse);
-                }
-            } else {
-                System.out.println("❌ Ошибка аутентификации: " + response.statusCode());
-                System.out.println("📄 Тело ответа: " + response.body());
-            }
-            
-        } catch (Exception e) {
-            System.err.println("💥 Ошибка при аутентификации: " + e.getMessage());
-            e.printStackTrace();
-        }
-        
-        return null;
-    }
+
     
     /**
      * Получает токен через OAuth2 endpoint (альтернативный метод)

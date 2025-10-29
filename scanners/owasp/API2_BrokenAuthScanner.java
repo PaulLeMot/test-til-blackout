@@ -35,6 +35,9 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
         // 5.3.4: Проверка чувствительных эндпоинтов без аутентификации
         testSensitiveEndpoints(config, apiClient, vulnerabilities);
         
+        // 5.3.5: Тестирование с валидным токеном
+        testWithValidToken(config, apiClient, vulnerabilities);
+        
         // 5.3.6: Анализ JWT на слабую подпись/шифрование
         testJWTWeaknesses(config, vulnerabilities);
         
@@ -52,7 +55,9 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
             "/transactions", 
             "/cards",
             "/loans",
-            "/payments"
+            "/payments",
+            "/consents",
+            "/balances"
         };
         
         for (String endpoint : protectedEndpoints) {
@@ -202,7 +207,9 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
             "/config",
             "/logs",
             "/backup",
-            "/api/keys"
+            "/api/keys",
+            "/secrets",
+            "/credentials"
         };
         
         for (String endpoint : sensitiveEndpoints) {
@@ -236,6 +243,63 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 
             } catch (Exception e) {
                 System.out.println("⚠ Error testing sensitive endpoint " + endpoint + ": " + e.getMessage());
+            }
+        }
+    }
+    
+    private void testWithValidToken(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
+        System.out.println("🔑 Testing with valid token...");
+        
+        String validToken = getValidToken(config);
+        
+        if (validToken == null) {
+            System.out.println("⚠ No valid token available for testing");
+            return;
+        }
+        
+        // Эндпоинты которые должны работать с валидным токеном
+        String[] endpointsWithToken = {
+            "/accounts",
+            "/balances",
+            "/transactions",
+            "/consents"
+        };
+        
+        for (String endpoint : endpointsWithToken) {
+            String fullUrl = config.getTargetBaseUrl() + endpoint;
+            
+            try {
+                Map<String, String> headers = new HashMap<>();
+                headers.put("Content-Type", "application/json");
+                headers.put("Accept", "application/json");
+                headers.put("Authorization", "Bearer " + validToken);
+                
+                ApiResponse response = apiClient.executeRequest("GET", fullUrl, null, headers);
+                
+                // Анализируем ответ с валидным токеном
+                if (response.getStatus() == 403) {
+                    Vulnerability vuln = new Vulnerability();
+                    vuln.setTitle("Valid Token Rejected - Authorization Issue");
+                    vuln.setDescription("Valid JWT token is rejected with 403 Forbidden");
+                    vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+                    vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
+                    vuln.setEndpoint(endpoint);
+                    vuln.setMethod("GET");
+                    vuln.setEvidence("Status 403 with valid token");
+                    vuln.setRecommendations(Arrays.asList(
+                        "Check token validation logic",
+                        "Ensure proper scope/permission validation",
+                        "Verify token signature verification"
+                    ));
+                    vulnerabilities.add(vuln);
+                } else if (isSuccessResponse(response)) {
+                    System.out.println("✅ " + endpoint + " works correctly with valid token (status: " + response.getStatus() + ")");
+                } else {
+                    System.out.println("⚠ " + endpoint + " returned status: " + response.getStatus() + " with valid token");
+                }
+                
+            } catch (Exception e) {
+                System.out.println("⚠ Error testing " + endpoint + " with valid token: " + e.getMessage());
             }
         }
     }

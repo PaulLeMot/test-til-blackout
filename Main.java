@@ -12,8 +12,8 @@ public class Main {
             ScanConfig config = new ScanConfig();
             config.setBankBaseUrl("https://vbank.open.bankingapi.ru");
             config.setTargetBaseUrl("https://vbank.open.bankingapi.ru");
-            config.setClientId("team172-1"); // твой client_id
-            config.setClientSecret("***REMOVED***"); // твой client_secret
+            config.setClientId("team172"); // ← ПРАВИЛЬНЫЙ client_id
+            config.setClientSecret("***REMOVED***");
             
             // 2. Создаем сканеры и клиент
             SecurityScanner bolaScanner = new API1_BOLAScanner();
@@ -35,11 +35,20 @@ public class Main {
             System.out.println("Найдено " + result.getVulnerabilities().size() + " уязвимостей:");
             
             for (var vuln : result.getVulnerabilities()) {
-                System.out.println("⚠ " + vuln.getTitle() + " - " + vuln.getSeverity());
-                System.out.println("   Эндпоинт: " + vuln.getEndpoint());
+                System.out.println("=== УЯЗВИМОСТЬ ===");
+                System.out.println("🔴 " + vuln.getTitle());
+                System.out.println("📝 " + vuln.getDescription());
+                System.out.println("🚨 Уровень: " + vuln.getSeverity());
+                System.out.println("📍 Эндпоинт: " + vuln.getEndpoint());
+                System.out.println("🔧 Метод: " + vuln.getMethod());
                 if (vuln.getEvidence() != null) {
-                    System.out.println("   Доказательство: " + vuln.getEvidence());
+                    System.out.println("📋 Доказательство: " + vuln.getEvidence());
                 }
+                System.out.println("💡 Рекомендации:");
+                for (String rec : vuln.getRecommendations()) {
+                    System.out.println("   - " + rec);
+                }
+                System.out.println();
             }
             
         } catch (Exception e) {
