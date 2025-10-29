@@ -24,16 +24,19 @@ public class ApiScanner {
         result.setStatus(ScanResult.ScanStatus.RUNNING);
         
         try {
-            // Имитируем сканирование
-            Thread.sleep(1000);
+            // ВЫЗЫВАЕМ ВСЕ ЗАРЕГИСТРИРОВАННЫЕ СКАНЕРЫ
+            ApiClient apiClient = new StandardApiClient();
             
-            // Добавляем тестовые уязвимости
-            Vulnerability vuln = new Vulnerability();
-            vuln.setTitle("Test BOLA Vulnerability");
-            vuln.setDescription("This is a test vulnerability");
-            vuln.setSeverity(Vulnerability.Severity.HIGH);
-            vuln.setEndpoint("/users/{id}");
-            result.addVulnerability(vuln);
+            for (Object scanner : securityScanners) {
+                if (scanner instanceof scanners.SecurityScanner) {
+                    scanners.SecurityScanner secScanner = (scanners.SecurityScanner) scanner;
+                    System.out.println("🔍 Running scanner: " + secScanner.getName());
+                    
+                    List<Vulnerability> scannerVulns = secScanner.scan(null, config, apiClient);
+                    result.addVulnerabilities(scannerVulns);
+                    System.out.println("✅ " + secScanner.getName() + " found: " + scannerVulns.size() + " vulnerabilities");
+                }
+            }
             
             result.complete();
             System.out.println("✅ Scan completed successfully!");
