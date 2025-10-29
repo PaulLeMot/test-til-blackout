@@ -6,6 +6,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.URI;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Менеджер аутентификации для получения токенов у банковского API
@@ -16,19 +18,13 @@ public class AuthManager {
      * Получает access token через login endpoint
      */
     public static String getBankAccessToken(String bankBaseUrl, String username, String password) {
-        System.out.println("🔐 Получение токена через login: " + bankBaseUrl);
-        
         try {
             String loginUrl = bankBaseUrl + "/auth/login";
             
-            // JSON тело запроса
             String requestBody = String.format(
                 "{\"username\":\"%s\",\"password\":\"%s\"}",
                 username, password
             );
-            
-            System.out.println("🌐 Запрос к: " + loginUrl);
-            System.out.println("👤 Username: " + username);
                 
             HttpClient client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -44,30 +40,15 @@ public class AuthManager {
                 
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             
-            System.out.println("📡 Ответ от сервера: " + response.statusCode());
-            
             if (response.statusCode() == 200) {
-                String jsonResponse = response.body();
-                System.out.println("✅ Успешная аутентификация!");
-                
-                // Парсим токен из ответа
-                String accessToken = extractAccessToken(jsonResponse);
+                String accessToken = extractAccessToken(response.body());
                 if (accessToken != null) {
-                    System.out.println("🎫 Токен получен, длина: " + accessToken.length() + " символов");
-                    System.out.println("🔍 Первые 20 символов токена: " + accessToken.substring(0, Math.min(20, accessToken.length())) + "...");
                     return accessToken;
-                } else {
-                    System.out.println("❌ Не удалось извлечь токен из ответа");
-                    System.out.println("📄 Полный ответ: " + jsonResponse);
                 }
-            } else {
-                System.out.println("❌ Ошибка аутентификации: " + response.statusCode());
-                System.out.println("📄 Тело ответа: " + response.body());
             }
             
         } catch (Exception e) {
             System.err.println("💥 Ошибка при аутентификации: " + e.getMessage());
-            e.printStackTrace();
         }
         
         return null;
@@ -79,34 +60,24 @@ public class AuthManager {
      */
     private static String extractAccessToken(String json) {
         try {
-            // Убираем пробелы для упрощения парсинга
             String cleanJson = json.replaceAll("\\s+", "");
             
-            // Ищем "access_token":"значение"
             if (cleanJson.contains("\"access_token\":")) {
                 String[] parts = cleanJson.split("\"access_token\":\"");
                 if (parts.length > 1) {
-                    String tokenPart = parts[1];
-                    String token = tokenPart.split("\"")[0];
-                    return token;
+                    return parts[1].split("\"")[0];
                 }
             }
             
-            // Альтернативный вариант: может быть в другом поле
             if (cleanJson.contains("\"token\":")) {
                 String[] parts = cleanJson.split("\"token\":\"");
                 if (parts.length > 1) {
-                    String tokenPart = parts[1];
-                    String token = tokenPart.split("\"")[0];
-                    return token;
+                    return parts[1].split("\"")[0];
                 }
             }
             
-        } catch (Exception e) {
-            System.err.println("Ошибка при парсинге токена: " + e.getMessage());
+        } catch (Exception ignored) {
         }
-        
-        System.out.println("🔍 Не найден access_token в ответе. Структура JSON: " + json);
         return null;
     }
     
@@ -117,32 +88,41 @@ public class AuthManager {
         if (token == null || token.length() < 10) {
             return false;
         }
-        
-        // JWT токены обычно начинаются с eyJ (закодированный JSON)
-        boolean isJwt = token.startsWith("eyJ");
-        
-        // Или может быть в другом формате
-        boolean looksValid = token.length() > 20 && token.contains(".");
-        
-        return isJwt || looksValid;
+        return token.startsWith("eyJ") || (token.length() > 20 && token.contains("."));
+    }
+    
+    /**
+     * Получает токены для обоих пользователей команды: team172-1 и team172-2
+     * @param bankBaseUrl базовый URL банковского API
+     * @param password общий пароль для обоих аккаунтов
+     * @return карта вида {username -> accessToken}
+     */
+    public static Map<String, String> getBankAccessTokensForTeam(String bankBaseUrl, String password) {
+        Map<String, String> tokens = new HashMap<>();
+        for (String username : new String[]{"team172-1", "team172-2"}) {
+            String token = getBankAccessToken(bankBaseUrl, username, password);
+            if (token != null) {
+                tokens.put(username, token);
+            }
+        }
+        return tokens;
     }
     
     /**
      * Тестовый метод для проверки аутентификации
      */
     public static void testAuthentication() {
-        System.out.println("🧪 Тестирование аутентификации...");
-        
         String bankUrl = "https://vbank.open.bankingapi.ru";
-        String username = "team172-1";
         String password = "***REMOVED***";
         
-        String token = getBankAccessToken(bankUrl, username, password);
+        Map<String, String> tokens = getBankAccessTokensForTeam(bankUrl, password);
         
-        if (token != null) {
-            System.out.println("🎉 Тест пройден! Токен получен успешно.");
+        if (!tokens.isEmpty()) {
+            System.out.println("🎉 Токены получены:");
+            tokens.forEach((user, token) -> 
+                System.out.println("  👤 " + user + ": " + token.substring(0, Math.min(20, token.length())) + "..."));
         } else {
-            System.out.println("💥 Тест не пройден! Не удалось получить токен.");
+            System.out.println("💥 Не удалось получить ни одного токена.");
         }
     }
 }
