@@ -300,15 +300,11 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
     }
     
     private boolean isSuccessResponse(Object response) {
-        // Заглушка - в реальной реализации нужно парсить ответ
-        try {
-            // Предполагаем, что response имеет метод getStatus()
-            java.lang.reflect.Method getStatus = response.getClass().getMethod("getStatus");
-            int status = (int) getStatus.invoke(response);
+        if (response instanceof core.ApiResponse) {
+            core.ApiResponse apiResponse = (core.ApiResponse) response;
+            int status = apiResponse.getStatus();
             return status >= 200 && status < 300;
-        } catch (Exception e) {
-            // Если не можем определить статус, считаем что успех
-            return true;
         }
+        return false; // Если не ApiResponse, считаем неудачей
     }
 }
