@@ -2,43 +2,61 @@ import core.*;
 import scanners.SecurityScanner;
 import scanners.owasp.API1_BOLAScanner;
 
+import java.util.Arrays;
+import java.util.List;
+
 public class Main {
     public static void main(String[] args) {
-        System.out.println("🚀 Запуск GOSTGuardian Scanner...");
+        System.out.println("🚀 Запуск GOSTGuardian Scanner для всех банков...");
 
-        try {
-            ScanConfig config = new ScanConfig();
-            config.setTargetBaseUrl("https://vbank.open.bankingapi.ru"); // ← без пробелов!
-            config.setPassword("FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY");
+        // Общие учётные данные
+        final String PASSWORD = "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
+        final List<String> BANKS = Arrays.asList(
+                "https://vbank.open.bankingapi.ru",
+                "https://abank.open.bankingapi.ru",
+                "https://sbank.open.bankingapi.ru"
+        );
 
-            config.setSpecUrl("https://open.bankingapi.ru/vbank/openapi.json"); // ← без пробелов!
+        // Создаём один экземпляр сканера
+        SecurityScanner bolaScanner = new API1_BOLAScanner();
 
-            SecurityScanner bolaScanner = new API1_BOLAScanner();
+        for (String baseUrl : BANKS) {
+            System.out.println("\n" + "=".repeat(60));
+            System.out.println("🛡️ Сканирование банка: " + baseUrl);
+            System.out.println("=".repeat(60));
 
-            ApiScanner apiScanner = new ApiScanner();
-            apiScanner.registerSecurityScanner(bolaScanner);
+            try {
+                ScanConfig config = new ScanConfig();
+                config.setTargetBaseUrl(baseUrl);
+                config.setPassword(PASSWORD);
+                // specUrl не обязателен для BOLA
 
-            System.out.println("🛡️ Запуск BOLA-сканера против Virtual Bank...");
-            ScanResult result = apiScanner.performScan(config);
+                ApiScanner apiScanner = new ApiScanner();
+                apiScanner.registerSecurityScanner(bolaScanner);
 
-            System.out.println("\n📊 Сканирование завершено!");
-            System.out.println("Статус: " + result.getStatus());
-            System.out.println("Найдено " + result.getVulnerabilities().size() + " уязвимостей:");
+                ScanResult result = apiScanner.performScan(config);
 
-            if (result.getVulnerabilities().isEmpty()) {
-                System.out.println("✅ Уязвимостей не обнаружено.");
-            } else {
-                for (var vuln : result.getVulnerabilities()) {
-                    System.out.println("⚠️ " + vuln.getTitle() + " — " + vuln.getSeverity());
-                    System.out.println("   Эндпоинт: " + vuln.getEndpoint());
-                    System.out.println("   HTTP-статус: " + vuln.getStatusCode());
-                    System.out.println("   Описание: " + vuln.getDescription());
+                System.out.println("\n📊 Результаты для " + baseUrl + ":");
+                System.out.println("Статус: " + result.getStatus());
+                System.out.println("Найдено уязвимостей: " + result.getVulnerabilities().size());
+
+                if (result.getVulnerabilities().isEmpty()) {
+                    System.out.println("✅ Уязвимостей не обнаружено.");
+                } else {
+                    for (var vuln : result.getVulnerabilities()) {
+                        System.out.println("⚠️ " + vuln.getTitle() + " — " + vuln.getSeverity());
+                        System.out.println("   Эндпоинт: " + vuln.getEndpoint());
+                        System.out.println("   HTTP-статус: " + vuln.getStatusCode());
+                        System.out.println("   Описание: " + vuln.getDescription());
+                    }
                 }
-            }
 
-        } catch (Exception e) {
-            System.err.println("❌ Ошибка: " + e.getMessage());
-            e.printStackTrace();
+            } catch (Exception e) {
+                System.err.println("❌ Ошибка при сканировании " + baseUrl + ": " + e.getMessage());
+                e.printStackTrace();
+            }
         }
+
+        System.out.println("\n🏁 Сканирование всех банков завершено.");
     }
 }
