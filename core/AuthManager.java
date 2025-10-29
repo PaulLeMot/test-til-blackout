@@ -15,7 +15,7 @@ import java.util.Map;
 public class AuthManager {
     
     /**
-     * Получает access token через login endpoint
+     * access token через login endpoint
      */
     public static String getBankAccessToken(String bankBaseUrl, String username, String password) {
         try {
@@ -81,9 +81,7 @@ public class AuthManager {
         return null;
     }
     
-    /**
-     * Проверяет валидность JWT токена (базовая проверка)
-     */
+    
     public static boolean isTokenValid(String token) {
         if (token == null || token.length() < 10) {
             return false;
