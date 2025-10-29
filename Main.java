@@ -1,4 +1,3 @@
-// Main.java
 import core.*;
 import scanners.SecurityScanner;
 import scanners.owasp.API1_BOLAScanner;
@@ -8,26 +7,20 @@ public class Main {
         System.out.println("🚀 Запуск GOSTGuardian Scanner...");
 
         try {
-            // 1. Настраиваем конфигурацию для Virtual Bank
             ScanConfig config = new ScanConfig();
-            config.setTargetBaseUrl("https://vbank.open.bankingapi.ru");
-            config.setPassword("***REMOVED***");      // общий пароль команды
+            config.setTargetBaseUrl("https://vbank.open.bankingapi.ru"); // ← без пробелов!
+            config.setPassword("***REMOVED***");
 
-            // (опционально) указываем specUrl, если понадобится в будущем
-            config.setSpecUrl("https://open.bankingapi.ru/vbank/openapi.json");
+            config.setSpecUrl("https://open.bankingapi.ru/vbank/openapi.json"); // ← без пробелов!
 
-            // 2. Создаём BOLA-сканер
             SecurityScanner bolaScanner = new API1_BOLAScanner();
 
-            // 3. Создаём и настраиваем основной оркестратор
             ApiScanner apiScanner = new ApiScanner();
             apiScanner.registerSecurityScanner(bolaScanner);
 
-            // 4. Запускаем сканирование
             System.out.println("🛡️ Запуск BOLA-сканера против Virtual Bank...");
             ScanResult result = apiScanner.performScan(config);
 
-            // 5. Выводим результаты
             System.out.println("\n📊 Сканирование завершено!");
             System.out.println("Статус: " + result.getStatus());
             System.out.println("Найдено " + result.getVulnerabilities().size() + " уязвимостей:");
@@ -38,6 +31,7 @@ public class Main {
                 for (var vuln : result.getVulnerabilities()) {
                     System.out.println("⚠️ " + vuln.getTitle() + " — " + vuln.getSeverity());
                     System.out.println("   Эндпоинт: " + vuln.getEndpoint());
+                    System.out.println("   HTTP-статус: " + vuln.getStatusCode());
                     System.out.println("   Описание: " + vuln.getDescription());
                 }
             }

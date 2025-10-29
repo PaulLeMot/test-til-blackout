@@ -1,4 +1,3 @@
-// scanners/owasp/API1_BOLAScanner.java
 package scanners.owasp;
 
 import scanners.SecurityScanner;
@@ -30,10 +29,10 @@ public class API1_BOLAScanner implements SecurityScanner {
 
     @Override
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
-        System.out.println("🔍 Scanning for BOLA vulnerabilities...");
+        System.out.println("🔍 Scanning for BOLA vulnerabilities (OWASP API Security Top 10:2023 - API1)...");
 
         List<Vulnerability> vulnerabilities = new ArrayList<>();
-        String baseUrl = config.getTargetBaseUrl().trim(); // убираем пробелы
+        String baseUrl = config.getTargetBaseUrl().trim();
         String password = config.getPassword();
 
         if (password == null || password.isEmpty()) {
@@ -41,7 +40,6 @@ public class API1_BOLAScanner implements SecurityScanner {
             return vulnerabilities;
         }
 
-        // 1. Получаем токены для двух пользователей
         Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(baseUrl, password);
         if (tokens.size() < 2) {
             System.err.println("⚠️ Недостаточно токенов для BOLA-теста (нужно минимум 2).");
@@ -58,40 +56,53 @@ public class API1_BOLAScanner implements SecurityScanner {
             return vulnerabilities;
         }
 
-        // 2. Получаем список счетов от user1
+        System.out.println("✅ Получены токены для пользователей: " + user1 + ", " + user2);
+
         String accountId = getFirstAccountId(baseUrl, token1);
         if (accountId == null) {
-            System.out.println("ℹ️ У пользователя team172-1 нет счетов — BOLA-тест невозможен.");
+            System.out.println("ℹ️ У пользователя " + user1 + " нет счетов — BOLA-тест невозможен.");
             return vulnerabilities;
         }
 
-        System.out.println("✅ Найден счёт для team172-1: " + accountId);
+        System.out.println("✅ Найден счёт пользователя " + user1 + ": " + accountId);
 
-        // 3. Пытаемся получить этот счёт от имени user2
-        boolean isVulnerable = tryAccessAccountAsOtherUser(baseUrl, accountId, token2);
+        HttpResponse<String> response = tryAccessAccountAsOtherUserWithResponse(baseUrl, accountId, token2);
 
-        if (isVulnerable) {
-            Vulnerability vuln = new Vulnerability();
-            vuln.setTitle("API1:2023 - Broken Object Level Authorization (BOLA)");
-            vuln.setDescription(String.format(
-                "Пользователь %s может получить данные счёта %s, принадлежащего %s.",
-                user2, accountId, user1
-            ));
-            vuln.setSeverity(Vulnerability.Severity.HIGH);
-            vuln.setEndpoint(String.format("/accounts/%s", accountId));
-            String evidence = String.format(
-                "{\"victimUser\":\"%s\",\"attackerUser\":\"%s\",\"accountId\":\"%s\",\"endpoint\":\"%s\"}",
-                user1, user2, accountId, String.format("%s/accounts/%s", baseUrl, accountId)
-            );
-            vuln.setEvidence(evidence);
-
-            vulnerabilities.add(vuln);
-            System.out.println("🚨 BOLA УЯЗВИМОСТЬ ОБНАРУЖЕНА!");
+        if (response == null) {
+            System.out.println("⚠️ Не удалось выполнить запрос к счёту " + accountId + " от имени " + user2);
         } else {
-            System.out.println("✅ BOLA не обнаружена: доступ к чужому счёту запрещён.");
+            int statusCode = response.statusCode();
+            System.out.println("📡 Ответ при доступе к " + accountId + " от " + user2 + ": HTTP " + statusCode);
+
+            boolean isVulnerable = (statusCode == 200);
+
+            if (isVulnerable) {
+                String endpoint = String.format("/accounts/%s", accountId);
+                String fullUrl = baseUrl + endpoint;
+
+                Vulnerability vuln = new Vulnerability();
+                vuln.setTitle("API1:2023 - Broken Object Level Authorization (BOLA)");
+                vuln.setDescription(
+                        "Пользователь " + user2 + " получил HTTP " + statusCode +
+                                " при запросе к счёту " + accountId + ", принадлежащему " + user1 + ".\n" +
+                                "Сервер не проверил право доступа — это нарушение уровня авторизации объекта (BOLA)."
+                );
+                vuln.setSeverity(Vulnerability.Severity.HIGH);
+                vuln.setEndpoint(endpoint);
+                vuln.setStatusCode(statusCode);
+                vuln.setEvidence(String.format(
+                        "{\"victimUser\":\"%s\",\"attackerUser\":\"%s\",\"accountId\":\"%s\",\"url\":\"%s\",\"statusCode\":%d}",
+                        user1, user2, accountId, fullUrl, statusCode
+                ));
+
+                vulnerabilities.add(vuln);
+                System.out.println("🚨 BOLA УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА! Сервер вернул 200 для чужого ресурса.");
+            } else {
+                System.out.println("✅ Защита работает: сервер вернул " + statusCode + " (ожидаемо).");
+            }
         }
 
-        System.out.println("✅ BOLA scan completed. Found: " + vulnerabilities.size() + " vulnerabilities");
+        System.out.println("✅ BOLA scan completed. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
     }
 
@@ -99,26 +110,27 @@ public class API1_BOLAScanner implements SecurityScanner {
         try {
             String url = baseUrl + ACCOUNTS_ENDPOINT;
             HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
 
             HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .GET()
-                .header("Authorization", "Bearer " + token)
-                .header("Accept", "application/json")
-                .timeout(Duration.ofSeconds(10))
-                .build();
+                    .uri(URI.create(url))
+                    .GET()
+                    .header("Authorization", "Bearer " + token)
+                    .header("Accept", "application/json")
+                    .timeout(Duration.ofSeconds(10))
+                    .build();
 
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() == 200) {
-                // Ищем первый accountId в ответе
                 Pattern pattern = Pattern.compile("\"accountId\"\\s*:\\s*\"([^\"]+)\"");
                 Matcher matcher = pattern.matcher(response.body());
                 if (matcher.find()) {
                     return matcher.group(1);
                 }
+            } else {
+                System.err.println("⚠️ Получен неожиданный статус при запросе счетов: " + response.statusCode());
             }
         } catch (Exception e) {
             System.err.println("⚠️ Ошибка при получении списка счетов: " + e.getMessage());
@@ -126,29 +138,25 @@ public class API1_BOLAScanner implements SecurityScanner {
         return null;
     }
 
-    private boolean tryAccessAccountAsOtherUser(String baseUrl, String accountId, String token) {
+    private HttpResponse<String> tryAccessAccountAsOtherUserWithResponse(String baseUrl, String accountId, String token) {
         try {
             String url = baseUrl + String.format(ACCOUNT_DETAIL_ENDPOINT, accountId);
             HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .build();
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
 
             HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .GET()
-                .header("Authorization", "Bearer " + token)
-                .header("Accept", "application/json")
-                .timeout(Duration.ofSeconds(10))
-                .build();
+                    .uri(URI.create(url))
+                    .GET()
+                    .header("Authorization", "Bearer " + token)
+                    .header("Accept", "application/json")
+                    .timeout(Duration.ofSeconds(10))
+                    .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            // Если сервер отдаёт данные чужого счёта — это BOLA
-            return response.statusCode() == 200;
-
+            return client.send(request, HttpResponse.BodyHandlers.ofString());
         } catch (Exception e) {
             System.err.println("⚠️ Ошибка при попытке доступа к чужому счёту: " + e.getMessage());
-            return false;
+            return null;
         }
     }
 }
