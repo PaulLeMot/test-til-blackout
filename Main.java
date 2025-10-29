@@ -1,10 +1,7 @@
-import core.ApiScanner;
-import core.ScanConfig;
-import core.ScanResult;
+// Main.java
+import core.*;
 import scanners.SecurityScanner;
 import scanners.owasp.API1_BOLAScanner;
-import scanners.owasp.ApiClient;
-import scanners.owasp.StandardApiClient;
 
 public class Main {
     public static void main(String[] args) {
@@ -25,7 +22,7 @@ public class Main {
             apiScanner.registerSecurityScanner(bolaScanner);
             
             // 4. Запускаем сканирование
-            System.out.println("🛡️ Запуск BOLA сканера...");
+            System.out.println("🛡 Запуск BOLA сканера...");
             ScanResult result = apiScanner.performScan(config);
             
             // 5. Выводим результаты
@@ -34,7 +31,7 @@ public class Main {
             System.out.println("Найдено " + result.getVulnerabilities().size() + " уязвимостей:");
             
             for (var vuln : result.getVulnerabilities()) {
-                System.out.println("⚠️ " + vuln.getTitle() + " - " + vuln.getSeverity());
+                System.out.println("⚠ " + vuln.getTitle() + " - " + vuln.getSeverity());
                 System.out.println("   Эндпоинт: " + vuln.getEndpoint());
             }
             

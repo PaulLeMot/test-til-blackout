@@ -1,4 +1,5 @@
-package scanners.owasp;
+// core/AuthManager.java
+package core;
 
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;

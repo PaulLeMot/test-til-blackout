@@ -1,4 +1,5 @@
-import scanners.owasp.AuthManager;
+// TestAuth.java
+import core.AuthManager;
 
 public class TestAuth {
     public static void main(String[] args) {

@@ -1,8 +1,10 @@
+// scanners/owasp/API1_BOLAScanner.java
 package scanners.owasp;
 
 import scanners.SecurityScanner;
 import core.ScanConfig;
 import core.Vulnerability;
+import core.ApiClient;
 import java.util.*;
 
 public class API1_BOLAScanner implements SecurityScanner {
@@ -15,7 +17,7 @@ public class API1_BOLAScanner implements SecurityScanner {
     }
     
     @Override
-    public List<Vulnerability> scan(Object openAPI, ScanConfig config, Object apiClient) {
+    public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
         System.out.println("🔍 Scanning for BOLA vulnerabilities...");
         
         List<Vulnerability> vulnerabilities = new ArrayList<>();
