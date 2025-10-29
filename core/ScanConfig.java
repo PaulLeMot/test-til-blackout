@@ -9,8 +9,8 @@ public class ScanConfig {
     private int timeoutMs = 30000;
     
     private String bankBaseUrl;
-    private String clientId;
-    private String clientSecret;
+    private String username;
+    private String password;
     private String accessToken;
     
     // Getters and Setters
