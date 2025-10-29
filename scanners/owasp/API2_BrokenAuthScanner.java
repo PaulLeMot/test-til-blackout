@@ -4,6 +4,7 @@ import scanners.SecurityScanner;
 import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
+import core.ApiResponse;
 import core.AuthManager;
 import java.util.*;
 
@@ -44,15 +45,14 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
     private void testUnauthorizedAccess(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
         System.out.println("🔓 Testing unauthorized access to protected endpoints...");
         
-        // Получаем валидный токен для сравнения
-        String validToken = getValidToken(config);
-        
-        // Тестируем эндпоинты без токена
+        // Реальные эндпоинты банковского API
         String[] protectedEndpoints = {
-            "/users/profile",
             "/accounts",
-            "/transactions",
-            "/admin/users"
+            "/customers",
+            "/transactions", 
+            "/cards",
+            "/loans",
+            "/payments"
         };
         
         for (String endpoint : protectedEndpoints) {
@@ -62,8 +62,9 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 // Запрос без авторизации
                 Map<String, String> noAuthHeaders = new HashMap<>();
                 noAuthHeaders.put("Content-Type", "application/json");
+                noAuthHeaders.put("Accept", "application/json");
                 
-                Object response = apiClient.executeRequest("GET", fullUrl, null, noAuthHeaders);
+                ApiResponse response = apiClient.executeRequest("GET", fullUrl, null, noAuthHeaders);
                 
                 // Если получили 200 без авторизации - это уязвимость
                 if (isSuccessResponse(response)) {
@@ -74,13 +75,15 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
                     vuln.setEndpoint(endpoint);
                     vuln.setMethod("GET");
-                    vuln.setEvidence("Status 200 without Authorization header");
+                    vuln.setEvidence("Status " + response.getStatus() + " without Authorization header");
                     vuln.setRecommendations(Arrays.asList(
                         "Implement proper authentication checks",
-                        "Require valid JWT tokens for all protected endpoints",
+                        "Require valid JWT tokens for all protected endpoints", 
                         "Return 401 Unauthorized for unauthenticated requests"
                     ));
                     vulnerabilities.add(vuln);
+                } else {
+                    System.out.println("✅ " + endpoint + " properly protected (status: " + response.getStatus() + ")");
                 }
                 
             } catch (Exception e) {
@@ -100,17 +103,18 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
             ""
         };
         
-        String testEndpoint = config.getTargetBaseUrl() + "/users/profile";
+        String testEndpoint = config.getTargetBaseUrl() + "/accounts";
         
         for (String token : invalidTokens) {
             try {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Content-Type", "application/json");
+                headers.put("Accept", "application/json");
                 if (token != null && !token.isEmpty()) {
                     headers.put("Authorization", "Bearer " + token);
                 }
                 
-                Object response = apiClient.executeRequest("GET", testEndpoint, null, headers);
+                ApiResponse response = apiClient.executeRequest("GET", testEndpoint, null, headers);
                 
                 // Если принимает невалидный токен - уязвимость
                 if (isSuccessResponse(response)) {
@@ -119,7 +123,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setDescription("API accepts invalid/expired JWT tokens");
                     vuln.setSeverity(Vulnerability.Severity.HIGH);
                     vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
-                    vuln.setEndpoint("/users/profile");
+                    vuln.setEndpoint("/accounts");
                     vuln.setMethod("GET");
                     vuln.setEvidence("Accepted token: " + (token != null ? token.substring(0, Math.min(20, token.length())) + "..." : "null"));
                     vuln.setRecommendations(Arrays.asList(
@@ -140,8 +144,13 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
     private void testAuthHeaders(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
         System.out.println("📋 Testing different authentication headers...");
         
-        String testEndpoint = config.getTargetBaseUrl() + "/users/profile";
+        String testEndpoint = config.getTargetBaseUrl() + "/accounts";
         String validToken = getValidToken(config);
+        
+        if (validToken == null) {
+            System.out.println("⚠ No valid token available for auth header testing");
+            return;
+        }
         
         // Тестируем разные форматы заголовков
         Map<String, String> authHeaderTests = new HashMap<>();
@@ -155,9 +164,10 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
             try {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Content-Type", "application/json");
+                headers.put("Accept", "application/json");
                 headers.put(test.getKey(), test.getValue());
                 
-                Object response = apiClient.executeRequest("GET", testEndpoint, null, headers);
+                ApiResponse response = apiClient.executeRequest("GET", testEndpoint, null, headers);
                 
                 // Если принимает нестандартные заголовки - возможная уязвимость
                 if (isSuccessResponse(response) && !test.getKey().equals("Authorization")) {
@@ -166,7 +176,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setDescription("API accepts authentication via non-standard headers: " + test.getKey());
                     vuln.setSeverity(Vulnerability.Severity.MEDIUM);
                     vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
-                    vuln.setEndpoint("/users/profile");
+                    vuln.setEndpoint("/accounts");
                     vuln.setMethod("GET");
                     vuln.setEvidence("Accepted header: " + test.getKey());
                     vuln.setRecommendations(Arrays.asList(
@@ -202,8 +212,9 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 // Запрос без авторизации
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Content-Type", "application/json");
+                headers.put("Accept", "application/json");
                 
-                Object response = apiClient.executeRequest("GET", fullUrl, null, headers);
+                ApiResponse response = apiClient.executeRequest("GET", fullUrl, null, headers);
                 
                 // Если доступен без авторизации - критическая уязвимость
                 if (isSuccessResponse(response)) {
@@ -214,7 +225,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
                     vuln.setEndpoint(endpoint);
                     vuln.setMethod("GET");
-                    vuln.setEvidence("Status 200 for sensitive endpoint without auth");
+                    vuln.setEvidence("Status " + response.getStatus() + " for sensitive endpoint without auth");
                     vuln.setRecommendations(Arrays.asList(
                         "Implement strict authentication for all sensitive endpoints",
                         "Use role-based access control",
@@ -278,17 +289,17 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
     }
     
     private String getValidToken(ScanConfig config) {
-        // Пытаемся получить токен из конфига или через AuthManager
+        // Пытаемся получить токен из конфига
         if (config.getAccessToken() != null && AuthManager.isTokenValid(config.getAccessToken())) {
             return config.getAccessToken();
         }
         
-        // Если токена нет, пытаемся аутентифицироваться
-        if (config.getBankBaseUrl() != null && config.getUsername() != null && config.getPassword() != null) {
-            String token = AuthManager.getBankAccessToken(
+        // Если токена нет, пытаемся аутентифицироваться через банковское API
+        if (config.getBankBaseUrl() != null && config.getClientId() != null && config.getClientSecret() != null) {
+            String token = AuthManager.getBankHackathonToken(
                 config.getBankBaseUrl(),
-                config.getUsername(),
-                config.getPassword()
+                config.getClientId(), 
+                config.getClientSecret()
             );
             if (token != null) {
                 config.setAccessToken(token);
@@ -299,12 +310,8 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
         return null;
     }
     
-    private boolean isSuccessResponse(Object response) {
-        if (response instanceof core.ApiResponse) {
-            core.ApiResponse apiResponse = (core.ApiResponse) response;
-            int status = apiResponse.getStatus();
-            return status >= 200 && status < 300;
-        }
-        return false; // Если не ApiResponse, считаем неудачей
+    private boolean isSuccessResponse(ApiResponse response) {
+        int status = response.getStatus();
+        return status >= 200 && status < 300;
     }
 }
