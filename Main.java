@@ -10,7 +10,7 @@ public class Main {
         try {
             // 1. Настраиваем конфигурацию для Virtual Bank
             ScanConfig config = new ScanConfig();
-            config.setTargetBaseUrl("https://vbank.open.bankingapi.ru"); // без пробелов!
+            config.setTargetBaseUrl("https://vbank.open.bankingapi.ru");
             config.setPassword("***REMOVED***");      // общий пароль команды
 
             // (опционально) указываем specUrl, если понадобится в будущем
