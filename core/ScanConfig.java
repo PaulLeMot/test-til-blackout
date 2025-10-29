@@ -12,6 +12,8 @@ public class ScanConfig {
     private String username;
     private String password;
     private String accessToken;
+    private String clientId; 
+    private String clientSecret;
     
     // Getters and Setters
     public String getSpecUrl() { return specUrl; }

@@ -1,4 +1,5 @@
-package scanners.owasp;
+// core/ApiClient.java
+package core;
 
 import java.util.Map;
 
