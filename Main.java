@@ -5,7 +5,7 @@ import scanners.owasp.API2_BrokenAuthScanner;
 import scanners.owasp.API3_BOScanner;
 import scanners.owasp.API4_URCScanner;
 import scanners.owasp.API6_BusinessFlowScanner;
-
+import scanners.owasp.API7_SSRFScanner;
 import java.util.Arrays;
 import java.util.List;
 import java.util.ArrayList;
@@ -30,6 +30,7 @@ public class Main {
         securityScanners.add(new API3_BOScanner());
         securityScanners.add(new API4_URCScanner());
         securityScanners.add(new API6_BusinessFlowScanner());
+	securityScanners.add(new API7_SSRFScanner());
 
         System.out.println("📋 Зарегистрировано сканеров: " + securityScanners.size());
         securityScanners.forEach(scanner ->
