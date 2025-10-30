@@ -32,6 +32,8 @@ public class Main {
                 config.setTargetBaseUrl(baseUrl);
                 config.setClientId(CLIENT_ID);
                 config.setClientSecret(CLIENT_SECRET);
+                config.setPassword(CLIENT_SECRET);  // ← ДОБАВЛЕНО ДЛЯ BOLA
+                config.setUsername(CLIENT_ID);      // ← ДОБАВЛЕНО ДЛЯ BOLA
                 
                 // 2. Создаем сканеры и клиент
                 SecurityScanner bolaScanner = new API1_BOLAScanner();
