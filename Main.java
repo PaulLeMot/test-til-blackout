@@ -4,6 +4,7 @@ import scanners.owasp.API1_BOLAScanner;
 import scanners.owasp.API2_BrokenAuthScanner;
 import scanners.owasp.API3_BOScanner;
 import scanners.owasp.API4_URCScanner;
+import scanners.owasp.API5_BrokenFunctionLevelAuthScanner;
 import scanners.owasp.API6_BusinessFlowScanner;
 import scanners.owasp.API7_SSRFScanner;
 import scanners.owasp.API8_SecurityConfigScanner;
@@ -33,7 +34,8 @@ public class Main {
         securityScanners.add(new API2_BrokenAuthScanner());
         securityScanners.add(new API3_BOScanner());
         securityScanners.add(new API4_URCScanner());
-        securityScanners.add(new API6_BusinessFlowScanner());
+        securityScanners.add(new API5_BrokenFunctionLevelAuthScanner());
+	securityScanners.add(new API6_BusinessFlowScanner());
         securityScanners.add(new API7_SSRFScanner());
         securityScanners.add(new API8_SecurityConfigScanner());
         securityScanners.add(new API9_InventoryScanner());
