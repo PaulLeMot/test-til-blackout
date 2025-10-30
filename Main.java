@@ -5,6 +5,8 @@ import scanners.owasp.API2_BrokenAuthScanner;
 import scanners.owasp.API3_BOScanner;
 import scanners.owasp.API4_URCScanner;
 import scanners.owasp.API6_BusinessFlowScanner;
+import scanners.owasp.API8_SecurityConfigScanner;
+
 
 import java.util.Arrays;
 import java.util.List;
@@ -26,10 +28,11 @@ public class Main {
         // Создаём сканеры OWASP API с правильным типом
         List<SecurityScanner> securityScanners = new ArrayList<>();
         securityScanners.add(new API1_BOLAScanner());
-	securityScanners.add(new API2_BrokenAuthScanner());
+	    securityScanners.add(new API2_BrokenAuthScanner());
         securityScanners.add(new API3_BOScanner());
         securityScanners.add(new API4_URCScanner());
         securityScanners.add(new API6_BusinessFlowScanner());
+        securityScanners.add(new API8_SecurityConfigScanner());
 
         System.out.println("📋 Зарегистрировано сканеров: " + securityScanners.size());
         securityScanners.forEach(scanner ->
