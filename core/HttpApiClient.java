@@ -1,4 +1,3 @@
-// core/HttpApiClient.java
 package core;
 
 import java.net.http.HttpClient;
@@ -11,6 +10,36 @@ import java.util.List;
 
 public class HttpApiClient implements ApiClient {
     private final HttpClient httpClient;
+
+    // Внутренний класс ApiResponse
+    public static class ApiResponse {
+        private final int statusCode;
+        private final String body;
+        private final Map<String, List<String>> headers;
+
+        public ApiResponse(int statusCode, String body, Map<String, List<String>> headers) {
+            this.statusCode = statusCode;
+            this.body = body;
+            this.headers = headers;
+        }
+
+        public int getStatusCode() { 
+            return statusCode; 
+        }
+        
+        public String getBody() { 
+            return body; 
+        }
+        
+        public Map<String, List<String>> getHeaders() { 
+            return headers; 
+        }
+        
+        // Метод getStatus() для совместимости
+        public int getStatus() {
+            return statusCode;
+        }
+    }
 
     public HttpApiClient() {
         this.httpClient = HttpClient.newBuilder()
@@ -61,22 +90,5 @@ public class HttpApiClient implements ApiClient {
             System.err.println("❌ Ошибка при выполнении запроса " + method + " " + url + ": " + e.getMessage());
             return new ApiResponse(500, "Error: " + e.getMessage(), Map.of());
         }
-    }
-
-    // Вспомогательный класс для возврата ответа
-    public static class ApiResponse {
-        private final int statusCode;
-        private final String body;
-        private final Map<String, List<String>> headers;
-
-        public ApiResponse(int statusCode, String body, Map<String, List<String>> headers) {
-            this.statusCode = statusCode;
-            this.body = body;
-            this.headers = headers;
-        }
-
-        public int getStatusCode() { return statusCode; }
-        public String getBody() { return body; }
-        public Map<String, List<String>> getHeaders() { return headers; }
     }
 }
