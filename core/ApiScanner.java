@@ -45,15 +45,14 @@ public class ApiScanner {
 
             for (Future<List<Vulnerability>> future : futures) {
                 try {
-                    List<Vulnerability> vulns = future.get(30, TimeUnit.SECONDS);
+                    List<Vulnerability> vulns = future.get(60, TimeUnit.SECONDS); // Увеличить до 60 секунд
                     for (Vulnerability v : vulns) {
                         result.addVulnerability(v);
                     }
                 } catch (TimeoutException e) {
-                    System.err.println("⚠️ Сканер превысил время ожидания (30s)");
+                    System.err.println("⚠️ Сканер превысил время ожидания (60s)");
                 } catch (Exception e) {
                     System.err.println("⚠️ Ошибка при выполнении сканера: " + e.getMessage());
-                    e.printStackTrace();
                 }
             }
 
