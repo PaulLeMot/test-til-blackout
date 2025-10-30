@@ -1,16 +1,24 @@
+// core/ApiScanner.java
 package core;
 
 import scanners.SecurityScanner;
-
 import java.util.*;
 import java.util.concurrent.*;
 
 public class ApiScanner {
     private List<SecurityScanner> securityScanners = new ArrayList<>();
     private ExecutorService executorService;
+    private ApiClient apiClient;
 
     public ApiScanner() {
         this.executorService = Executors.newFixedThreadPool(2);
+        this.apiClient = new HttpApiClient(); // Создаем клиент здесь
+    }
+
+    // Конструктор с возможностью передачи своего клиента (для тестов)
+    public ApiScanner(ApiClient apiClient) {
+        this.executorService = Executors.newFixedThreadPool(2);
+        this.apiClient = apiClient;
     }
 
     public void registerSecurityScanner(SecurityScanner scanner) {
@@ -29,7 +37,8 @@ public class ApiScanner {
             for (SecurityScanner scanner : securityScanners) {
                 System.out.println("🔍 Запуск сканера: " + scanner.getName());
                 Future<List<Vulnerability>> future = executorService.submit(() -> {
-                    return scanner.scan(null, config, null);
+                    // Теперь передаем реальный apiClient вместо null
+                    return scanner.scan(null, config, apiClient);
                 });
                 futures.add(future);
             }
