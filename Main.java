@@ -6,6 +6,7 @@ import scanners.owasp.API3_BOScanner;
 import scanners.owasp.API4_URCScanner;
 import scanners.owasp.API6_BusinessFlowScanner;
 import scanners.owasp.API8_SecurityConfigScanner;
+import scanners.owasp.API9_InventoryScanner;
 
 
 import java.util.Arrays;
@@ -33,6 +34,7 @@ public class Main {
         securityScanners.add(new API4_URCScanner());
         securityScanners.add(new API6_BusinessFlowScanner());
         securityScanners.add(new API8_SecurityConfigScanner());
+        securityScanners.add(new API9_InventoryScanner());
 
         System.out.println("📋 Зарегистрировано сканеров: " + securityScanners.size());
         securityScanners.forEach(scanner ->
