@@ -1,6 +1,7 @@
 import core.*;
 import scanners.SecurityScanner;
 import scanners.owasp.API1_BOLAScanner;
+import scanners.owasp.API2_BrokenAuthScanner;
 import scanners.owasp.API3_BOScanner;
 import scanners.owasp.API4_URCScanner;
 import scanners.owasp.API6_BusinessFlowScanner;
@@ -25,6 +26,7 @@ public class Main {
         // Создаём сканеры OWASP API с правильным типом
         List<SecurityScanner> securityScanners = new ArrayList<>();
         securityScanners.add(new API1_BOLAScanner());
+	securityScanners.add(new API2_BrokenAuthScanner());
         securityScanners.add(new API3_BOScanner());
         securityScanners.add(new API4_URCScanner());
         securityScanners.add(new API6_BusinessFlowScanner());
@@ -48,7 +50,12 @@ public class Main {
                 ScanConfig config = new ScanConfig();
                 config.setTargetBaseUrl(baseUrl);
                 config.setPassword(PASSWORD);
-
+            
+                // ДОБАВЬТЕ ЭТИ СТРОКИ СРАЗУ ПОСЛЕ config.setPassword():
+                config.setBankBaseUrl(baseUrl);
+                config.setClientId("team172");  // client_id для банковского API
+                config.setClientSecret(PASSWORD); // client_secret = пароль
+            
                 ApiScanner apiScanner = new ApiScanner();
 
                 // Регистрируем все сканеры

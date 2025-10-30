@@ -1,4 +1,3 @@
-// core/AuthManager.java
 package core;
 
 import java.net.http.HttpClient;
@@ -13,6 +12,46 @@ import java.util.Map;
  * Менеджер аутентификации для получения токенов у банковского API
  */
 public class AuthManager {
+
+    /**
+     * Получает банковский токен для хакатона
+     */
+    public static String getBankHackathonToken(String bankBaseUrl, String clientId, String clientSecret) {
+        try {
+            String tokenUrl = bankBaseUrl + "/auth/bank-token";
+
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
+
+            // Формируем form-data запрос
+            String formData = "client_id=" + clientId + "&client_secret=" + clientSecret;
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(tokenUrl))
+                    .POST(HttpRequest.BodyPublishers.ofString(formData))
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Accept", "application/json")
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 200) {
+                String accessToken = extractAccessToken(response.body());
+                if (accessToken != null) {
+                    return accessToken;
+                }
+            } else {
+                System.err.println("❌ Ошибка получения банковского токена: " + response.statusCode() + " - " + response.body());
+            }
+
+        } catch (Exception e) {
+            System.err.println("💥 Ошибка при получении банковского токена: " + e.getMessage());
+        }
+
+        return null;
+    }
 
     /**
      * access token через login endpoint
