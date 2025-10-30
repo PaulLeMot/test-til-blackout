@@ -2,6 +2,7 @@ import core.*;
 import scanners.SecurityScanner;
 import scanners.owasp.API1_BOLAScanner;
 import scanners.owasp.API3_BOScanner;
+import scanners.owasp.API4_URCScanner;
 
 import java.util.Arrays;
 import java.util.List;
@@ -24,6 +25,7 @@ public class Main {
         List<SecurityScanner> securityScanners = new ArrayList<>();
         securityScanners.add(new API1_BOLAScanner());
         securityScanners.add(new API3_BOScanner());
+        securityScanners.add(new API4_URCScanner());
 
         System.out.println("📋 Зарегистрировано сканеров: " + securityScanners.size());
         securityScanners.forEach(scanner ->
@@ -90,12 +92,18 @@ public class Main {
                             .filter(v -> v.getCategory() == Vulnerability.Category.OWASP_API1_BOLA).count();
                     long brokenAuthCount = result.getVulnerabilities().stream()
                             .filter(v -> v.getCategory() == Vulnerability.Category.OWASP_API2_BROKEN_AUTH).count();
+                    long boplaCount = result.getVulnerabilities().stream()
+                            .filter(v -> v.getCategory() == Vulnerability.Category.OWASP_API3_BOPLA).count();
+                    long urcCount = result.getVulnerabilities().stream()
+                            .filter(v -> v.getCategory() == Vulnerability.Category.OWASP_API4_URC).count();
                     long contractCount = result.getVulnerabilities().stream()
                             .filter(v -> v.getCategory() == Vulnerability.Category.CONTRACT_VALIDATION).count();
 
                     System.out.println("🎯 Распределение по категориям:");
                     System.out.println("   🔓 OWASP API1 - BOLA: " + bolaCount + " уязвимостей");
                     System.out.println("   🔓 OWASP API2 - Broken Auth: " + brokenAuthCount + " уязвимостей");
+                    System.out.println("   🔓 OWASP API3 - BOPLA: " + boplaCount + " уязвимостей");
+                    System.out.println("   🔓 OWASP API4 - URC: " + urcCount + " уязвимостей");
                     System.out.println("   📝 Contract Validation: " + contractCount + " уязвимостей");
 
                     // Выводим уязвимости, отсортированные по серьезности
@@ -113,6 +121,20 @@ public class Main {
                                 System.out.println("   🚨 Уровень: " + vuln.getSeverity());
                                 System.out.println("   🏷️  Категория: " + vuln.getCategory());
                                 System.out.println("   📖 Описание: " + vuln.getDescription());
+
+                                // Выводим evidence если есть
+                                if (vuln.getEvidence() != null && !vuln.getEvidence().isEmpty()) {
+                                    System.out.println("   🔍 Доказательства:");
+                                    String[] evidenceLines = vuln.getEvidence().split("\n");
+                                    for (String line : evidenceLines) {
+                                        if (line.length() > 120) {
+                                            // Обрезаем длинные строки evidence
+                                            System.out.println("      " + line.substring(0, 120) + "...");
+                                        } else {
+                                            System.out.println("      " + line);
+                                        }
+                                    }
+                                }
 
                                 // Используем getRecommendations() (множественное число)
                                 if (vuln.getRecommendations() != null && !vuln.getRecommendations().isEmpty()) {
@@ -162,15 +184,18 @@ public class Main {
             System.out.println("\n💡 РЕКОМЕНДАЦИИ ПО УСТРАНЕНИЮ:");
             System.out.println("   1. 🔓 BOLA: Реализуйте проверки авторизации на уровне объектов");
             System.out.println("   2. 🔐 Broken Auth: Усильте аутентификацию и управление сессиями");
-            System.out.println("   3. 📝 Contract: Следуйте спецификациям OpenAPI");
-            System.out.println("   4. 🛡️  Приоритетно устраните уязвимости КРИТИЧЕСКОГО и ВЫСОКОГО риска");
-            System.out.println("   5. 🔄 Регулярно проводите security scanning в CI/CD");
+            System.out.println("   3. 🔓 BOPLA: Внедрите проверки прав на уровне свойств объектов");
+            System.out.println("   4. 🔓 URC: Реализуйте rate limiting и ограничения на ресурсы");
+            System.out.println("   5. 📝 Contract: Следуйте спецификациям OpenAPI");
+            System.out.println("   6. 🛡️  Приоритетно устраните уязвимости КРИТИЧЕСКОГО и ВЫСОКОГО риска");
+            System.out.println("   7. 🔄 Регулярно проводите security scanning в CI/CD");
         }
 
         System.out.println("\n🔗 Полезные ресурсы:");
         System.out.println("   • OWASP API Security Top 10: https://owasp.org/www-project-api-security/");
         System.out.println("   • OpenAPI Specification: https://swagger.io/specification/");
         System.out.println("   • Banking API Standards: https://openbankingapi.ru/");
+        System.out.println("   • Rate Limiting Best Practices: https://cloud.google.com/architecture/rate-limiting-strategies-techniques");
 
         System.out.println("\n" + "=".repeat(80));
     }

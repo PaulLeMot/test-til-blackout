@@ -712,7 +712,7 @@ public class API3_BOScanner implements SecurityScanner {
         vuln.setTitle("API3:2023 - " + title);
         vuln.setDescription(description);
         vuln.setSeverity(severity);
-        vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
+        vuln.setCategory(Vulnerability.Category.OWASP_API3_BOPLA);
         vuln.setEndpoint(endpoint);
         vuln.setMethod(method);
         vuln.setStatusCode(statusCode);
