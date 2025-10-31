@@ -32,7 +32,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
 
     @Override
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
-        System.out.println("🔍 Scanning for Unsafe API Consumption vulnerabilities (OWASP API Security Top 10:2023 - API10)...");
+        System.out.println("(API-10) Сканирование уязвимостей небезопасного потребления API (OWASP API Security Top 10:2023 - API10)...");
 
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         String baseUrl = config.getTargetBaseUrl().trim();
@@ -60,11 +60,11 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
             generateConsumptionReport(vulnerabilities);
 
         } catch (Exception e) {
-            System.err.println("💥 Ошибка при выполнении API10 сканера: " + e.getMessage());
+            System.err.println("(API-10) Ошибка при выполнении API10 сканера: " + e.getMessage());
             e.printStackTrace();
         }
 
-        System.out.println("✅ API10 Unsafe Consumption scan completed. Найдено уязвимостей: " + vulnerabilities.size());
+        System.out.println("(API-10) Сканирование небезопасного потребления API завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
     }
 
@@ -72,7 +72,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
      * 5.10.1: Анализ зависимостей от сторонних API в документации
      */
     private void checkExternalDependencies(Object openAPI, List<Vulnerability> vulnerabilities, String baseUrl) {
-        System.out.println("📋 Анализ зависимостей от сторонних API...");
+        System.out.println("(API-10) Анализ зависимостей от сторонних API...");
 
         // Проверяем наличие упоминаний внешних API в конфигурации
         String bankUrl = baseUrl; // В реальности нужно проверить bankBaseUrl
@@ -100,7 +100,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
      * 5.10.2: Тестирование обработки некорректных данных от внешних API
      */
     private void testMaliciousExternalData(List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
-        System.out.println("🧪 Тестирование обработки некорректных данных...");
+        System.out.println("(API-10) Тестирование обработки некорректных данных...");
 
         String[] testPayloads = {
                 "{\"malicious\":\"<script>alert('xss')</script>\",\"data\":\"test\"}",
@@ -151,7 +151,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
      * 5.10.3: Проверка валидации данных, полученных из доверенных источников
      */
     private void testTrustedSourceValidation(List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
-        System.out.println("🛡️ Проверка валидации данных из доверенных источников...");
+        System.out.println("(API-10) Проверка валидации данных из доверенных источников...");
 
         // Тестируем различные сценарии с данными, которые могут приходить из "доверенных" источников
         String[] testScenarios = {
@@ -202,7 +202,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
      * 5.10.4: Анализ обработки ошибок внешних сервисов
      */
     private void testExternalServiceErrorHandling(List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
-        System.out.println("🚨 Тестирование обработки ошибок внешних сервисов...");
+        System.out.println("(API-10) Тестирование обработки ошибок внешних сервисов...");
 
         try {
             // Эмулируем недоступность внешнего сервиса
@@ -246,7 +246,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
      * 5.10.5: Тестирование уязвимостей цепочки доверия (trust chain)
      */
     private void testTrustChainVulnerabilities(List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
-        System.out.println("⛓️ Тестирование цепочки доверия...");
+        System.out.println("(API-10) Тестирование цепочки доверия...");
 
         // Проверяем наличие слабых мест в цепочке доверия
         List<String> trustIssues = new ArrayList<>();
@@ -284,7 +284,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
      * 5.10.6: Проверка безопасности интеграций с облачными сервисами
      */
     private void checkCloudServiceIntegrations(List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
-        System.out.println("☁️ Проверка интеграций с облачными сервисами...");
+        System.out.println("(API-10) Проверка интеграций с облачными сервисами...");
 
         // Проверяем наличие облачных интеграций в ответах
         try {
@@ -327,10 +327,10 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
      * 5.10.7: Генерация отчета с проблемами потребления сторонних API
      */
     private void generateConsumptionReport(List<Vulnerability> vulnerabilities) {
-        System.out.println("📊 Генерация отчета по проблемам потребления сторонних API...");
+        System.out.println("(API-10) Генерация отчета по проблемам потребления сторонних API...");
 
         if (vulnerabilities.isEmpty()) {
-            System.out.println("✅ Не обнаружено проблем с потреблением сторонних API");
+            System.out.println("(API-10) Не обнаружено проблем с потреблением сторонних API");
             return;
         }
 
@@ -341,15 +341,15 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
             groupedVulns.computeIfAbsent(title, k -> new ArrayList<>()).add(vuln);
         }
 
-        System.out.println("\n📋 ОТЧЕТ ПО ПРОБЛЕМАМ ПОТРЕБЛЕНИЯ СТОРОННИХ API:");
-        System.out.println("=" .repeat(80));
+        System.out.println("(API-10) ОТЧЕТ ПО ПРОБЛЕМАМ ПОТРЕБЛЕНИЯ СТОРОННИХ API:");
+        System.out.println("(API-10) " + "=" .repeat(80));
 
         for (Map.Entry<String, List<Vulnerability>> entry : groupedVulns.entrySet()) {
-            System.out.println("🔍 " + entry.getKey() + " (найдено: " + entry.getValue().size() + ")");
+            System.out.println("(API-10) " + entry.getKey() + " (найдено: " + entry.getValue().size() + ")");
             for (Vulnerability vuln : entry.getValue()) {
-                System.out.println("   • Серьезность: " + vuln.getSeverity());
+                System.out.println("(API-10)    Серьезность: " + vuln.getSeverity());
                 if (vuln.getEvidence() != null) {
-                    System.out.println("   • Доказательства: " +
+                    System.out.println("(API-10)    Доказательства: " +
                             (vuln.getEvidence().length() > 100 ?
                                     vuln.getEvidence().substring(0, 100) + "..." : vuln.getEvidence()));
                 }
@@ -363,12 +363,12 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         long mediumCount = vulnerabilities.stream().filter(v -> v.getSeverity() == Vulnerability.Severity.MEDIUM).count();
         long lowCount = vulnerabilities.stream().filter(v -> v.getSeverity() == Vulnerability.Severity.LOW).count();
 
-        System.out.println("📈 СТАТИСТИКА ПО СЕРЬЕЗНОСТИ:");
-        System.out.println("   💀 Критический: " + criticalCount);
-        System.out.println("   🔴 Высокий: " + highCount);
-        System.out.println("   🟡 Средний: " + mediumCount);
-        System.out.println("   🔵 Низкий: " + lowCount);
-        System.out.println("=" .repeat(80));
+        System.out.println("(API-10) СТАТИСТИКА ПО СЕРЬЕЗНОСТИ:");
+        System.out.println("(API-10)    Критический: " + criticalCount);
+        System.out.println("(API-10)    Высокий: " + highCount);
+        System.out.println("(API-10)    Средний: " + mediumCount);
+        System.out.println("(API-10)    Низкий: " + lowCount);
+        System.out.println("(API-10) " + "=" .repeat(80));
     }
 
     /**

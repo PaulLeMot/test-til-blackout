@@ -63,26 +63,26 @@ public class API7_SSRFScanner implements SecurityScanner {
 
     @Override
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
-        logInfo("🌐 Starting enhanced SSRF vulnerability scan...");
+        System.out.println("(API-7) Запуск расширенного сканирования уязвимостей Server Side Request Forgery (SSRF)...");
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         String baseUrl = config.getTargetBaseUrl();
 
         // 1. Находим существующие эндпоинты
         List<String> existingEndpoints = findExistingEndpoints(config, apiClient);
-        logInfo("✅ Found " + existingEndpoints.size() + " existing endpoints");
+        System.out.println("(API-7) Найдено существующих эндпоинтов: " + existingEndpoints.size());
 
         if (existingEndpoints.isEmpty()) {
-            logInfo("❌ No existing endpoints found to test");
+            System.out.println("(API-7) Не найдено существующих эндпоинтов для тестирования");
             return vulnerabilities;
         }
 
         // 2. Тестируем каждый существующий эндпоинта с расширенными payload'ами
         for (String endpoint : existingEndpoints) {
-            logInfo("🎯 Testing endpoint: " + endpoint);
+            System.out.println("(API-7) Тестирование эндпоинта: " + endpoint);
             testEndpointWithMultiplePayloads(config, apiClient, vulnerabilities, endpoint);
         }
 
-        logInfo("✅ SSRF scan completed. Found: " + vulnerabilities.size() + " vulnerabilities");
+        System.out.println("(API-7) Сканирование SSRF завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
     }
     
@@ -107,15 +107,15 @@ public class API7_SSRFScanner implements SecurityScanner {
                     // Более либеральная проверка существования
                     if (status != 404) {
                         existing.add(endpoint);
-                        logDebug("   Endpoint exists: " + endpoint + " (status: " + status + ")");
+                        logDebug("   Эндпоинт существует: " + endpoint + " (статус: " + status + ")");
                     } else {
-                        logDebug("   Endpoint not found: " + endpoint + " (404)");
+                        logDebug("   Эндпоинт не найден: " + endpoint + " (404)");
                     }
                 }
 
             } catch (Exception e) {
                 // При тихом режиме — не выводим стектрейсы для каждого запроса
-                logDebug("   Request to check endpoint failed: " + endpoint + " — " + e.getMessage());
+                logDebug("   Запрос для проверки эндпоинта завершился ошибкой: " + endpoint + " — " + e.getMessage());
             }
         }
         
@@ -139,7 +139,7 @@ public class API7_SSRFScanner implements SecurityScanner {
 
             try {
                 // В нормальном режиме не выводим каждую тестовую итерацию
-                logDebug("   Testing: " + parameter + "=" + payload);
+                logDebug("   Тестирование: " + parameter + "=" + payload);
 
                 String url = config.getTargetBaseUrl() + endpoint;
                 Map<String, String> headers = createBankingHeaders(endpoint);
@@ -162,21 +162,21 @@ public class API7_SSRFScanner implements SecurityScanner {
                             httpResponse
                         );
                         vulnerabilities.add(vuln);
-                        logInfo("   🔴 POTENTIAL SSRF DETECTED at " + endpoint + " parameter=" + parameter);
-                        logDebug("   Evidence: " + (vuln.getEvidence() == null ? "(none)" : vuln.getEvidence()));
+                        System.out.println("(API-7) УЯЗВИМОСТЬ: Обнаружена потенциальная SSRF уязвимость в эндпоинте " + endpoint + " параметр=" + parameter);
+                        System.out.println("(API-7) Доказательство: " + (vuln.getEvidence() == null ? "(отсутствует)" : vuln.getEvidence()));
                     } else {
-                        logDebug("   No SSRF detected for payload: " + payload + " (status: " + status + ")");
+                        logDebug("   SSRF не обнаружена для payload: " + payload + " (статус: " + status + ")");
                     }
                 }
 
             } catch (Exception e) {
                 errors++;
-                logDebug("   Request failed for endpoint " + endpoint + ": " + e.getMessage());
+                logDebug("   Запрос завершился ошибкой для эндпоинта " + endpoint + ": " + e.getMessage());
             }
         }
 
         // Краткое резюме по каждому тестируемому эндпоинту
-        logDebug(String.format("   Summary for %s — attempts: %d, errors: %d, tests run: %d", endpoint, attempts, errors, testCases.size()));
+        logDebug(String.format("   Итог по %s — попыток: %d, ошибок: %d, выполнено тестов: %d", endpoint, attempts, errors, testCases.size()));
     }
     
     private List<Map<String, Object>> generateTestCases(String endpoint) {
@@ -303,8 +303,11 @@ public class API7_SSRFScanner implements SecurityScanner {
                                                 String endpoint, String parameter, 
                                                 String payload, HttpApiClient.ApiResponse response) {
         Vulnerability vuln = new Vulnerability();
-        vuln.setTitle(title);
-        vuln.setDescription(description);
+        vuln.setTitle("API7:2023 - " + title);
+        vuln.setDescription(description + 
+            " Доказательство: система обработала SSRF payload и вернула статус " + response.getStatus() + 
+            ". Payload: " + payload + " был передан в параметре " + parameter + 
+            ". Ответ сервера указывает на успешную или частичную обработку внутреннего запроса.");
         vuln.setSeverity(severity);
         vuln.setCategory(Vulnerability.Category.OWASP_API7_SSRF);
         vuln.setEndpoint(endpoint);
