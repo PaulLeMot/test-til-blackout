@@ -49,6 +49,7 @@ public class Main {
         int totalVulnerabilities = 0;
         int totalScannedBanks = 0;
         List<String> failedBanks = new ArrayList<>();
+        Map<String, Integer> bankVulnerabilities = new HashMap<>();
 
         for (String baseUrl : BANKS) {
             System.out.println("\n" + "=".repeat(50));
@@ -63,14 +64,15 @@ public class Main {
             try {
                 OpenApiSpecLoader loader = new OpenApiSpecLoader(specUrl);
                 openAPI = loader.getOpenAPI();
-                System.out.println("✅ OpenAPI-спецификация загружена: " +
+                System.out.println("OpenAPI-спецификация загружена: " +
                         openAPI.getInfo().getTitle() + " v" + openAPI.getInfo().getVersion());
             } catch (Exception e) {
-                System.err.println("⚠️ Не удалось загрузить OpenAPI-спецификацию по адресу: " + specUrl);
+                System.err.println("Не удалось загрузить OpenAPI-спецификацию по адресу: " + specUrl);
                 System.err.println("   Причина: " + e.getMessage());
                 // Продолжаем сканирование без спецификации
             }
 
+            int currentBankVulnerabilities = 0;
             try {
                 ScanConfig config = new ScanConfig();
                 config.setTargetBaseUrl(cleanBaseUrl);
@@ -108,8 +110,8 @@ public class Main {
                 }
 
                 totalScannedBanks++;
-                int bankVulnerabilities = allVulnerabilities.size();
-                totalVulnerabilities += bankVulnerabilities;
+                currentBankVulnerabilities = allVulnerabilities.size();
+                totalVulnerabilities += currentBankVulnerabilities;
 
                 // Статистика по сканерам
                 Map<String, Integer> scannerStats = new HashMap<>();
@@ -130,7 +132,7 @@ public class Main {
 
                 System.out.println("\nРезультаты сканирования " + cleanBaseUrl + ":");
                 System.out.println("   Статус: ЗАВЕРШЕНО");
-                System.out.println("   Уязвимостей: " + bankVulnerabilities);
+                System.out.println("   Уязвимостей: " + currentBankVulnerabilities);
                 System.out.println("   Уровни: КРИТИЧЕСКИХ-" + criticalCount + " ВЫСОКИХ-" + highCount +
                         " СРЕДНИХ-" + mediumCount + " НИЗКИХ-" + lowCount);
 
@@ -147,14 +149,13 @@ public class Main {
                 printScannerStats(scannerStats, "OWASP_API9_INVENTORY", "API9 - Inventory");
                 printScannerStats(scannerStats, "OWASP_API10_UNSAFE_CONSUMPTION", "API10 - Unsafe Consumption");
 
-                if (highCount > 0 || criticalCount > 0) {
-                    System.out.println("   Обнаружены критические уязвимости!");
-                }
-
             } catch (Exception e) {
                 System.err.println("Ошибка при сканировании банка " + cleanBaseUrl + ": " + e.getMessage());
                 e.printStackTrace();
                 failedBanks.add(cleanBaseUrl);
+            } finally {
+                // Всегда добавляем результат в карту, даже если были ошибки
+                bankVulnerabilities.put(cleanBaseUrl, currentBankVulnerabilities);
             }
 
             System.out.println("\n" + "=".repeat(50));
@@ -173,17 +174,25 @@ public class Main {
         System.out.println("   Просканировано банков: " + totalScannedBanks + "/" + BANKS.size());
         System.out.println("   Всего уязвимостей: " + totalVulnerabilities);
 
+        // Результаты анализа по всем банкам
+        System.out.println("\nРезультаты по банкам:");
+        for (String bank : BANKS) {
+            String cleanBank = bank.trim();
+            int vulnCount = bankVulnerabilities.getOrDefault(cleanBank, 0);
+            System.out.println("   • " + cleanBank + ": " + vulnCount + " уязвимостей");
+        }
+
         if (!failedBanks.isEmpty()) {
-            System.out.println("   Ошибки сканирования: " + failedBanks.size() + " банков");
+            System.out.println("\n   Ошибки сканирования: " + failedBanks.size() + " банков");
             for (String failedBank : failedBanks) {
                 System.out.println("     • " + failedBank);
             }
         }
 
         if (totalVulnerabilities == 0) {
-            System.out.println("Уязвимостей не обнаружено.");
+            System.out.println("\nУязвимостей не обнаружено.");
         } else {
-            System.out.println("Рекомендуется устранение уязвимостей ВЫСОКОГО и КРИТИЧЕСКОГО уровня");
+            System.out.println("\nРекомендуется устранение уязвимостей ВЫСОКОГО и КРИТИЧЕСКОГО уровня");
         }
     }
 
