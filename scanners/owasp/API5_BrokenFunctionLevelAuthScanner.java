@@ -7,6 +7,10 @@ import core.Vulnerability;
 import core.ApiClient;
 import core.AuthManager;
 import core.HttpApiClient;
+import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.PathItem;
+import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.Paths;
 
 import java.util.*;
 import java.util.regex.Pattern;
@@ -17,35 +21,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
     private static final String[] ADMIN_KEYWORDS = {"/admin", "/manage", "/internal", "/system", "/config", "/banker", "/capital", "/key-rate", "/teams", "/stats"};
     private static final String[] PRIVILEGED_ROLES = {"admin", "administrator", "superuser", "manager", "root", "banker"};
 
-    // Административные эндпоинты из документации API
-    private static final String[] ADMIN_ENDPOINTS = {
-            // Internal: Admin endpoints
-            "/admin/banks/{bank_code}/settings",
-            "/admin/capital",
-            "/admin/key-rate",
-            "/admin/key-rate/history",
-            "/admin/payments",
-            "/admin/stats",
-            "/admin/teams",
-            "/admin/teams/upload",
-            "/admin/transfers",
-
-            // Internal: Banker endpoints
-            "/banker/clients",
-            "/banker/clients/{client_id}",
-            "/banker/consents/{request_id}/approve",
-            "/banker/consents/{request_id}/reject",
-            "/banker/consents/all",
-            "/banker/consents/pending",
-            "/banker/products",
-            "/banker/products/{product_id}",
-
-            // Payment approval endpoints
-            "/payment-consents/{request_id}/approve",
-            "/payment-consents/{request_id}/reject",
-            "/payment-consents/pending/list"
-    };
-
     public API5_BrokenFunctionLevelAuthScanner() {}
 
     @Override
@@ -54,10 +29,17 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
     }
 
     @Override
-    public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
+    public List<Vulnerability> scan(Object openApiObj, ScanConfig config, ApiClient apiClient) {
         System.out.println("(API-5) Сканирование уязвимостей Broken Function Level Authorization (OWASP API5)...");
 
         List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        if (!(openApiObj instanceof OpenAPI)) {
+            System.err.println("(API-5) Ошибка: передан неверный объект OpenAPI");
+            return vulnerabilities;
+        }
+
+        OpenAPI openAPI = (OpenAPI) openApiObj;
         String baseUrl = config.getTargetBaseUrl().trim();
         String password = config.getPassword();
 
@@ -84,18 +66,18 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
 
         System.out.println("(API-5) Получены токены для пользователей: " + user1 + ", " + user2);
 
-        // 5.5.1: Поиск административных эндпоинтов через анализ API документации
-        List<String> adminEndpoints = discoverAdminEndpoints(baseUrl, token1, apiClient);
-        System.out.println("(API-5) Найдено потенциальных административных эндпоинтов: " + adminEndpoints.size());
+        // 5.5.1: Поиск административных эндпоинтов через анализ OpenAPI спецификации
+        List<String> adminEndpoints = discoverAdminEndpointsFromOpenAPI(openAPI);
+        System.out.println("(API-5) Найдено административных эндпоинтов из OpenAPI: " + adminEndpoints.size());
 
         // 5.5.2: Попытка вызова админ-функций с правами обычного пользователя
-        vulnerabilities.addAll(testAdminAccessWithUserTokens(baseUrl, adminEndpoints, token1, token2, user1, user2, apiClient));
+        vulnerabilities.addAll(testAdminAccessWithUserTokens(baseUrl, adminEndpoints, token1, user1, apiClient));
 
         // 5.5.3: Тестирование эскалации привилегий через модификацию ролей
         vulnerabilities.addAll(testRoleEscalation(baseUrl, token1, user1, apiClient));
 
         // 5.5.4: Проверка доступа к функциям других пользователей
-        vulnerabilities.addAll(testCrossUserAccess(baseUrl, token1, token2, user1, user2, apiClient));
+        vulnerabilities.addAll(testCrossUserAccess(baseUrl, token1, token2, user1, user2, apiClient, openAPI));
 
         // 5.5.7: Проверка отсутствия авторизации для критических операций
         vulnerabilities.addAll(testUnauthorizedCriticalOperations(baseUrl, adminEndpoints, apiClient));
@@ -105,83 +87,80 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
     }
 
     /**
-     * 5.5.1: Поиск административных эндпоинтов через анализ API документации
+     * 5.5.1: Поиск административных эндпоинтов через анализ OpenAPI спецификации
      */
-    private List<String> discoverAdminEndpoints(String baseUrl, String token, ApiClient apiClient) {
+    private List<String> discoverAdminEndpointsFromOpenAPI(OpenAPI openAPI) {
         List<String> adminEndpoints = new ArrayList<>();
 
-        // Добавляем известные административные эндпоинты из документации
-        for (String endpoint : ADMIN_ENDPOINTS) {
-            adminEndpoints.add(endpoint);
+        if (openAPI.getPaths() == null) {
+            return adminEndpoints;
         }
 
-        // Попробуем получить OpenAPI спецификацию
-        String[] discoveryPaths = {
-                "/openapi.json", "/swagger.json", "/swagger.yaml",
-                "/api-docs", "/v2/api-docs", "/v3/api-docs", "/docs"
-        };
+        Paths paths = openAPI.getPaths();
+        for (String path : paths.keySet()) {
+            PathItem pathItem = paths.get(path);
 
-        for (String path : discoveryPaths) {
-            try {
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + token);
-                headers.put("Accept", "application/json");
+            // Проверяем все операции на пути
+            for (PathItem.HttpMethod method : pathItem.readOperationsMap().keySet()) {
+                Operation operation = pathItem.readOperationsMap().get(method);
 
-                Object response = apiClient.executeRequest("GET", baseUrl + path, null, headers);
-                if (response instanceof HttpApiClient.ApiResponse) {
-                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-                    if (apiResponse.getStatusCode() == 200) {
-                        adminEndpoints.addAll(extractAdminEndpointsFromOpenAPI(apiResponse.getBody()));
-                    }
+                // Ищем административные эндпоинты по ключевым словам
+                if (isAdminEndpoint(path, operation)) {
+                    adminEndpoints.add(path);
+                    break; // Добавляем путь только один раз
                 }
-            } catch (Exception e) {
-                // Игнорируем ошибки - эндпоинт может не существовать
             }
-        }
-
-        // Также проверяем стандартные административные пути
-        for (String keyword : ADMIN_KEYWORDS) {
-            adminEndpoints.add(keyword);
-            adminEndpoints.add("/api" + keyword);
-            adminEndpoints.add("/v1" + keyword);
-            adminEndpoints.add("/v2" + keyword);
         }
 
         return adminEndpoints;
     }
 
     /**
-     * Извлечение административных эндпоинтов из OpenAPI спецификации
+     * Проверка, является ли эндпоинт административным
      */
-    private List<String> extractAdminEndpointsFromOpenAPI(String openApiJson) {
-        List<String> endpoints = new ArrayList<>();
-
-        // Ищем пути, содержащие административные ключевые слова
+    private boolean isAdminEndpoint(String path, Operation operation) {
+        // Проверка пути
         for (String keyword : ADMIN_KEYWORDS) {
-            Pattern pathPattern = Pattern.compile("\"/([^\"]*" + keyword.replace("/", "") + "[^\"]*)\"", Pattern.CASE_INSENSITIVE);
-            Matcher matcher = pathPattern.matcher(openApiJson);
+            if (path.toLowerCase().contains(keyword)) {
+                return true;
+            }
+        }
 
-            while (matcher.find()) {
-                String path = "/" + matcher.group(1);
-                if (!endpoints.contains(path)) {
-                    endpoints.add(path);
+        // Проверка тегов операции
+        if (operation.getTags() != null) {
+            for (String tag : operation.getTags()) {
+                if (tag.toLowerCase().contains("admin") ||
+                        tag.toLowerCase().contains("internal") ||
+                        tag.toLowerCase().contains("banker")) {
+                    return true;
                 }
             }
         }
 
-        return endpoints;
+        // Проверка описания и summary
+        String description = operation.getDescription() != null ? operation.getDescription().toLowerCase() : "";
+        String summary = operation.getSummary() != null ? operation.getSummary().toLowerCase() : "";
+
+        return description.contains("admin") || description.contains("internal") ||
+                description.contains("banker") || summary.contains("admin") ||
+                summary.contains("internal") || summary.contains("banker");
     }
 
     /**
      * 5.5.2: Попытка вызова админ-функций с правами обычного пользователя
      */
     private List<Vulnerability> testAdminAccessWithUserTokens(String baseUrl, List<String> adminEndpoints,
-                                                              String userToken, String otherUserToken,
-                                                              String user1, String user2, ApiClient apiClient) {
+                                                              String userToken, String username,
+                                                              ApiClient apiClient) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
+        Set<String> testedEndpoints = new HashSet<>(); // Для избежания дублирования
 
         for (String endpoint : adminEndpoints) {
-            // Заменяем параметры на тестовые значения
+            if (testedEndpoints.contains(endpoint)) {
+                continue;
+            }
+            testedEndpoints.add(endpoint);
+
             String testEndpoint = replacePathParameters(endpoint);
             String fullUrl = baseUrl + testEndpoint;
 
@@ -191,37 +170,16 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
             if (response != null && (response.getStatusCode() == 200 || response.getStatusCode() == 201)) {
                 Vulnerability vuln = createVulnerability(
                         "Несанкционированный доступ к административной функции",
-                        "Пользователь " + user1 + " получил доступ к административному эндпоинту " + endpoint +
+                        "Пользователь " + username + " получил доступ к административному эндпоинту " + endpoint +
                                 " с правами обычного пользователя. HTTP статус: " + response.getStatusCode() +
                                 ". Доказательство: успешный ответ 200/201 на административный эндпоинт с токеном обычного пользователя.",
                         endpoint,
                         response.getStatusCode(),
-                        user1, "system", fullUrl
+                        username, "system", fullUrl
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен несанкционированный доступ к административному эндпоинту: " + endpoint + 
-                                 " с правами пользователя " + user1 + ". Статус: " + response.getStatusCode());
-            }
-
-            // Тестируем POST запросы для критических операций
-            if (endpoint.contains("approve") || endpoint.contains("reject") || endpoint.contains("upload")) {
-                String testPayload = "{}";
-                HttpApiClient.ApiResponse postResponse = makeAuthenticatedRequest(apiClient, "POST", fullUrl, userToken, testPayload);
-
-                if (postResponse != null && (postResponse.getStatusCode() == 200 || postResponse.getStatusCode() == 201)) {
-                    Vulnerability vuln = createVulnerability(
-                            "Несанкционированное выполнение административной операции",
-                            "Пользователь " + user1 + " выполнил административную операцию через эндпоинт " + endpoint +
-                                    " с правами обычного пользователя. HTTP статус: " + postResponse.getStatusCode() +
-                                    ". Доказательство: успешное выполнение критической операции (approve/reject/upload) с токеном обычного пользователя.",
-                            endpoint,
-                            postResponse.getStatusCode(),
-                            user1, "system", fullUrl
-                    );
-                    vulnerabilities.add(vuln);
-                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружено несанкционированное выполнение административной операции: " + endpoint + 
-                                     " пользователем " + user1 + ". Статус: " + postResponse.getStatusCode());
-                }
+                System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен несанкционированный доступ к административному эндпоинту: " + endpoint +
+                        " с правами пользователя " + username + ". Статус: " + response.getStatusCode());
             }
         }
 
@@ -250,35 +208,8 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                 HttpApiClient.ApiResponse response = makeAuthenticatedRequest(apiClient, "POST", fullUrl, token, payload);
 
                 if (response != null && response.getStatusCode() == 200) {
-                    // Проверяем, изменилась ли роль
-                    HttpApiClient.ApiResponse verifyResponse = makeAuthenticatedRequest(apiClient, "GET", baseUrl + "/auth/me", token);
-                    if (verifyResponse != null && verifyResponse.getStatusCode() == 200 &&
-                            verifyResponse.getBody().toLowerCase().contains(role)) {
-
-                        Vulnerability vuln = createVulnerability(
-                                "Успешная эскалация привилегий",
-                                "Пользователь " + username + " успешно повысил свои привилегии до роли '" + role +
-                                        "' через эндпоинт " + endpoint + 
-                                        ". Доказательство: подтверждено изменение роли через запрос к /auth/me.",
-                                endpoint,
-                                response.getStatusCode(),
-                                username, "system", fullUrl
-                        );
-                        vulnerabilities.add(vuln);
-                        System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружена эскалация привилегий через эндпоинт: " + endpoint + 
-                                         ". Пользователь " + username + " получил роль: " + role);
-                    }
-                }
-            }
-
-            // Тестируем PUT запросы
-            for (String role : PRIVILEGED_ROLES) {
-                String payload = String.format("{\"role\":\"%s\"}", role);
-                HttpApiClient.ApiResponse response = makeAuthenticatedRequest(apiClient, "PUT", fullUrl, token, payload);
-
-                if (response != null && response.getStatusCode() == 200) {
                     Vulnerability vuln = createVulnerability(
-                            "Возможная эскалация привилегий через PUT",
+                            "Возможная эскалация привилегий",
                             "Пользователь " + username + " успешно отправил запрос на изменение роли на '" + role +
                                     "' через эндпоинт " + endpoint + ". HTTP статус: " + response.getStatusCode() +
                                     ". Доказательство: запрос на изменение роли выполнен успешно (статус 200).",
@@ -287,8 +218,8 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                             username, "system", fullUrl
                     );
                     vulnerabilities.add(vuln);
-                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружена возможная эскалация привилегий через PUT запрос: " + endpoint + 
-                                     ". Пользователь: " + username + ", запрошенная роль: " + role);
+                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружена возможная эскалация привилегий: " + endpoint +
+                            ". Пользователь: " + username + ", запрошенная роль: " + role);
                 }
             }
         }
@@ -300,57 +231,27 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
      * 5.5.4: Проверка доступа к функциям других пользователей
      */
     private List<Vulnerability> testCrossUserAccess(String baseUrl, String token1, String token2,
-                                                    String user1, String user2, ApiClient apiClient) {
+                                                    String user1, String user2, ApiClient apiClient,
+                                                    OpenAPI openAPI) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
 
-        // Получаем ID пользователей и их счета
+        // Получаем ID пользователей
         String user1Id = getUserId(baseUrl, token1, apiClient);
         String user2Id = getUserId(baseUrl, token2, apiClient);
 
+        // Получаем счета пользователей
         List<String> user1Accounts = getUserAccounts(baseUrl, token1, apiClient);
         List<String> user2Accounts = getUserAccounts(baseUrl, token2, apiClient);
-
-        if (user1Id != null && user2Id != null) {
-            // Тестируем доступ к функциям другого пользователя
-            String[] userEndpoints = {
-                    "/users/%s/profile", "/users/%s/settings", "/users/%s/permissions",
-                    "/accounts/%s", "/profile/%s", "/banker/clients/%s"
-            };
-
-            for (String endpointTemplate : userEndpoints) {
-                String endpoint = String.format(endpointTemplate, user2Id);
-                String fullUrl = baseUrl + endpoint;
-
-                HttpApiClient.ApiResponse response = makeAuthenticatedRequest(apiClient, "GET", fullUrl, token1);
-
-                if (response != null && response.getStatusCode() == 200) {
-                    Vulnerability vuln = createVulnerability(
-                            "Доступ к функциям другого пользователя",
-                            "Пользователь " + user1 + " получил доступ к функциям пользователя " + user2 +
-                                    " через эндпоинт " + endpoint + 
-                                    ". Доказательство: успешный доступ к персональным данным другого пользователя с идентификатором " + user2Id,
-                            endpoint,
-                            response.getStatusCode(),
-                            user1, user2, fullUrl
-                    );
-                    vulnerabilities.add(vuln);
-                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен доступ к функциям другого пользователя: " + endpoint + 
-                                     ". Пользователь " + user1 + " получил доступ к данным пользователя " + user2);
-                }
-            }
-        }
 
         // Тестируем доступ к счетам другого пользователя
         if (!user2Accounts.isEmpty()) {
             String user2Account = user2Accounts.get(0);
-            String[] accountEndpoints = {
-                    "/accounts/%s",
-                    "/accounts/%s/balances",
-                    "/accounts/%s/transactions"
-            };
+
+            // Получаем эндпоинты для работы со счетами из OpenAPI
+            List<String> accountEndpoints = getAccountEndpointsFromOpenAPI(openAPI);
 
             for (String endpointTemplate : accountEndpoints) {
-                String endpoint = String.format(endpointTemplate, user2Account);
+                String endpoint = endpointTemplate.replace("{account_id}", user2Account);
                 String fullUrl = baseUrl + endpoint;
 
                 HttpApiClient.ApiResponse response = makeAuthenticatedRequest(apiClient, "GET", fullUrl, token1);
@@ -366,8 +267,8 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                             user1, user2, fullUrl
                     );
                     vulnerabilities.add(vuln);
-                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен доступ к счетам другого пользователя: " + endpoint + 
-                                     ". Пользователь " + user1 + " получил доступ к счету " + user2Account + " пользователя " + user2);
+                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен доступ к счетам другого пользователя: " + endpoint +
+                            ". Пользователь " + user1 + " получил доступ к счету " + user2Account + " пользователя " + user2);
                 }
             }
         }
@@ -376,15 +277,39 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
     }
 
     /**
+     * Получение эндпоинтов для работы со счетами из OpenAPI
+     */
+    private List<String> getAccountEndpointsFromOpenAPI(OpenAPI openAPI) {
+        List<String> accountEndpoints = new ArrayList<>();
+
+        if (openAPI.getPaths() == null) {
+            return accountEndpoints;
+        }
+
+        for (String path : openAPI.getPaths().keySet()) {
+            if (path.contains("/accounts/") && path.contains("{account_id}")) {
+                accountEndpoints.add(path);
+            }
+        }
+
+        return accountEndpoints;
+    }
+
+    /**
      * 5.5.7: Проверка отсутствия авторизации для критических операций
      */
     private List<Vulnerability> testUnauthorizedCriticalOperations(String baseUrl, List<String> adminEndpoints, ApiClient apiClient) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
+        Set<String> testedEndpoints = new HashSet<>(); // Для избежания дублирования
 
         for (String endpoint : adminEndpoints) {
+            if (testedEndpoints.contains(endpoint)) {
+                continue;
+            }
+            testedEndpoints.add(endpoint);
+
             // Пропускаем эндпоинты, которые по документации доступны без аутентификации
-            if (endpoint.contains("/account-consents/") &&
-                    (endpoint.contains("GET") || endpoint.contains("DELETE"))) {
+            if (endpoint.contains("/account-consents/") || endpoint.contains("/.well-known/")) {
                 continue;
             }
 
@@ -405,36 +330,15 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                         "anonymous", "system", fullUrl
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен доступ без авторизации к административному эндпоинту: " + endpoint + 
-                                 ". Статус: " + response.getStatusCode());
-            }
-
-            // Для критических операций тестируем также POST без авторизации
-            if (endpoint.contains("approve") || endpoint.contains("reject") || endpoint.contains("upload")) {
-                String testPayload = "{}";
-                HttpApiClient.ApiResponse postResponse = makeUnauthenticatedRequest(apiClient, "POST", fullUrl, testPayload);
-
-                if (postResponse != null && (postResponse.getStatusCode() == 200 || postResponse.getStatusCode() == 201)) {
-                    Vulnerability vuln = createVulnerability(
-                            "Отсутствие авторизации для критической POST операции",
-                            "Обнаружено выполнение административной операции через эндпоинт " + endpoint +
-                                    " без аутентификации. HTTP статус: " + postResponse.getStatusCode() +
-                                    ". Доказательство: успешное выполнение критической операции (approve/reject/upload) без токена авторизации.",
-                            endpoint,
-                            postResponse.getStatusCode(),
-                            "anonymous", "system", fullUrl
-                    );
-                    vulnerabilities.add(vuln);
-                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружено выполнение операции без авторизации: " + endpoint + 
-                                     ". Статус: " + postResponse.getStatusCode());
-                }
+                System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен доступ без авторизации к административному эндпоинту: " + endpoint +
+                        ". Статус: " + response.getStatusCode());
             }
         }
 
         return vulnerabilities;
     }
 
-    // Вспомогательные методы
+    // Вспомогательные методы (остаются без изменений)
     private HttpApiClient.ApiResponse makeAuthenticatedRequest(ApiClient apiClient, String method, String url, String token) {
         return makeAuthenticatedRequest(apiClient, method, url, token, null);
     }
@@ -486,7 +390,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
             if (response instanceof HttpApiClient.ApiResponse) {
                 HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
                 if (apiResponse.getStatusCode() == 200) {
-                    // Ищем ID пользователя в ответе
                     Pattern pattern = Pattern.compile("\"(id|client_id)\"\\s*:\\s*\"([^\"]+)\"");
                     Matcher matcher = pattern.matcher(apiResponse.getBody());
                     if (matcher.find()) {
@@ -511,7 +414,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
             if (response instanceof HttpApiClient.ApiResponse) {
                 HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
                 if (apiResponse.getStatusCode() == 200) {
-                    // Ищем account_id в ответе
                     Pattern pattern = Pattern.compile("\"account_id\"\\s*:\\s*\"([^\"]+)\"");
                     Matcher matcher = pattern.matcher(apiResponse.getBody());
                     while (matcher.find()) {
@@ -526,7 +428,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
     }
 
     private String replacePathParameters(String endpoint) {
-        // Заменяем параметры пути на тестовые значения
         return endpoint
                 .replace("{bank_code}", "vbank")
                 .replace("{client_id}", "test-client")
@@ -555,7 +456,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                 attacker, victim, endpoint, url, statusCode
         ));
 
-        // Добавляем рекомендации
         List<String> recommendations = new ArrayList<>();
         recommendations.add("Реализуйте строгую проверку авторизации на уровне функций");
         recommendations.add("Используйте ролевую модель доступа (RBAC)");
