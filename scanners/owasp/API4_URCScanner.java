@@ -28,18 +28,18 @@ public class API4_URCScanner implements SecurityScanner {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         String baseUrl = config.getTargetBaseUrl();
 
-        System.out.println("🔍 Запуск OWASP API4 Unrestricted Resource Consumption Scanner...");
-        System.out.println("🎯 Цель: Проверка устойчивости к атакам на ресурсы");
+        System.out.println("(API-4) Запуск OWASP API4 Unrestricted Resource Consumption Scanner...");
+        System.out.println("(API-4) Цель: Проверка устойчивости к атакам на ресурсы");
 
         try {
             // Получаем токен для аутентификации
             String token = authenticate(baseUrl, config.getPassword());
             if (token == null) {
-                System.err.println("❌ Не удалось аутентифицироваться для API4 сканирования");
+                System.err.println("(API-4) Не удалось аутентифицироваться для API4 сканирования");
                 return vulnerabilities;
             }
 
-            System.out.println("   ✅ Токен получен, начинаем нагрузочное тестирование...");
+            System.out.println("(API-4) Токен получен, начинаем нагрузочное тестирование...");
 
             // Выполняем основные тесты
             testRateLimiting(baseUrl, token, vulnerabilities, apiClient);
@@ -55,10 +55,10 @@ public class API4_URCScanner implements SecurityScanner {
             }
 
         } catch (Exception e) {
-            System.err.println("❌ Ошибка при сканировании API4: " + e.getMessage());
+            System.err.println("(API-4) Ошибка при сканировании API4: " + e.getMessage());
         }
 
-        System.out.println("✅ API4 сканирование завершено. Найдено уязвимостей: " + vulnerabilities.size());
+        System.out.println("(API-4) API4 сканирование завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
     }
 
@@ -66,7 +66,7 @@ public class API4_URCScanner implements SecurityScanner {
         try {
             return core.AuthManager.getBankAccessToken(baseUrl, "team172-1", password);
         } catch (Exception e) {
-            System.err.println("❌ Ошибка аутентификации: " + e.getMessage());
+            System.err.println("(API-4) Ошибка аутентификации: " + e.getMessage());
             return null;
         }
     }
@@ -74,7 +74,7 @@ public class API4_URCScanner implements SecurityScanner {
     private void testRateLimiting(String baseUrl, String token,
                                   List<Vulnerability> vulnerabilities,
                                   ApiClient apiClient) {
-        System.out.println("   🔄 Тестирование Rate Limiting...");
+        System.out.println("(API-4) Тестирование Rate Limiting...");
 
         String targetEndpoint = baseUrl + "/accounts";
         AtomicInteger successfulRequests = new AtomicInteger(0);
@@ -130,15 +130,15 @@ public class API4_URCScanner implements SecurityScanner {
         double requestsPerSecond = totalTime > 0 ? (double) successfulRequests.get() / (totalTime / 1000.0) : 0;
 
         // Анализируем результаты
-        System.out.println("     📊 Результаты Rate Limiting теста:");
-        System.out.println("       • Всего запросов: " + RATE_LIMIT_TEST_REQUESTS);
-        System.out.println("       • Успешных: " + successfulRequests.get());
-        System.out.println("       • Заблокированных (429): " + rateLimitedRequests.get());
-        System.out.println("       • Запросов в секунду: " + String.format("%.2f", requestsPerSecond));
+        System.out.println("(API-4) Результаты Rate Limiting теста:");
+        System.out.println("(API-4) Всего запросов: " + RATE_LIMIT_TEST_REQUESTS);
+        System.out.println("(API-4) Успешных: " + successfulRequests.get());
+        System.out.println("(API-4) Заблокированных (429): " + rateLimitedRequests.get());
+        System.out.println("(API-4) Запросов в секунду: " + String.format("%.2f", requestsPerSecond));
 
         // Проверяем среднее время ответа
         double avgResponseTime = responseTimes.stream().mapToLong(Long::longValue).average().orElse(0);
-        System.out.println("       • Среднее время ответа: " + String.format("%.2f", avgResponseTime) + "ms");
+        System.out.println("(API-4) Среднее время ответа: " + String.format("%.2f", avgResponseTime) + "ms");
 
         // Определяем уязвимости
         if (rateLimitedRequests.get() == 0 && successfulRequests.get() >= RATE_LIMIT_TEST_REQUESTS * 0.8) {
@@ -147,22 +147,22 @@ public class API4_URCScanner implements SecurityScanner {
                     "Сервер обработал " + successfulRequests.get() + " из " + RATE_LIMIT_TEST_REQUESTS +
                             " запросов без ограничений. Средняя скорость: " +
                             String.format("%.2f", requestsPerSecond) + " запросов/секунду. " +
-                            "Это позволяет злоумышленнику выполнять DoS атаки.",
+                            "Это позволяет злоумышленнику выполнять DoS атаки. Доказательство: система не вернула ни одного кода 429 (Too Many Requests) при интенсивной нагрузке.",
                     Vulnerability.Severity.HIGH,
                     "/accounts",
                     "GET",
                     200,
-                    "Rate Limiting отсутствует"
+                    "Rate Limiting отсутствует - все " + successfulRequests.get() + " запросов обработаны успешно"
             );
             vulnerabilities.add(vuln);
-            System.out.println("     🚨 УЯЗВИМОСТЬ: Отсутствие Rate Limiting");
+            System.out.println("(API-4) УЯЗВИМОСТЬ: Отсутствие Rate Limiting - система не ограничивает количество запросов");
         }
     }
 
     private void testLargePayloads(String baseUrl, String token,
                                    List<Vulnerability> vulnerabilities,
                                    ApiClient apiClient) {
-        System.out.println("   📦 Тестирование обработки больших payload...");
+        System.out.println("(API-4) Тестирование обработки больших payload...");
 
         // Создаем большой JSON payload правильно
         StringBuilder largePayload = new StringBuilder();
@@ -177,7 +177,7 @@ public class API4_URCScanner implements SecurityScanner {
         largePayload.append("\"}");
 
         String payload = largePayload.toString();
-        System.out.println("     📏 Размер payload: " + (payload.length() / 1024) + "KB");
+        System.out.println("(API-4) Размер payload: " + (payload.length() / 1024) + "KB");
 
         try {
             Map<String, String> headers = new HashMap<>();
@@ -191,34 +191,35 @@ public class API4_URCScanner implements SecurityScanner {
             if (response instanceof HttpApiClient.ApiResponse) {
                 HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
 
-                System.out.println("     ⏱️ Время обработки: " + responseTime + "ms");
-                System.out.println("     📡 Статус ответа: " + apiResponse.getStatusCode());
+                System.out.println("(API-4) Время обработки: " + responseTime + "ms");
+                System.out.println("(API-4) Статус ответа: " + apiResponse.getStatusCode());
 
                 if (apiResponse.getStatusCode() == 200) {
                     Vulnerability vuln = createURCVulnerability(
                             "Уязвимость к большим payload",
                             "Сервер принял и обработал большой payload (" +
                                     (payload.length() / 1024) + "KB) за " + responseTime + "ms. " +
-                                    "Это может быть использовано для исчерпания ресурсов сервера.",
+                                    "Это может быть использовано для исчерпания ресурсов сервера. Доказательство: система успешно обработала чрезмерно большой запрос размером " + 
+                                    (payload.length() / 1024) + "KB без ограничений.",
                             Vulnerability.Severity.HIGH,
                             "/accounts",
                             "POST",
                             apiResponse.getStatusCode(),
-                            "Большой payload принят"
+                            "Большой payload принят - размер: " + (payload.length() / 1024) + "KB, время обработки: " + responseTime + "ms"
                     );
                     vulnerabilities.add(vuln);
-                    System.out.println("     🚨 УЯЗВИМОСТЬ: Сервер уязвим к большим payload");
+                    System.out.println("(API-4) УЯЗВИМОСТЬ: Сервер уязвим к большим payload - принял запрос размером " + (payload.length() / 1024) + "KB");
                 }
             }
         } catch (Exception e) {
-            System.out.println("     ✅ Сервер отклонил большой payload: " + e.getMessage());
+            System.out.println("(API-4) Сервер отклонил большой payload: " + e.getMessage());
         }
     }
 
     private void testDeepNesting(String baseUrl, String token,
                                  List<Vulnerability> vulnerabilities,
                                  ApiClient apiClient) {
-        System.out.println("   🪆 Тестирование глубокой вложенности JSON...");
+        System.out.println("(API-4) Тестирование глубокой вложенности JSON...");
 
         // Создаем глубоко вложенный JSON
         StringBuilder nestedPayload = new StringBuilder();
@@ -234,7 +235,7 @@ public class API4_URCScanner implements SecurityScanner {
         }
 
         String payload = nestedPayload.toString();
-        System.out.println("     📏 Уровней вложенности: " + DEEP_NESTING_LEVELS);
+        System.out.println("(API-4) Уровней вложенности: " + DEEP_NESTING_LEVELS);
 
         try {
             Map<String, String> headers = new HashMap<>();
@@ -252,26 +253,27 @@ public class API4_URCScanner implements SecurityScanner {
                     Vulnerability vuln = createURCVulnerability(
                             "Уязвимость к глубокой вложенности JSON",
                             "Сервер обработал JSON с " + DEEP_NESTING_LEVELS + " уровнями вложенности за " +
-                                    responseTime + "ms. Глубокая вложенность может вызвать переполнение стека.",
+                                    responseTime + "ms. Глубокая вложенность может вызвать переполнение стека. Доказательство: система приняла JSON с " + 
+                                    DEEP_NESTING_LEVELS + " уровнями вложенности без ограничений.",
                             Vulnerability.Severity.MEDIUM,
                             "/accounts",
                             "POST",
                             apiResponse.getStatusCode(),
-                            "Глубоко вложенный JSON принят"
+                            "Глубоко вложенный JSON принят - уровней: " + DEEP_NESTING_LEVELS + ", время обработки: " + responseTime + "ms"
                     );
                     vulnerabilities.add(vuln);
-                    System.out.println("     🚨 УЯЗВИМОСТЬ: Сервер уязвим к глубокой вложенности");
+                    System.out.println("(API-4) УЯЗВИМОСТЬ: Сервер уязвим к глубокой вложенности - принял JSON с " + DEEP_NESTING_LEVELS + " уровнями");
                 }
             }
         } catch (Exception e) {
-            System.out.println("     ✅ Сервер отклонил глубоко вложенный JSON");
+            System.out.println("(API-4) Сервер отклонил глубоко вложенный JSON");
         }
     }
 
     private void testMemoryConsumption(String baseUrl, String token,
                                        List<Vulnerability> vulnerabilities,
                                        ApiClient apiClient) {
-        System.out.println("   💾 Тестирование потребления памяти...");
+        System.out.println("(API-4) Тестирование потребления памяти...");
 
         String[] endpoints = {"/accounts", "/products"};
 
@@ -295,12 +297,12 @@ public class API4_URCScanner implements SecurityScanner {
                             Vulnerability vuln = createURCVulnerability(
                                     "Высокое время ответа - " + endpoint,
                                     "Эндпоинт " + endpoint + " отвечает " + responseTime + "ms. " +
-                                            "Может быть использовано для Slowloris атак.",
+                                            "Может быть использовано для Slowloris атак. Доказательство: измеренное время ответа превышает допустимые пределы.",
                                     Vulnerability.Severity.MEDIUM,
                                     endpoint,
                                     "GET",
                                     apiResponse.getStatusCode(),
-                                    "Медленный ответ: " + responseTime + "ms"
+                                    "Медленный ответ: " + responseTime + "ms, размер ответа: " + responseSize + " байт"
                             );
                             vulnerabilities.add(vuln);
                         }
@@ -315,7 +317,7 @@ public class API4_URCScanner implements SecurityScanner {
     private void testExpensiveOperations(String baseUrl, String token,
                                          List<Vulnerability> vulnerabilities,
                                          ApiClient apiClient) {
-        System.out.println("   💰 Тестирование дорогостоящих операций...");
+        System.out.println("(API-4) Тестирование дорогостоящих операций...");
 
         try {
             Map<String, String> headers = new HashMap<>();
@@ -335,7 +337,7 @@ public class API4_URCScanner implements SecurityScanner {
                     Vulnerability vuln = createURCVulnerability(
                             "Дорогостоящая операция - создание согласия",
                             "Операция создания согласия выполняется " + responseTime + "ms. " +
-                                    "Может быть использована для истощения ресурсов сервера.",
+                                    "Может быть использована для истощения ресурсов сервера. Доказательство: операция требует значительного времени выполнения.",
                             Vulnerability.Severity.MEDIUM,
                             "/account-consents/request",
                             "POST",
@@ -353,7 +355,7 @@ public class API4_URCScanner implements SecurityScanner {
     private void testZipBomb(String baseUrl, String token,
                              List<Vulnerability> vulnerabilities,
                              ApiClient apiClient) {
-        System.out.println("   💣 Тестирование уязвимости к Zip Bomb...");
+        System.out.println("(API-4) Тестирование уязвимости к Zip Bomb...");
 
         StringBuilder zipBombPayload = new StringBuilder();
         zipBombPayload.append("{\"data\":[");
@@ -382,12 +384,12 @@ public class API4_URCScanner implements SecurityScanner {
                     Vulnerability vuln = createURCVulnerability(
                             "Потенциальная уязвимость к Zip Bomb",
                             "Сервер быстро обработал payload с высокой избыточностью за " +
-                                    responseTime + "ms. Может быть уязвим к атакам на парсер.",
+                                    responseTime + "ms. Может быть уязвим к атакам на парсер. Доказательство: система быстро обработала избыточные данные без деградации производительности.",
                             Vulnerability.Severity.LOW,
                             "/accounts",
                             "POST",
                             apiResponse.getStatusCode(),
-                            "Быстрая обработка избыточных данных"
+                            "Быстрая обработка избыточных данных: " + responseTime + "ms для " + ZIP_BOMB_SIZE + " элементов"
                     );
                     vulnerabilities.add(vuln);
                 }
@@ -400,7 +402,7 @@ public class API4_URCScanner implements SecurityScanner {
     private void testConcurrentRequests(String baseUrl, String token,
                                         List<Vulnerability> vulnerabilities,
                                         ApiClient apiClient) {
-        System.out.println("   ⚡ Тестирование конкурентных запросов...");
+        System.out.println("(API-4) Тестирование конкурентных запросов...");
 
         int concurrentUsers = 10; // Уменьшим количество
         int requestsPerUser = 3;
@@ -453,12 +455,12 @@ public class API4_URCScanner implements SecurityScanner {
             Vulnerability vuln = createURCVulnerability(
                     "Низкая устойчивость к конкурентной нагрузке",
                     "При " + concurrentUsers + " конкурентных пользователей failure rate составил " +
-                            String.format("%.1f", failureRate * 100) + "%. Сервер не справляется с нагрузкой.",
+                            String.format("%.1f", failureRate * 100) + "%. Сервер не справляется с нагрузкой. Доказательство: высокий процент ошибок при одновременных запросах.",
                     Vulnerability.Severity.MEDIUM,
                     "/accounts",
                     "GET",
                     200,
-                    "Высокий процент ошибок при конкурентной нагрузке"
+                    "Высокий процент ошибок при конкурентной нагрузке: " + String.format("%.1f", failureRate * 100) + "% неудачных запросов"
             );
             vulnerabilities.add(vuln);
         }

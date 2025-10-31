@@ -43,11 +43,11 @@ public class AuthManager {
                     return accessToken;
                 }
             } else {
-                System.err.println("❌ Ошибка получения банковского токена: " + response.statusCode() + " - " + response.body());
+                System.err.println("Ошибка получения банковского токена: " + response.statusCode() + " - " + response.body());
             }
 
         } catch (Exception e) {
-            System.err.println("💥 Ошибка при получении банковского токена: " + e.getMessage());
+            System.err.println("Ошибка при получении банковского токена: " + e.getMessage());
         }
 
         return null;
@@ -85,11 +85,11 @@ public class AuthManager {
                     return accessToken;
                 }
             } else {
-                System.err.println("❌ Ошибка аутентификации: " + response.statusCode() + " - " + response.body());
+                System.err.println("Ошибка аутентификации: " + response.statusCode() + " - " + response.body());
             }
 
         } catch (Exception e) {
-            System.err.println("💥 Ошибка при аутентификации: " + e.getMessage());
+            System.err.println("Ошибка при аутентификации: " + e.getMessage());
         }
 
         return null;
@@ -156,16 +156,16 @@ public class AuthManager {
      */
     public static Map<String, String> getBankAccessTokensForTeam(String bankBaseUrl, String password) {
         Map<String, String> tokens = new HashMap<>();
-        System.out.println("🔐 Получение токенов для команды...");
+        System.out.println("Получение токенов для команды...");
 
         for (String username : new String[]{"team172-1", "team172-2"}) {
-            System.out.println("   👤 Аутентификация пользователя: " + username);
+            System.out.println("   Аутентификация пользователя: " + username);
             String token = getBankAccessToken(bankBaseUrl, username, password);
             if (token != null && isTokenValid(token)) {
                 tokens.put(username, token);
-                System.out.println("   ✅ Токен получен для " + username);
+                System.out.println("   Токен получен для " + username);
             } else {
-                System.err.println("   ❌ Не удалось получить токен для " + username);
+                System.err.println("   Не удалось получить токен для " + username);
             }
         }
 
@@ -179,18 +179,18 @@ public class AuthManager {
         String bankUrl = "https://vbank.open.bankingapi.ru";
         String password = "***REMOVED***";
 
-        System.out.println("🧪 Тестирование аутентификации...");
+        System.out.println("Тестирование аутентификации...");
         Map<String, String> tokens = getBankAccessTokensForTeam(bankUrl, password);
 
         if (!tokens.isEmpty()) {
-            System.out.println("🎉 Токены успешно получены:");
+            System.out.println("Токены успешно получены:");
             tokens.forEach((user, token) -> {
                 String tokenPreview = token.length() > 20 ? token.substring(0, 20) + "..." : token;
-                System.out.println("   👤 " + user + ": " + tokenPreview);
+                System.out.println("   " + user + ": " + tokenPreview);
             });
         } else {
-            System.out.println("💥 Не удалось получить ни одного токена.");
-            System.out.println("💡 Проверьте:");
+            System.out.println("Не удалось получить ни одного токена.");
+            System.out.println("Проверьте:");
             System.out.println("   • Доступность банковского API");
             System.out.println("   • Правильность логина и пароля");
             System.out.println("   • Сетевые настройки");

@@ -26,20 +26,20 @@ public class API1_BOLAScanner implements SecurityScanner {
 
     @Override
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
-        System.out.println("🔍 Scanning for BOLA vulnerabilities (OWASP API Security Top 10:2023 - API1)...");
+        System.out.println("(API-1) Запуск сканирования на уязвимости BOLA (OWASP API Security Top 10:2023 - API1)...");
 
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         String baseUrl = config.getTargetBaseUrl().trim();
         String password = config.getPassword();
 
         if (password == null || password.isEmpty()) {
-            System.err.println("⚠️ Пароль не задан в конфигурации. BOLA-сканер пропущен.");
+            System.err.println("(API-1) Пароль не задан в конфигурации. BOLA-сканер пропущен.");
             return vulnerabilities;
         }
 
         Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(baseUrl, password);
         if (tokens.size() < 2) {
-            System.err.println("⚠️ Недостаточно токенов для BOLA-теста (нужно минимум 2).");
+            System.err.println("(API-1) Недостаточно токенов для BOLA-теста (нужно минимум 2).");
             return vulnerabilities;
         }
 
@@ -49,27 +49,27 @@ public class API1_BOLAScanner implements SecurityScanner {
         String token2 = tokens.get(user2);
 
         if (token1 == null || token2 == null) {
-            System.err.println("⚠️ Не удалось получить токены для обоих пользователей.");
+            System.err.println("(API-1) Не удалось получить токены для обоих пользователей.");
             return vulnerabilities;
         }
 
-        System.out.println("✅ Получены токены для пользователей: " + user1 + ", " + user2);
+        System.out.println("(API-1) Получены токены для пользователей: " + user1 + ", " + user2);
 
         String accountId = getFirstAccountId(baseUrl, token1, apiClient);
         if (accountId == null) {
-            System.out.println("ℹ️ У пользователя " + user1 + " нет счетов — BOLA-тест невозможен.");
+            System.out.println("(API-1) У пользователя " + user1 + " нет счетов — BOLA-тест невозможен.");
             return vulnerabilities;
         }
 
-        System.out.println("✅ Найден счёт пользователя " + user1 + ": " + accountId);
+        System.out.println("(API-1) Найден счёт пользователя " + user1 + ": " + accountId);
 
         HttpApiClient.ApiResponse response = tryAccessAccountAsOtherUser(baseUrl, accountId, token2, apiClient);
 
         if (response == null) {
-            System.out.println("⚠️ Не удалось выполнить запрос к счёту " + accountId + " от имени " + user2);
+            System.out.println("(API-1) Не удалось выполнить запрос к счёту " + accountId + " от имени " + user2);
         } else {
             int statusCode = response.getStatusCode();
-            System.out.println("📡 Ответ при доступе к " + accountId + " от " + user2 + ": HTTP " + statusCode);
+            System.out.println("(API-1) Ответ при доступе к " + accountId + " от " + user2 + ": HTTP " + statusCode);
 
             boolean isVulnerable = (statusCode == 200);
 
@@ -94,13 +94,20 @@ public class API1_BOLAScanner implements SecurityScanner {
                 ));
 
                 vulnerabilities.add(vuln);
-                System.out.println("🚨 BOLA УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА! Сервер вернул 200 для чужого ресурса.");
+                System.out.println("(API-1) УЯЗВИМОСТЬ BOLA ПОДТВЕРЖДЕНА!");
+                System.out.println("(API-1) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
+                System.out.println("(API-1) - Атакующий пользователь: " + user2);
+                System.out.println("(API-1) - Владелец счета: " + user1);
+                System.out.println("(API-1) - Идентификатор счета: " + accountId);
+                System.out.println("(API-1) - URL запроса: " + fullUrl);
+                System.out.println("(API-1) - Код ответа сервера: HTTP 200 (успешный доступ к чужому ресурсу)");
+                System.out.println("(API-1) - Вывод: сервер не проверяет права доступа к объектам, что позволяет получить несанкционированный доступ к данным других пользователей");
             } else {
-                System.out.println("✅ Защита работает: сервер вернул " + statusCode + " (ожидаемо).");
+                System.out.println("(API-1) Защита работает корректно: сервер вернул код " + statusCode + " при попытке доступа к чужому ресурсу");
             }
         }
 
-        System.out.println("✅ BOLA scan completed. Найдено уязвимостей: " + vulnerabilities.size());
+        System.out.println("(API-1) Сканирование BOLA завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
     }
 
@@ -121,11 +128,11 @@ public class API1_BOLAScanner implements SecurityScanner {
                         return matcher.group(1);
                     }
                 } else {
-                    System.err.println("⚠️ Получен неожиданный статус при запросе счетов: " + apiResponse.getStatusCode());
+                    System.err.println("(API-1) Получен неожиданный статус при запросе счетов: " + apiResponse.getStatusCode());
                 }
             }
         } catch (Exception e) {
-            System.err.println("⚠️ Ошибка при получении списка счетов: " + e.getMessage());
+            System.err.println("(API-1) Ошибка при получении списка счетов: " + e.getMessage());
         }
         return null;
     }
@@ -139,7 +146,7 @@ public class API1_BOLAScanner implements SecurityScanner {
             Object response = apiClient.executeRequest("GET", baseUrl + String.format(ACCOUNT_DETAIL_ENDPOINT, accountId), null, headers);
             return (HttpApiClient.ApiResponse) response;
         } catch (Exception e) {
-            System.err.println("⚠️ Ошибка при попытке доступа к чужому счёту: " + e.getMessage());
+            System.err.println("(API-1) Ошибка при попытке доступа к чужому счёту: " + e.getMessage());
             return null;
         }
     }

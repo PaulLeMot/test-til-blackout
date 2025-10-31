@@ -79,8 +79,8 @@ public class API9_InventoryScanner implements SecurityScanner {
 
     @Override
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
-        System.out.println("🔍 Starting comprehensive inventory management scan (OWASP API9:2023)...");
-        System.out.println("🎯 Target: " + config.getTargetBaseUrl());
+        System.out.println("(API-9) Запуск комплексного сканирования управления инвентаризацией (OWASP API9:2023)...");
+        System.out.println("(API-9) Целевой URL: " + config.getTargetBaseUrl());
 
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         String baseUrl = normalizeBaseUrl(config.getTargetBaseUrl().trim());
@@ -91,46 +91,46 @@ public class API9_InventoryScanner implements SecurityScanner {
 
         try {
             // 5.9.1: Проверка common endpoints
-            System.out.println("\n📋 5.9.1: Scanning common endpoints (" + COMMON_ENDPOINTS.size() + " patterns)...");
+            System.out.println("(API-9) 5.9.1: Сканирование стандартных конечных точек (" + COMMON_ENDPOINTS.size() + " шаблонов)...");
             vulnerabilities.addAll(scanCommonEndpoints(baseUrl, apiClient));
 
             // 5.9.2: Брутфорс путей на основе структуры документации API
-            System.out.println("📋 5.9.2: Brute-forcing endpoints based on API structure...");
+            System.out.println("(API-9) 5.9.2: Перебор конечных точек на основе структуры API...");
             vulnerabilities.addAll(bruteForceFromDocumentation(baseUrl, apiClient, openAPI));
 
             // 5.9.3: Поиск версионированных эндпоинтов
-            System.out.println("📋 5.9.3: Scanning versioned endpoints (" + VERSION_PATHS.size() + " patterns)...");
+            System.out.println("(API-9) 5.9.3: Сканирование версионированных конечных точек (" + VERSION_PATHS.size() + " шаблонов)...");
             vulnerabilities.addAll(scanVersionedEndpoints(baseUrl, apiClient));
 
             // 5.9.4: Проверка стандартных мониторинг-путей
-            System.out.println("📋 5.9.4: Scanning monitoring endpoints (" + MONITORING_PATHS.size() + " patterns)...");
+            System.out.println("(API-9) 5.9.4: Сканирование мониторинговых конечных точек (" + MONITORING_PATHS.size() + " шаблонов)...");
             vulnerabilities.addAll(scanMonitoringEndpoints(baseUrl, apiClient));
 
             // 5.9.5: Анализ JavaScript файлов на наличие скрытых API-путей
-            System.out.println("📋 5.9.5: Analyzing JavaScript files for hidden API paths...");
+            System.out.println("(API-9) 5.9.5: Анализ JavaScript файлов на наличие скрытых API-путей...");
             vulnerabilities.addAll(scanJavaScriptFiles(baseUrl, apiClient));
 
             // 5.9.6: Поиск устаревших и deprecated версий API
-            System.out.println("📋 5.9.6: Scanning for deprecated API versions...");
+            System.out.println("(API-9) 5.9.6: Поиск устаревших и deprecated версий API...");
             vulnerabilities.addAll(scanDeprecatedEndpoints(baseUrl, apiClient));
 
             // 5.9.7: Проверка debug и development эндпоинтов в production
-            System.out.println("📋 5.9.7: Scanning debug endpoints in production...");
+            System.out.println("(API-9) 5.9.7: Проверка debug и development конечных точек в production...");
             vulnerabilities.addAll(scanDebugEndpoints(baseUrl, apiClient));
 
         } catch (Exception e) {
-            System.err.println("❌ Critical error during inventory scan: " + e.getMessage());
+            System.err.println("(API-9) Критическая ошибка при сканировании инвентаризации: " + e.getMessage());
             if (isDebugMode()) {
                 e.printStackTrace();
             }
         }
 
         // Детальная статистика сканирования
-        System.out.println("\n📊 INVENTORY SCAN COMPLETED:");
-        System.out.println("   📞 Total requests made: " + totalRequests);
-        System.out.println("   🔍 Endpoints discovered: " + foundEndpoints);
-        System.out.println("   🚨 Vulnerabilities found: " + vulnerabilities.size());
-        System.out.println("   ⏱️  Scan duration: " + new Date());
+        System.out.println("(API-9) СКАНИРОВАНИЕ ИНВЕНТАРИЗАЦИИ ЗАВЕРШЕНО:");
+        System.out.println("(API-9) Всего выполнено запросов: " + totalRequests);
+        System.out.println("(API-9) Обнаружено конечных точек: " + foundEndpoints);
+        System.out.println("(API-9) Найдено уязвимостей: " + vulnerabilities.size());
+        System.out.println("(API-9) Время сканирования: " + new Date());
 
         return vulnerabilities;
     }
@@ -154,16 +154,16 @@ public class API9_InventoryScanner implements SecurityScanner {
 
             if (response != null && isInterestingResponse(response.getStatusCode())) {
                 discovered++;
-                String evidence = buildDetailedEvidence("Common Endpoint Discovery", fullUrl, response);
+                String evidence = buildDetailedEvidence("Обнаружение стандартной конечной точки", fullUrl, response);
 
                 Vulnerability vuln = createInventoryVulnerability(
-                        "Undocumented Common Endpoint: " + endpoint,
-                        "🚨 CRITICAL: Обнаружен недокументированный common endpoint: " + endpoint +
-                                "\n📊 Статус: HTTP " + response.getStatusCode() +
-                                "\n🔍 Тип: " + classifyEndpoint(endpoint, response) +
-                                "\n💡 Риск: " + assessRiskLevel(endpoint, response) +
-                                "\n\nEndpoint соответствует известным шаблонам административных, debug или системных путей. " +
-                                "Такие endpoints часто содержат уязвимости или раскрывают чувствительную информацию.",
+                        "Незадокументированная стандартная конечная точка: " + endpoint,
+                        "КРИТИЧЕСКИЙ УРОВЕНЬ: Обнаружена незадокументированная стандартная конечная точка: " + endpoint +
+                                "\nСтатус: HTTP " + response.getStatusCode() +
+                                "\nТип: " + classifyEndpoint(endpoint, response) +
+                                "\nУровень риска: " + assessRiskLevel(endpoint, response) +
+                                "\n\nКонечная точка соответствует известным шаблонам административных, debug или системных путей. " +
+                                "Такие конечные точки часто содержат уязвимости или раскрывают чувствительную информацию.",
                         "/" + endpoint,
                         response.getStatusCode(),
                         evidence
@@ -178,11 +178,11 @@ public class API9_InventoryScanner implements SecurityScanner {
                 }
 
                 vulns.add(vuln);
-                System.out.println("   ✅ Found: " + endpoint + " (" + response.getStatusCode() + ") - " + classifyEndpoint(endpoint, response));
+                System.out.println("(API-9) Обнаружена: " + endpoint + " (" + response.getStatusCode() + ") - " + classifyEndpoint(endpoint, response));
             }
         }
 
-        System.out.println("   📊 Common endpoints discovered: " + discovered + "/" + COMMON_ENDPOINTS.size());
+        System.out.println("(API-9) Стандартных конечных точек обнаружено: " + discovered + "/" + COMMON_ENDPOINTS.size());
         foundEndpoints += discovered;
         return vulns;
     }
@@ -193,7 +193,7 @@ public class API9_InventoryScanner implements SecurityScanner {
         int discovered = 0;
 
         List<String> bruteForcePaths = generateBruteForcePaths();
-        System.out.println("   🔧 Generated " + bruteForcePaths.size() + " brute-force patterns");
+        System.out.println("(API-9) Сгенерировано " + bruteForcePaths.size() + " шаблонов для перебора");
 
         for (String path : bruteForcePaths) {
             String fullUrl = baseUrl + path;
@@ -201,14 +201,14 @@ public class API9_InventoryScanner implements SecurityScanner {
 
             if (response != null && isInterestingResponse(response.getStatusCode())) {
                 discovered++;
-                String evidence = buildDetailedEvidence("Brute-Force Discovery", fullUrl, response);
+                String evidence = buildDetailedEvidence("Обнаружение перебором", fullUrl, response);
 
                 Vulnerability vuln = createInventoryVulnerability(
-                        "Brute-Forced Endpoint: " + path,
-                        "🔍 Обнаружен endpoint через брутфорс: " + path +
-                                "\n📊 Статус: HTTP " + response.getStatusCode() +
-                                "\n🎯 Метод: Автоматический перебор" +
-                                "\n💡 Риск: Endpoint не документирован в официальной спецификации API",
+                        "Конечная точка обнаружена перебором: " + path,
+                        "Обнаружена конечная точка через автоматический перебор: " + path +
+                                "\nСтатус: HTTP " + response.getStatusCode() +
+                                "\nМетод обнаружения: Автоматический перебор" +
+                                "\nРиск: Конечная точка не документирована в официальной спецификации API",
                         "/" + path,
                         response.getStatusCode(),
                         evidence
@@ -217,7 +217,7 @@ public class API9_InventoryScanner implements SecurityScanner {
             }
         }
 
-        System.out.println("   📊 Brute-force endpoints discovered: " + discovered + "/" + bruteForcePaths.size());
+        System.out.println("(API-9) Конечных точек обнаружено перебором: " + discovered + "/" + bruteForcePaths.size());
         foundEndpoints += discovered;
         return vulns;
     }
@@ -234,14 +234,14 @@ public class API9_InventoryScanner implements SecurityScanner {
 
             if (versionResponse != null && isInterestingResponse(versionResponse.getStatusCode())) {
                 discovered++;
-                String evidence = buildDetailedEvidence("Versioned Endpoint", versionUrl, versionResponse);
+                String evidence = buildDetailedEvidence("Версионированная конечная точка", versionUrl, versionResponse);
 
                 Vulnerability vuln = createInventoryVulnerability(
-                        "Versioned API Endpoint: " + versionPath,
-                        "🔄 Обнаружен версионированный endpoint: " + versionPath +
-                                "\n📊 Статус: HTTP " + versionResponse.getStatusCode() +
-                                "\n🚨 Риск: Устаревшие версии API могут содержать известные уязвимости" +
-                                "\n💡 Рекомендация: Проверить актуальность версии и наличие security patches",
+                        "Версионированная API конечная точка: " + versionPath,
+                        "Обнаружена версионированная конечная точка: " + versionPath +
+                                "\nСтатус: HTTP " + versionResponse.getStatusCode() +
+                                "\nРиск: Устаревшие версии API могут содержать известные уязвимости" +
+                                "\nРекомендация: Проверить актуальность версии и наличие security patches",
                         "/" + versionPath,
                         versionResponse.getStatusCode(),
                         evidence
@@ -261,14 +261,14 @@ public class API9_InventoryScanner implements SecurityScanner {
 
                 if (response != null && isInterestingResponse(response.getStatusCode())) {
                     discovered++;
-                    String evidence = buildDetailedEvidence("Versioned Resource", fullUrl, response);
+                    String evidence = buildDetailedEvidence("Версионированный ресурс", fullUrl, response);
 
                     Vulnerability vuln = createInventoryVulnerability(
-                            "Versioned Resource Endpoint: " + versionPath + "/" + commonPath,
-                            "🔄 Обнаружен версионированный resource endpoint: " + versionPath + "/" + commonPath +
-                                    "\n📊 Статус: HTTP " + response.getStatusCode() +
-                                    "\n🎯 Ресурс: " + commonPath +
-                                    "\n🚨 Риск: Устаревшие версии API могут не получать security patches",
+                            "Версионированная ресурсная конечная точка: " + versionPath + "/" + commonPath,
+                            "Обнаружена версионированная ресурсная конечная точка: " + versionPath + "/" + commonPath +
+                                    "\nСтатус: HTTP " + response.getStatusCode() +
+                                    "\nРесурс: " + commonPath +
+                                    "\nРиск: Устаревшие версии API могут не получать security patches",
                             "/" + versionPath + "/" + commonPath,
                             response.getStatusCode(),
                             evidence
@@ -278,7 +278,7 @@ public class API9_InventoryScanner implements SecurityScanner {
             }
         }
 
-        System.out.println("   📊 Versioned endpoints discovered: " + discovered);
+        System.out.println("(API-9) Версионированных конечных точек обнаружено: " + discovered);
         foundEndpoints += discovered;
         return vulns;
     }
@@ -294,15 +294,15 @@ public class API9_InventoryScanner implements SecurityScanner {
 
             if (response != null && response.getStatusCode() == 200) {
                 discovered++;
-                String evidence = buildDetailedEvidence("Monitoring Endpoint", fullUrl, response);
+                String evidence = buildDetailedEvidence("Мониторинговая конечная точка", fullUrl, response);
 
                 String riskAssessment = assessMonitoringRisk(monitoringPath, response);
 
                 Vulnerability vuln = createInventoryVulnerability(
-                        "Public Monitoring Endpoint: " + monitoringPath,
-                        "📊 Обнаружен публичный мониторинг endpoint: " + monitoringPath +
-                                "\n🚨 " + riskAssessment +
-                                "\n💡 Риск: Раскрытие чувствительной информации о системе",
+                        "Публичная мониторинговая конечная точка: " + monitoringPath,
+                        "Обнаружена публичная мониторинговая конечная точка: " + monitoringPath +
+                                "\n" + riskAssessment +
+                                "\nРиск: Раскрытие чувствительной информации о системе",
                         "/" + monitoringPath,
                         response.getStatusCode(),
                         evidence
@@ -318,11 +318,11 @@ public class API9_InventoryScanner implements SecurityScanner {
                 }
 
                 vulns.add(vuln);
-                System.out.println("   🚨 Public monitoring: " + monitoringPath + " - " + riskAssessment);
+                System.out.println("(API-9) Публичная мониторинговая конечная точка: " + monitoringPath + " - " + riskAssessment);
             }
         }
 
-        System.out.println("   📊 Monitoring endpoints discovered: " + discovered + "/" + MONITORING_PATHS.size());
+        System.out.println("(API-9) Мониторинговых конечных точек обнаружено: " + discovered + "/" + MONITORING_PATHS.size());
         foundEndpoints += discovered;
         return vulns;
     }
@@ -337,13 +337,13 @@ public class API9_InventoryScanner implements SecurityScanner {
             HttpApiClient.ApiResponse mainPage = makeRequest(apiClient, baseUrl, "MAIN_PAGE");
             if (mainPage != null && mainPage.getStatusCode() == 200) {
                 List<String> jsFiles = extractJavaScriptFiles(mainPage.getBody(), baseUrl);
-                System.out.println("   🔍 Found " + jsFiles.size() + " JavaScript files");
+                System.out.println("(API-9) Найдено " + jsFiles.size() + " JavaScript файлов");
 
                 for (String jsFile : jsFiles) {
                     HttpApiClient.ApiResponse jsResponse = makeRequest(apiClient, jsFile, "JS_FILE");
                     if (jsResponse != null && jsResponse.getStatusCode() == 200) {
                         List<String> hiddenEndpoints = extractHiddenEndpointsFromJS(jsResponse.getBody());
-                        System.out.println("   📁 JS File: " + jsFile + " - " + hiddenEndpoints.size() + " endpoints found");
+                        System.out.println("(API-9) JS файл: " + jsFile + " - найдено конечных точек: " + hiddenEndpoints.size());
 
                         for (String endpoint : hiddenEndpoints) {
                             // Проверяем найденный endpoint
@@ -352,18 +352,18 @@ public class API9_InventoryScanner implements SecurityScanner {
 
                             if (endpointResponse != null && isInterestingResponse(endpointResponse.getStatusCode())) {
                                 discovered++;
-                                String evidence = buildDetailedEvidence("Hidden Endpoint in JS", testUrl, endpointResponse);
-                                evidence += "\n\n📁 SOURCE JAVASCRIPT FILE: " + jsFile;
-                                evidence += "\n🔍 ORIGINAL JS CONTEXT:\n" + extractJsContext(jsResponse.getBody(), endpoint);
+                                String evidence = buildDetailedEvidence("Скрытая конечная точка в JS", testUrl, endpointResponse);
+                                evidence += "\n\nИСХОДНЫЙ JAVASCRIPT ФАЙЛ: " + jsFile;
+                                evidence += "\nКОНТЕКСТ В JS КОДЕ:\n" + extractJsContext(jsResponse.getBody(), endpoint);
 
                                 Vulnerability vuln = createInventoryVulnerability(
-                                        "Hidden API Endpoint in JavaScript: " + endpoint,
-                                        "🕵️‍♂️ Скрытый API endpoint обнаружен в JavaScript файле!" +
-                                                "\n📁 Файл: " + jsFile +
-                                                "\n🔗 Endpoint: " + endpoint +
-                                                "\n📊 Статус: HTTP " + endpointResponse.getStatusCode() +
-                                                "\n🚨 Риск: Endpoints, скрытые в client-side коде, часто не документированы и не защищены" +
-                                                "\n💡 Угроза: Злоумышленник может найти и использовать недокументированные API",
+                                        "Скрытая API конечная точка в JavaScript: " + endpoint,
+                                        "Скрытая API конечная точка обнаружена в JavaScript файле!" +
+                                                "\nФайл: " + jsFile +
+                                                "\nКонечная точка: " + endpoint +
+                                                "\nСтатус: HTTP " + endpointResponse.getStatusCode() +
+                                                "\nРиск: Конечные точки, скрытые в client-side коде, часто не документированы и не защищены" +
+                                                "\nУгроза: Злоумышленник может найти и использовать недокументированные API",
                                         endpoint,
                                         endpointResponse.getStatusCode(),
                                         evidence
@@ -376,10 +376,10 @@ public class API9_InventoryScanner implements SecurityScanner {
                 }
             }
         } catch (Exception e) {
-            System.err.println("⚠️ Ошибка при анализе JavaScript файлов: " + e.getMessage());
+            System.err.println("(API-9) Ошибка при анализе JavaScript файлов: " + e.getMessage());
         }
 
-        System.out.println("   📊 Hidden endpoints in JS discovered: " + discovered);
+        System.out.println("(API-9) Скрытых конечных точек в JS обнаружено: " + discovered);
         foundEndpoints += discovered;
         return vulns;
     }
@@ -410,28 +410,28 @@ public class API9_InventoryScanner implements SecurityScanner {
 
                 if (!foundKeywords.isEmpty()) {
                     discovered++;
-                    String evidence = buildDetailedEvidence("Deprecated API Documentation", docUrl, response);
-                    evidence += "\n\n🔍 FOUND DEPRECATION KEYWORDS: " + String.join(", ", foundKeywords);
+                    String evidence = buildDetailedEvidence("Устаревшая документация API", docUrl, response);
+                    evidence += "\n\nНАЙДЕННЫЕ КЛЮЧЕВЫЕ СЛОВА УСТАРЕВАНИЯ: " + String.join(", ", foundKeywords);
 
                     Vulnerability vuln = createInventoryVulnerability(
-                            "Deprecated API Version Detected",
-                            "⚠️ Обнаружены упоминания устаревших или deprecated версий API!" +
-                                    "\n📄 Документация: " + docPath +
-                                    "\n🔍 Ключевые слова: " + String.join(", ", foundKeywords) +
-                                    "\n🚨 Риск: Устаревшие версии API могут содержать известные уязвимости" +
-                                    "\n💡 Угроза: Отсутствие security patches для deprecated версий",
+                            "Обнаружена устаревшая версия API",
+                            "Обнаружены упоминания устаревших или deprecated версий API!" +
+                                    "\nДокументация: " + docPath +
+                                    "\nКлючевые слова: " + String.join(", ", foundKeywords) +
+                                    "\nРиск: Устаревшие версии API могут содержать известные уязвимости" +
+                                    "\nУгроза: Отсутствие security patches для deprecated версий",
                             "/" + docPath,
                             response.getStatusCode(),
                             evidence
                     );
                     vuln.setSeverity(Vulnerability.Severity.MEDIUM);
                     vulns.add(vuln);
-                    System.out.println("   ⚠️ Deprecated API detected in: " + docPath + " - keywords: " + foundKeywords);
+                    System.out.println("(API-9) Устаревший API обнаружен в: " + docPath + " - ключевые слова: " + foundKeywords);
                 }
             }
         }
 
-        System.out.println("   📊 Deprecated API findings: " + discovered);
+        System.out.println("(API-9) Находок устаревших API: " + discovered);
         foundEndpoints += discovered;
         return vulns;
     }
@@ -464,33 +464,33 @@ public class API9_InventoryScanner implements SecurityScanner {
 
                 if (isDebugEndpoint) {
                     discovered++;
-                    String evidence = buildDetailedEvidence("Debug Endpoint in Production", fullUrl, response);
-                    evidence += "\n\n🔍 DEBUG INDICATORS FOUND:";
-                    if (body.contains("debug")) evidence += "\n- 'debug' keyword";
-                    if (body.contains("development")) evidence += "\n- 'development' keyword";
-                    if (body.contains("environment")) evidence += "\n- 'environment' keyword";
-                    if (body.contains("configuration")) evidence += "\n- 'configuration' keyword";
-                    if (body.contains("password")) evidence += "\n- 'password' keyword (CRITICAL!)";
+                    String evidence = buildDetailedEvidence("Debug конечная точка в production", fullUrl, response);
+                    evidence += "\n\nИНДИКАТОРЫ DEBUG НАЙДЕНЫ:";
+                    if (body.contains("debug")) evidence += "\n- ключевое слово 'debug'";
+                    if (body.contains("development")) evidence += "\n- ключевое слово 'development'";
+                    if (body.contains("environment")) evidence += "\n- ключевое слово 'environment'";
+                    if (body.contains("configuration")) evidence += "\n- ключевое слово 'configuration'";
+                    if (body.contains("password")) evidence += "\n- ключевое слово 'password' (КРИТИЧЕСКИ!)";
 
                     Vulnerability vuln = createInventoryVulnerability(
-                            "Debug Endpoint in Production: " + debugPath,
-                            "🚨 CRITICAL: Debug endpoint доступен в production среде!" +
-                                    "\n🔗 Endpoint: " + debugPath +
-                                    "\n📊 Статус: HTTP " + response.getStatusCode() +
-                                    "\n💀 Риск: Раскрытие чувствительной информации о приложении и среде выполнения" +
-                                    "\n🎯 Угроза: Получение конфигурационных данных, credentials, системной информации",
+                            "Debug конечная точка в production: " + debugPath,
+                            "КРИТИЧЕСКИЙ УРОВЕНЬ: Debug конечная точка доступна в production среде!" +
+                                    "\nКонечная точка: " + debugPath +
+                                    "\nСтатус: HTTP " + response.getStatusCode() +
+                                    "\nРиск: Раскрытие чувствительной информации о приложении и среде выполнения" +
+                                    "\nУгроза: Получение конфигурационных данных, credentials, системной информации",
                             "/" + debugPath,
                             response.getStatusCode(),
                             evidence
                     );
                     vuln.setSeverity(Vulnerability.Severity.HIGH);
                     vulns.add(vuln);
-                    System.out.println("   💀 CRITICAL: Debug endpoint in production: " + debugPath);
+                    System.out.println("(API-9) КРИТИЧЕСКИЙ УРОВЕНЬ: Debug конечная точка в production: " + debugPath);
                 }
             }
         }
 
-        System.out.println("   📊 Debug endpoints discovered: " + discovered + "/" + debugEndpoints.size());
+        System.out.println("(API-9) Debug конечных точек обнаружено: " + discovered + "/" + debugEndpoints.size());
         foundEndpoints += discovered;
         return vulns;
     }
@@ -571,7 +571,7 @@ public class API9_InventoryScanner implements SecurityScanner {
             int end = Math.min(jsContent.length(), index + endpoint.length() + 50);
             return jsContent.substring(start, end).replace("\n", " ");
         }
-        return "Context not found";
+        return "Контекст не найден";
     }
 
     private HttpApiClient.ApiResponse makeRequest(ApiClient apiClient, String url, String type) {
@@ -592,13 +592,13 @@ public class API9_InventoryScanner implements SecurityScanner {
 
     private String buildDetailedEvidence(String title, String url, HttpApiClient.ApiResponse response) {
         StringBuilder evidence = new StringBuilder();
-        evidence.append("🔍 ").append(title).append("\n");
-        evidence.append("📅 Scan Time: ").append(new Date()).append("\n");
-        evidence.append("🔗 URL: ").append(url).append("\n");
-        evidence.append("📊 HTTP Status: ").append(response.getStatusCode()).append("\n");
+        evidence.append(title).append("\n");
+        evidence.append("Время сканирования: ").append(new Date()).append("\n");
+        evidence.append("URL: ").append(url).append("\n");
+        evidence.append("HTTP Статус: ").append(response.getStatusCode()).append("\n");
 
         if (response.getHeaders() != null && !response.getHeaders().isEmpty()) {
-            evidence.append("\n📋 RESPONSE HEADERS:\n");
+            evidence.append("\nЗАГОЛОВКИ ОТВЕТА:\n");
             response.getHeaders().forEach((k, v) -> {
                 if (k != null && v != null) {
                     evidence.append("  ").append(k).append(": ").append(v).append("\n");
@@ -607,66 +607,66 @@ public class API9_InventoryScanner implements SecurityScanner {
         }
 
         if (response.getBody() != null && !response.getBody().isEmpty()) {
-            evidence.append("\n📄 RESPONSE BODY (first 500 chars):\n");
+            evidence.append("\nТЕЛО ОТВЕТА (первые 500 символов):\n");
             String bodyPreview = response.getBody().length() > 500 ?
                     response.getBody().substring(0, 500) + "..." : response.getBody();
             evidence.append(bodyPreview);
 
             // Анализ содержимого
-            evidence.append("\n\n🔬 CONTENT ANALYSIS:\n");
+            evidence.append("\n\nАНАЛИЗ СОДЕРЖИМОГО:\n");
             String body = response.getBody().toLowerCase();
-            if (body.contains("password")) evidence.append("- Contains 'password' keyword\n");
-            if (body.contains("admin")) evidence.append("- Contains 'admin' keyword\n");
-            if (body.contains("debug")) evidence.append("- Contains 'debug' keyword\n");
-            if (body.contains("error")) evidence.append("- Contains 'error' information\n");
-            if (body.contains("version")) evidence.append("- Contains version information\n");
-            if (body.contains("database")) evidence.append("- Contains database information\n");
+            if (body.contains("password")) evidence.append("- Содержит ключевое слово 'password'\n");
+            if (body.contains("admin")) evidence.append("- Содержит ключевое слово 'admin'\n");
+            if (body.contains("debug")) evidence.append("- Содержит ключевое слово 'debug'\n");
+            if (body.contains("error")) evidence.append("- Содержит информацию об ошибках\n");
+            if (body.contains("version")) evidence.append("- Содержит информацию о версии\n");
+            if (body.contains("database")) evidence.append("- Содержит информацию о базе данных\n");
         } else {
-            evidence.append("\n📄 RESPONSE BODY: [Empty or not available]");
+            evidence.append("\nТЕЛО ОТВЕТА: [Пусто или недоступно]");
         }
 
         return evidence.toString();
     }
 
     private String classifyEndpoint(String endpoint, HttpApiClient.ApiResponse response) {
-        if (endpoint.contains("admin")) return "Administrative Interface";
-        if (endpoint.contains("debug")) return "Debug Interface";
-        if (endpoint.contains("log")) return "Log Access";
-        if (endpoint.contains("config")) return "Configuration Access";
-        if (endpoint.contains("backup")) return "Backup Access";
-        if (endpoint.contains("database")) return "Database Interface";
-        if (endpoint.contains("monitor")) return "Monitoring Interface";
-        if (endpoint.contains("test")) return "Testing Interface";
-        return "Unknown Type";
+        if (endpoint.contains("admin")) return "Административный интерфейс";
+        if (endpoint.contains("debug")) return "Интерфейс отладки";
+        if (endpoint.contains("log")) return "Доступ к логам";
+        if (endpoint.contains("config")) return "Доступ к конфигурации";
+        if (endpoint.contains("backup")) return "Доступ к резервным копиям";
+        if (endpoint.contains("database")) return "Интерфейс базы данных";
+        if (endpoint.contains("monitor")) return "Интерфейс мониторинга";
+        if (endpoint.contains("test")) return "Тестовый интерфейс";
+        return "Неизвестный тип";
     }
 
     private String assessRiskLevel(String endpoint, HttpApiClient.ApiResponse response) {
         if (endpoint.contains("admin") || endpoint.contains("debug") || endpoint.contains("secret")) {
-            return "HIGH - Administrative/Debug access";
+            return "ВЫСОКИЙ - Административный/Debug доступ";
         }
         if (endpoint.contains("config") || endpoint.contains("log") || endpoint.contains("system")) {
-            return "MEDIUM - System configuration access";
+            return "СРЕДНИЙ - Доступ к системной конфигурации";
         }
         if (endpoint.contains("backup") || endpoint.contains("database")) {
-            return "HIGH - Data access";
+            return "ВЫСОКИЙ - Доступ к данным";
         }
-        return "LOW - General endpoint";
+        return "НИЗКИЙ - Общая конечная точка";
     }
 
     private String assessMonitoringRisk(String monitoringPath, HttpApiClient.ApiResponse response) {
         if (monitoringPath.contains("env") || monitoringPath.contains("config")) {
-            return "HIGH - Environment configuration exposure";
+            return "ВЫСОКИЙ УРОВЕНЬ - Раскрытие конфигурации окружения";
         }
         if (monitoringPath.contains("heapdump") || monitoringPath.contains("threaddump")) {
-            return "HIGH - Memory dump exposure";
+            return "ВЫСОКИЙ УРОВЕНЬ - Раскрытие дампа памяти";
         }
         if (monitoringPath.contains("shutdown")) {
-            return "CRITICAL - Service shutdown capability";
+            return "КРИТИЧЕСКИЙ УРОВЕНЬ - Возможность остановки сервиса";
         }
         if (monitoringPath.contains("metrics")) {
-            return "MEDIUM - Performance metrics exposure";
+            return "СРЕДНИЙ УРОВЕНЬ - Раскрытие метрик производительности";
         }
-        return "LOW - Basic health check";
+        return "НИЗКИЙ УРОВЕНЬ - Базовая проверка здоровья";
     }
 
     private boolean isInterestingResponse(int statusCode) {
@@ -693,14 +693,14 @@ public class API9_InventoryScanner implements SecurityScanner {
         vuln.setMethod("GET");
 
         List<String> recommendations = new ArrayList<>();
-        recommendations.add("🔒 Немедленно ограничьте доступ к обнаруженным endpoints");
-        recommendations.add("📝 Проведите полную инвентаризацию всех API endpoints");
-        recommendations.add("🗑️ Удалите неиспользуемые и устаревшие endpoints");
-        recommendations.add("🔐 Ограничьте доступ к debug, monitoring и development endpoints в production среде");
-        recommendations.add("🔄 Внедрите процесс управления версиями API с четким lifecycle");
-        recommendations.add("📊 Регулярно проводите автоматическое сканирование инвентаризации");
-        recommendations.add("🚫 Убедитесь, что client-side код не содержит скрытых API endpoints");
-        recommendations.add("📋 Синхронизируйте документацию с реально существующими endpoints");
+        recommendations.add("Немедленно ограничьте доступ к обнаруженным конечным точкам");
+        recommendations.add("Проведите полную инвентаризацию всех API конечных точек");
+        recommendations.add("Удалите неиспользуемые и устаревшие конечные точки");
+        recommendations.add("Ограничьте доступ к debug, monitoring и development конечным точкам в production среде");
+        recommendations.add("Внедрите процесс управления версиями API с четким lifecycle");
+        recommendations.add("Регулярно проводите автоматическое сканирование инвентаризации");
+        recommendations.add("Убедитесь, что client-side код не содержит скрытых API конечных точек");
+        recommendations.add("Синхронизируйте документацию с реально существующими конечными точками");
         vuln.setRecommendations(recommendations);
 
         return vuln;

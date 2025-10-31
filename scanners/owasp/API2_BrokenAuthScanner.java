@@ -19,7 +19,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
     
     @Override
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
-        System.out.println("🔐 Scanning for Broken Authentication vulnerabilities...");
+        System.out.println("(API-2) Запуск сканирования на уязвимости Broken Authentication (OWASP API Security Top 10:2023 - API2)...");
         
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         
@@ -33,12 +33,12 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
         testTokenSecurity(config, apiClient, vulnerabilities);
         testJWTWeaknesses(config, vulnerabilities);
         
-        System.out.println("✅ Broken Auth scan completed. Found: " + vulnerabilities.size() + " vulnerabilities");
+        System.out.println("(API-2) Сканирование Broken Authentication завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
     }
     
     private void testUnauthorizedAccess(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
-        System.out.println("🔓 Testing unauthorized access to protected endpoints...");
+        System.out.println("(API-2) Тестирование несанкционированного доступа к защищенным endpoint...");
         
         String[] protectedEndpoints = {
             "/",
@@ -76,18 +76,24 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                         "Return 401 Unauthorized for unauthenticated requests"
                     ));
                     vulnerabilities.add(vuln);
+                    System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Endpoint " + endpoint + " доступен без аутентификации");
+                    System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+                    System.out.println("(API-2) - Endpoint: " + endpoint);
+                    System.out.println("(API-2) - Метод: GET");
+                    System.out.println("(API-2) - Код ответа: " + response.getStatus() + " (успешный доступ без токена)");
+                    System.out.println("(API-2) - Заголовок Authorization: отсутствует");
                 } else {
-                    System.out.println("✅ " + endpoint + " properly protected (status: " + response.getStatus() + ")");
+                    System.out.println("(API-2) Endpoint " + endpoint + " корректно защищен (статус: " + response.getStatus() + ")");
                 }
                 
             } catch (Exception e) {
-                System.out.println("⚠ Error testing " + endpoint + ": " + e.getMessage());
+                System.out.println("(API-2) Ошибка тестирования " + endpoint + ": " + e.getMessage());
             }
         }
     }
     
     private void testInvalidTokens(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
-        System.out.println("🎫 Testing with invalid/expired tokens...");
+        System.out.println("(API-2) Тестирование с невалидными/просроченными токенами...");
         
         String[] invalidTokens = {
             "invalid_token_123",
@@ -126,25 +132,31 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                         "Implement proper token validation middleware"
                     ));
                     vulnerabilities.add(vuln);
+                    System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: API принимает невалидный JWT токен");
+                    System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+                    System.out.println("(API-2) - Использованный токен: " + token);
+                    System.out.println("(API-2) - Endpoint: " + testEndpoint);
+                    System.out.println("(API-2) - Код ответа: " + response.getStatus() + " (успешный доступ с невалидным токеном)");
+                    System.out.println("(API-2) - Вывод: сервер не проверяет валидность JWT токенов");
                     break;
                 } else {
-                    System.out.println("✅ Invalid token correctly rejected: " + response.getStatus());
+                    System.out.println("(API-2) Невалидный токен корректно отклонен: " + response.getStatus());
                 }
                 
             } catch (Exception e) {
-                System.out.println("⚠ Error testing invalid token: " + e.getMessage());
+                System.out.println("(API-2) Ошибка тестирования невалидного токена: " + e.getMessage());
             }
         }
     }
     
     private void testAuthHeaders(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
-        System.out.println("📋 Testing different authentication headers...");
+        System.out.println("(API-2) Тестирование различных заголовков аутентификации...");
         
         String testEndpoint = config.getTargetBaseUrl() + "/health";
         String validToken = getValidToken(config);
         
         if (validToken == null) {
-            System.out.println("⚠ No valid token available for auth header testing");
+            System.out.println("(API-2) Нет валидного токена для тестирования заголовков аутентификации");
             return;
         }
         
@@ -181,18 +193,24 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                         "Document proper authentication method"
                     ));
                     vulnerabilities.add(vuln);
+                    System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: API принимает нестандартные заголовки аутентификации");
+                    System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+                    System.out.println("(API-2) - Нестандартный заголовок: " + test.getKey());
+                    System.out.println("(API-2) - Значение заголовка: " + test.getValue());
+                    System.out.println("(API-2) - Код ответа: " + response.getStatus() + " (успешный доступ)");
+                    System.out.println("(API-2) - Вывод: возможны атаки через подделку заголовков аутентификации");
                 } else if (isSuccessResponse(response) && test.getKey().equals("Authorization")) {
-                    System.out.println("✅ Standard Authorization header works correctly");
+                    System.out.println("(API-2) Стандартный заголовок Authorization работает корректно");
                 }
                 
             } catch (Exception e) {
-                System.out.println("⚠ Error testing header " + test.getKey() + ": " + e.getMessage());
+                System.out.println("(API-2) Ошибка тестирования заголовка " + test.getKey() + ": " + e.getMessage());
             }
         }
     }
     
     private void testSensitiveEndpoints(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
-        System.out.println("🔒 Testing sensitive endpoints without authentication...");
+        System.out.println("(API-2) Тестирование чувствительных endpoint без аутентификации...");
         
         String[] sensitiveEndpoints = {
             "/admin",
@@ -233,23 +251,29 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                         "Regularly audit endpoint access controls"
                     ));
                     vulnerabilities.add(vuln);
+                    System.out.println("(API-2) КРИТИЧЕСКАЯ УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Чувствительный endpoint доступен без аутентификации");
+                    System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+                    System.out.println("(API-2) - Чувствительный endpoint: " + endpoint);
+                    System.out.println("(API-2) - Полный URL: " + fullUrl);
+                    System.out.println("(API-2) - Код ответа: " + response.getStatus() + " (успешный доступ без аутентификации)");
+                    System.out.println("(API-2) - Вывод: возможен несанкционированный доступ к административным функциям");
                 } else if (response.getStatus() != 404) {
-                    System.out.println("⚠ Sensitive endpoint " + endpoint + " returned: " + response.getStatus());
+                    System.out.println("(API-2) Чувствительный endpoint " + endpoint + " вернул: " + response.getStatus());
                 }
                 
             } catch (Exception e) {
-                System.out.println("⚠ Error testing sensitive endpoint " + endpoint + ": " + e.getMessage());
+                System.out.println("(API-2) Ошибка тестирования чувствительного endpoint " + endpoint + ": " + e.getMessage());
             }
         }
     }
     
     private void testWithValidToken(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
-        System.out.println("🔑 Testing with valid token...");
+        System.out.println("(API-2) Тестирование с валидным токеном...");
         
         String validToken = getValidToken(config);
         
         if (validToken == null) {
-            System.out.println("⚠ No valid token available for testing");
+            System.out.println("(API-2) Нет валидного токена для тестирования");
             return;
         }
         
@@ -285,20 +309,26 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                         "Verify token signature verification"
                     ));
                     vulnerabilities.add(vuln);
+                    System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Валидный токен отклонен с ошибкой 403");
+                    System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+                    System.out.println("(API-2) - Endpoint: " + endpoint);
+                    System.out.println("(API-2) - Код ответа: 403 Forbidden");
+                    System.out.println("(API-2) - Использован валидный токен: ДА");
+                    System.out.println("(API-2) - Вывод: проблемы с логикой авторизации");
                 } else if (isSuccessResponse(response)) {
-                    System.out.println("✅ " + endpoint + " works correctly with valid token (status: " + response.getStatus() + ")");
+                    System.out.println("(API-2) " + endpoint + " корректно работает с валидным токеном (статус: " + response.getStatus() + ")");
                 } else {
-                    System.out.println("⚠ " + endpoint + " returned status: " + response.getStatus() + " with valid token");
+                    System.out.println("(API-2) " + endpoint + " вернул статус: " + response.getStatus() + " с валидным токеном");
                 }
                 
             } catch (Exception e) {
-                System.out.println("⚠ Error testing " + endpoint + " with valid token: " + e.getMessage());
+                System.out.println("(API-2) Ошибка тестирования " + endpoint + " с валидным токеном: " + e.getMessage());
             }
         }
     }
     
     private void testBruteforceProtection(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
-        System.out.println("💥 Testing bruteforce protection...");
+        System.out.println("(API-2) Тестирование защиты от брутфорс-атак...");
         
         String loginUrl = config.getBankBaseUrl() + "/auth/bank-token";
         int maxAttempts = 10;
@@ -317,11 +347,11 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 Object responseObj = apiClient.executeRequest("POST", loginUrl, requestBody, headers);
                 HttpApiClient.ApiResponse response = (HttpApiClient.ApiResponse) responseObj;
                 
-                System.out.println("🔐 Bruteforce attempt " + i + ": " + response.getStatus());
+                System.out.println("(API-2) Попытка брутфорс-атаки " + i + ": " + response.getStatus());
                 
                 if (response.getStatus() == 429) {
                     protectionDetected = true;
-                    System.out.println("✅ Bruteforce protection detected at attempt " + i);
+                    System.out.println("(API-2) Защита от брутфорс-атак обнаружена на попытке " + i);
                     break;
                 }
                 
@@ -340,23 +370,29 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                         "Use CAPTCHA or delay mechanisms"
                     ));
                     vulnerabilities.add(vuln);
+                    System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Отсутствует защита от брутфорс-атак");
+                    System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+                    System.out.println("(API-2) - Количество попыток: " + i);
+                    System.out.println("(API-2) - Endpoint: " + loginUrl);
+                    System.out.println("(API-2) - Последний код ответа: " + response.getStatus());
+                    System.out.println("(API-2) - Вывод: система не блокирует множественные неудачные попытки входа");
                     break;
                 }
                 
                 Thread.sleep(100);
                 
             } catch (Exception e) {
-                System.out.println("⚠ Bruteforce test error: " + e.getMessage());
+                System.out.println("(API-2) Ошибка тестирования брутфорс-защиты: " + e.getMessage());
             }
         }
         
         if (protectionDetected) {
-            System.out.println("✅ Bruteforce protection is implemented");
+            System.out.println("(API-2) Защита от брутфорс-атак реализована корректно");
         }
     }
     
     private void testRateLimiting(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
-        System.out.println("🚀 Testing rate limiting...");
+        System.out.println("(API-2) Тестирование ограничения частоты запросов (rate limiting)...");
         
         String testEndpoint = config.getTargetBaseUrl() + "/health";
         int rapidRequests = 20;
@@ -370,7 +406,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 Object responseObj = apiClient.executeRequest("GET", testEndpoint, null, headers);
                 HttpApiClient.ApiResponse response = (HttpApiClient.ApiResponse) responseObj;
                 
-                System.out.println("📡 Rate limit test " + i + ": " + response.getStatus());
+                System.out.println("(API-2) Тест rate limiting " + i + ": " + response.getStatus());
                 
                 if (response.getStatus() == 429) {
                     rateLimitTriggered++;
@@ -379,7 +415,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 Thread.sleep(50);
                 
             } catch (Exception e) {
-                System.out.println("⚠ Rate limit test error: " + e.getMessage());
+                System.out.println("(API-2) Ошибка тестирования rate limiting: " + e.getMessage());
             }
         }
         
@@ -398,13 +434,19 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 "Set reasonable limits per IP/user"
             ));
             vulnerabilities.add(vuln);
+            System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Отсутствует ограничение частоты запросов");
+            System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+            System.out.println("(API-2) - Количество запросов: " + rapidRequests);
+            System.out.println("(API-2) - Endpoint: " + testEndpoint);
+            System.out.println("(API-2) - Ответов 429 (Too Many Requests): " + rateLimitTriggered);
+            System.out.println("(API-2) - Вывод: возможны DoS-атаки и злоупотребление API");
         } else {
-            System.out.println("✅ Rate limiting detected: " + rateLimitTriggered + "/" + rapidRequests + " requests blocked");
+            System.out.println("(API-2) Ограничение частоты запросов обнаружено: " + rateLimitTriggered + "/" + rapidRequests + " запросов заблокировано");
         }
     }
     
     private void testTokenSecurity(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
-        System.out.println("🔒 Testing token security...");
+        System.out.println("(API-2) Тестирование безопасности токенов...");
         
         String validToken = getValidToken(config);
         if (validToken == null) return;
@@ -421,6 +463,10 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 "Ensure proper entropy in token generation"
             ));
             vulnerabilities.add(vuln);
+            System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Слишком короткий JWT токен");
+            System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+            System.out.println("(API-2) - Длина токена: " + validToken.length() + " символов");
+            System.out.println("(API-2) - Рекомендуемая длина: минимум 128 символов");
         }
         
         try {
@@ -439,15 +485,19 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                         "Follow JWT best practices for claim structure"
                     ));
                     vulnerabilities.add(vuln);
+                    System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Отсутствуют стандартные JWT claims");
+                    System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+                    System.out.println("(API-2) - Отсутствующие claims: iss (issuer), aud (audience)");
+                    System.out.println("(API-2) - Вывод: несоответствие стандартам JWT");
                 }
             }
         } catch (Exception e) {
-            System.out.println("⚠ Token security analysis error: " + e.getMessage());
+            System.out.println("(API-2) Ошибка анализа безопасности токена: " + e.getMessage());
         }
     }
     
     private void testJWTWeaknesses(ScanConfig config, List<Vulnerability> vulnerabilities) {
-        System.out.println("🔍 Analyzing JWT token weaknesses...");
+        System.out.println("(API-2) Анализ слабостей JWT токенов...");
         
         String token = getValidToken(config);
         
@@ -470,6 +520,10 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                                 "Regularly rotate signing keys"
                             ));
                             vulnerabilities.add(vuln);
+                            System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Слабый алгоритм подписи JWT");
+                            System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+                            System.out.println("(API-2) - Заголовок JWT: " + header);
+                            System.out.println("(API-2) - Обнаружен слабый алгоритм: " + (header.contains("none") ? "none" : "HS256"));
                         }
                         
                         String payload = new String(java.util.Base64.getUrlDecoder().decode(parts[1]));
@@ -486,6 +540,10 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                                 "Implement token refresh mechanism"
                             ));
                             vulnerabilities.add(vuln);
+                            System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: JWT токен без срока действия");
+                            System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+                            System.out.println("(API-2) - Отсутствует claim: exp (expiration time)");
+                            System.out.println("(API-2) - Вывод: токены не имеют срока действия, возможны вечные сессии");
                         }
                         
                         if (payload.contains("\"password\"") || payload.contains("\"secret\"") || payload.contains("\"private_key\"")) {
@@ -501,9 +559,13 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                                 "Encrypt JWT payload if sensitive data is required"
                             ));
                             vulnerabilities.add(vuln);
+                            System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Чувствительные данные в JWT payload");
+                            System.out.println("(API-2) ДОКАЗАТЕЛЬСТВА:");
+                            System.out.println("(API-2) - Обнаружены чувствительные поля в payload");
+                            System.out.println("(API-2) - Вывод: возможна утечка конфиденциальной информации");
                         }
                     } catch (Exception e) {
-                        System.out.println("⚠ JWT analysis error: " + e.getMessage());
+                        System.out.println("(API-2) Ошибка анализа JWT: " + e.getMessage());
                     }
                 }
             }

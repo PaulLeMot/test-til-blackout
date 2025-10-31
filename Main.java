@@ -18,8 +18,8 @@ import java.util.Map;
 
 public class Main {
     public static void main(String[] args) {
-        System.out.println("🚀 Запуск GOSTGuardian Security Scanner");
-        System.out.println("🎯 Целевые уязвимости: OWASP API Security Top 10\n");
+        System.out.println("Запуск GOSTGuardian Security Scanner");
+        System.out.println("Целевые уязвимости: OWASP API Security Top 10\n");
 
         final String PASSWORD = "***REMOVED***";
         final List<String> BANKS = Arrays.asList(
@@ -29,19 +29,20 @@ public class Main {
         );
 
         // Создаём сканеры
-        List<SecurityScanner> securityScanners = new ArrayList<>();
-        securityScanners.add(new API1_BOLAScanner());
-        securityScanners.add(new API2_BrokenAuthScanner());
-        securityScanners.add(new API3_BOScanner());
-        securityScanners.add(new API4_URCScanner());
-        securityScanners.add(new API5_BrokenFunctionLevelAuthScanner());
-	securityScanners.add(new API6_BusinessFlowScanner());
-        securityScanners.add(new API7_SSRFScanner());
-        securityScanners.add(new API8_SecurityConfigScanner());
-        securityScanners.add(new API9_InventoryScanner());
-        securityScanners.add(new API10_UnsafeConsumptionScanner());
+        List<SecurityScanner> securityScanners = Arrays.asList(
+            new API1_BOLAScanner(),
+            new API2_BrokenAuthScanner(),
+            new API3_BOScanner(),
+            new API4_URCScanner(),
+            new API5_BrokenFunctionLevelAuthScanner(),
+            new API6_BusinessFlowScanner(),
+            new API7_SSRFScanner(),
+            new API8_SecurityConfigScanner(),
+            new API9_InventoryScanner(),
+            new API10_UnsafeConsumptionScanner()
+        );
 
-        System.out.println("📋 Зарегистрировано сканеров: " + securityScanners.size());
+        System.out.println("Зарегистрировано сканеров: " + securityScanners.size());
 
         // Итоговая статистика
         int totalVulnerabilities = 0;
@@ -50,7 +51,7 @@ public class Main {
 
         for (String baseUrl : BANKS) {
             System.out.println("\n" + "=".repeat(50));
-            System.out.println("🛡  Сканирование: " + baseUrl);
+            System.out.println("Сканирование: " + baseUrl);
             System.out.println("=".repeat(50));
 
             try {
@@ -61,47 +62,69 @@ public class Main {
                 config.setClientId("team172");
                 config.setClientSecret(PASSWORD);
 
-                ApiScanner apiScanner = new ApiScanner();
-
-                // Регистрируем сканеры
+                List<Vulnerability> allVulnerabilities = new ArrayList<>();
+                
+                // Последовательно запускаем каждый сканер
                 for (SecurityScanner scanner : securityScanners) {
-                    apiScanner.registerSecurityScanner(scanner);
+                    System.out.println("\nЗапуск сканера: " + scanner.getName());
+                    System.out.println("-".repeat(40));
+                    
+                    try {
+                        List<Vulnerability> scannerResults = scanner.scan(null, config, new HttpApiClient());
+                        allVulnerabilities.addAll(scannerResults);
+                        
+                        System.out.println("Сканер " + scanner.getName() + " завершен. Найдено уязвимостей: " + scannerResults.size());
+                        
+                        // Выводим результаты текущего сканера
+                        if (!scannerResults.isEmpty()) {
+                            for (Vulnerability vuln : scannerResults) {
+                                System.out.println("  • " + vuln.getTitle() + " [" + vuln.getSeverity() + "]");
+                            }
+                        }
+                        
+                    } catch (Exception e) {
+                        System.err.println("Ошибка в сканере " + scanner.getName() + ": " + e.getMessage());
+                    }
+                    
+                    System.out.println("-".repeat(40));
+                    // Небольшая пауза между сканерами для читаемости вывода
+                    try { Thread.sleep(500); } catch (InterruptedException e) {}
                 }
 
-                ScanResult result = apiScanner.performScan(config);
                 totalScannedBanks++;
-                int bankVulnerabilities = result.getVulnerabilities().size();
+                int bankVulnerabilities = allVulnerabilities.size();
                 totalVulnerabilities += bankVulnerabilities;
 
                 // Статистика по сканерам
                 Map<String, Integer> scannerStats = new HashMap<>();
-                for (Vulnerability vuln : result.getVulnerabilities()) {
+                for (Vulnerability vuln : allVulnerabilities) {
                     String category = vuln.getCategory().toString();
                     scannerStats.put(category, scannerStats.getOrDefault(category, 0) + 1);
                 }
 
                 // Уровни серьезности
-                long criticalCount = result.getVulnerabilities().stream()
+                long criticalCount = allVulnerabilities.stream()
                         .filter(v -> v.getSeverity() == Vulnerability.Severity.CRITICAL).count();
-                long highCount = result.getVulnerabilities().stream()
+                long highCount = allVulnerabilities.stream()
                         .filter(v -> v.getSeverity() == Vulnerability.Severity.HIGH).count();
-                long mediumCount = result.getVulnerabilities().stream()
+                long mediumCount = allVulnerabilities.stream()
                         .filter(v -> v.getSeverity() == Vulnerability.Severity.MEDIUM).count();
-                long lowCount = result.getVulnerabilities().stream()
+                long lowCount = allVulnerabilities.stream()
                         .filter(v -> v.getSeverity() == Vulnerability.Severity.LOW).count();
 
-                System.out.println("📊 Результаты:");
-                System.out.println("   ✅ Статус: " + result.getStatus());
-                System.out.println("   🎯 Уязвимостей: " + bankVulnerabilities);
-                System.out.println("   📈 Уровни: 💀" + criticalCount + " 🔴" + highCount + 
-                                 " 🟡" + mediumCount + " 🔵" + lowCount);
+                System.out.println("\nРезультаты сканирования " + baseUrl + ":");
+                System.out.println("   Статус: ЗАВЕРШЕНО");
+                System.out.println("   Уязвимостей: " + bankVulnerabilities);
+                System.out.println("   Уровни: КРИТИЧЕСКИХ-" + criticalCount + " ВЫСОКИХ-" + highCount + 
+                                 " СРЕДНИХ-" + mediumCount + " НИЗКИХ-" + lowCount);
 
                 // Статистика по сканерам
-                System.out.println("\n   🔍 Результаты по сканерам:");
+                System.out.println("\n   Результаты по сканерам:");
                 printScannerStats(scannerStats, "OWASP_API1_BOLA", "API1 - BOLA");
                 printScannerStats(scannerStats, "OWASP_API2_BROKEN_AUTH", "API2 - Broken Auth");
                 printScannerStats(scannerStats, "OWASP_API3_BOPLA", "API3 - BOPLA"); 
                 printScannerStats(scannerStats, "OWASP_API4_URC", "API4 - URC");
+                printScannerStats(scannerStats, "OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH", "API5 - Broken Function Level Auth");
                 printScannerStats(scannerStats, "OWASP_API6_BUSINESS_FLOW", "API6 - Business Flow");
                 printScannerStats(scannerStats, "OWASP_API7_SSRF", "API7 - SSRF");
                 printScannerStats(scannerStats, "OWASP_API8_SM", "API8 - Security Config");
@@ -109,32 +132,42 @@ public class Main {
                 printScannerStats(scannerStats, "OWASP_API10_UNSAFE_CONSUMPTION", "API10 - Unsafe Consumption");
 
                 if (highCount > 0 || criticalCount > 0) {
-                    System.out.println("   🚨 Обнаружены критические уязвимости!");
+                    System.out.println("   Обнаружены критические уязвимости!");
                 }
 
             } catch (Exception e) {
-                System.err.println("❌ Ошибка: " + e.getMessage());
+                System.err.println("Ошибка при сканировании банка " + baseUrl + ": " + e.getMessage());
                 failedBanks.add(baseUrl);
             }
+            
+            System.out.println("\n" + "=".repeat(50));
+            System.out.println("Завершено сканирование: " + baseUrl);
+            System.out.println("=".repeat(50));
+            
+            // Пауза между банками
+            try { Thread.sleep(1000); } catch (InterruptedException e) {}
         }
 
         // Финальная сводка
         System.out.println("\n" + "=".repeat(50));
-        System.out.println("🏁 СКАНИРОВАНИЕ ЗАВЕРШЕНО");
+        System.out.println("СКАНИРОВАНИЕ ЗАВЕРШЕНО");
         System.out.println("=".repeat(50));
 
-        System.out.println("\n📊 ИТОГОВАЯ СТАТИСТИКА:");
-        System.out.println("   🏦 Просканировано: " + totalScannedBanks + "/" + BANKS.size());
-        System.out.println("   🎯 Всего уязвимостей: " + totalVulnerabilities);
+        System.out.println("\nИТОГОВАЯ СТАТИСТИКА:");
+        System.out.println("   Просканировано банков: " + totalScannedBanks + "/" + BANKS.size());
+        System.out.println("   Всего уязвимостей: " + totalVulnerabilities);
         
         if (!failedBanks.isEmpty()) {
-            System.out.println("   ❌ Ошибки: " + failedBanks.size() + " банков");
+            System.out.println("   Ошибки сканирования: " + failedBanks.size() + " банков");
+            for (String failedBank : failedBanks) {
+                System.out.println("     • " + failedBank);
+            }
         }
 
         if (totalVulnerabilities == 0) {
-            System.out.println("🎉 Уязвимостей не обнаружено.");
+            System.out.println("Уязвимостей не обнаружено.");
         } else {
-            System.out.println("💡 Рекомендуется устранение уязвимостей HIGH/CRITICAL уровня");
+            System.out.println("Рекомендуется устранение уязвимостей ВЫСОКОГО и КРИТИЧЕСКОГО уровня");
         }
     }
 
