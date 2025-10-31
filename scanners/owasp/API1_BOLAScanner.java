@@ -8,6 +8,9 @@ import core.ApiClient;
 import core.AuthManager;
 import core.HttpApiClient;
 
+import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.PathItem;
+
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -15,7 +18,7 @@ import java.util.regex.Pattern;
 public class API1_BOLAScanner implements SecurityScanner {
 
     private static final String ACCOUNTS_ENDPOINT = "/accounts";
-    private static final String ACCOUNT_DETAIL_ENDPOINT = "/accounts/%s";
+    private static final String ACCOUNT_DETAIL_ENDPOINT_TEMPLATE = "/accounts/%s";
 
     public API1_BOLAScanner() {}
 
@@ -31,6 +34,32 @@ public class API1_BOLAScanner implements SecurityScanner {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         String baseUrl = config.getTargetBaseUrl().trim();
         String password = config.getPassword();
+
+        // === Проверка документирования эндпоинтов в OpenAPI ===
+        boolean accountsEndpointDocumented = false;
+        boolean accountDetailEndpointDocumented = false;
+
+        if (openAPI instanceof OpenAPI) {
+            OpenAPI spec = (OpenAPI) openAPI;
+            Map<String, PathItem> paths = spec.getPaths();
+
+            if (paths != null) {
+                accountsEndpointDocumented = paths.containsKey(ACCOUNTS_ENDPOINT);
+                accountDetailEndpointDocumented = paths.containsKey("/accounts/{accountId}") ||
+                        paths.containsKey("/accounts/{id}") ||
+                        paths.containsKey("/accounts/{account_id}") ||
+                        paths.containsKey("/accounts/{account}");
+
+                System.out.println("(API-1) Эндпоинт " + ACCOUNTS_ENDPOINT +
+                        " " + (accountsEndpointDocumented ? "задокументирован" : "НЕ задокументирован") + " в OpenAPI");
+                System.out.println("(API-1) Эндпоинт детализации счёта " +
+                        (accountDetailEndpointDocumented ? "задокументирован" : "НЕ задокументирован") + " в OpenAPI");
+
+                // Опционально: можно создать уязвимость API9 здесь, но лучше в API9_InventoryScanner
+            }
+        } else {
+            System.out.println("(API-1) OpenAPI-спецификация недоступна — пропуск проверки контракта");
+        }
 
         if (password == null || password.isEmpty()) {
             System.err.println("(API-1) Пароль не задан в конфигурации. BOLA-сканер пропущен.");
@@ -74,7 +103,7 @@ public class API1_BOLAScanner implements SecurityScanner {
             boolean isVulnerable = (statusCode == 200);
 
             if (isVulnerable) {
-                String endpoint = String.format("/accounts/%s", accountId);
+                String endpoint = String.format(ACCOUNT_DETAIL_ENDPOINT_TEMPLATE, accountId);
                 String fullUrl = baseUrl + endpoint;
 
                 Vulnerability vuln = new Vulnerability();
@@ -143,7 +172,8 @@ public class API1_BOLAScanner implements SecurityScanner {
             headers.put("Authorization", "Bearer " + token);
             headers.put("Accept", "application/json");
 
-            Object response = apiClient.executeRequest("GET", baseUrl + String.format(ACCOUNT_DETAIL_ENDPOINT, accountId), null, headers);
+            String url = baseUrl + String.format(ACCOUNT_DETAIL_ENDPOINT_TEMPLATE, accountId);
+            Object response = apiClient.executeRequest("GET", url, null, headers);
             return (HttpApiClient.ApiResponse) response;
         } catch (Exception e) {
             System.err.println("(API-1) Ошибка при попытке доступа к чужому счёту: " + e.getMessage());
