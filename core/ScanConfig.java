@@ -7,7 +7,8 @@ public class ScanConfig {
     private String bankBaseUrl;
     private String clientId;
     private String clientSecret;
-
+    private String targetUrl;          // например: https://vbank.open.bankingapi.ru
+    private String openApiSpecUrl;
     public ScanConfig() {}
 
     // Getters and Setters
@@ -31,4 +32,9 @@ public class ScanConfig {
 
     public String getClientSecret() { return clientSecret; }
     public void setClientSecret(String clientSecret) { this.clientSecret = clientSecret; }
+    public String getTargetUrl() { return targetUrl; }
+    public void setTargetUrl(String targetUrl) { this.targetUrl = targetUrl; }
+
+    public String getOpenApiSpecUrl() { return openApiSpecUrl; }
+    public void setOpenApiSpecUrl(String specUrl) { this.openApiSpecUrl = specUrl; }
 }
