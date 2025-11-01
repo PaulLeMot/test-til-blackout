@@ -5,6 +5,7 @@ import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
 import core.HttpApiClient;
+import core.AuthManager;
 import scanners.SecurityScanner;
 import java.util.*;
 
@@ -41,19 +42,24 @@ public class API3_BOScanner implements SecurityScanner {
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         String baseUrl = config.getTargetBaseUrl();
+        String password = config.getPassword();
 
         System.out.println("(API-3) Запуск улучшенного сканера OWASP API3 BOPLA...");
         System.out.println("(API-3) Целевой API: Virtual Bank API (OpenBanking Russia v2.1)");
 
         try {
-            // Получаем токен для аутентификации
-            String token = authenticate(baseUrl, config.getPassword());
-            if (token == null) {
-                System.err.println("(API-3) Не удалось аутентифицироваться для API3 сканирования");
+            // Получаем токены через AuthManager
+            Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(baseUrl, password);
+            if (tokens.isEmpty()) {
+                System.err.println("(API-3) Не удалось получить токены для API3 сканирования");
                 return vulnerabilities;
             }
 
-            System.out.println("(API-3) Токен получен, начинаем тестирование...");
+            // Берем первого доступного пользователя
+            String username = tokens.keySet().iterator().next();
+            String token = tokens.get(username);
+
+            System.out.println("(API-3) Токен получен для пользователя: " + username + ", начинаем тестирование...");
 
             // Расширенные тесты на основе документации API
             testEnhancedMassAssignment(baseUrl, token, vulnerabilities, apiClient);
@@ -72,15 +78,6 @@ public class API3_BOScanner implements SecurityScanner {
 
         System.out.println("(API-3) Сканирование API3 завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
-    }
-
-    private String authenticate(String baseUrl, String password) {
-        try {
-            return core.AuthManager.getBankAccessToken(baseUrl, "team172-1", password);
-        } catch (Exception e) {
-            System.err.println("(API-3) Ошибка аутентификации: " + e.getMessage());
-            return null;
-        }
     }
 
     private void testEnhancedMassAssignment(String baseUrl, String token,
