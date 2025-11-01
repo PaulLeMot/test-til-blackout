@@ -66,14 +66,17 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
             return vulnerabilities;
         }
 
+        // Получаем токены через AuthManager
         Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(baseUrl, password);
         if (tokens.size() < 2) {
             System.err.println("(API-5) Недостаточно токенов для API5-теста (нужно минимум 2).");
             return vulnerabilities;
         }
 
-        String user1 = "team172-1";
-        String user2 = "team172-2";
+        // Получаем первые два пользователя из доступных токенов
+        List<String> usernames = new ArrayList<>(tokens.keySet());
+        String user1 = usernames.get(0);
+        String user2 = usernames.get(1);
         String token1 = tokens.get(user1);
         String token2 = tokens.get(user2);
 
@@ -199,8 +202,8 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                         user1, "system", fullUrl
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен несанкционированный доступ к административному эндпоинту: " + endpoint + 
-                                 " с правами пользователя " + user1 + ". Статус: " + response.getStatusCode());
+                System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен несанкционированный доступ к административному эндпоинту: " + endpoint +
+                        " с правами пользователя " + user1 + ". Статус: " + response.getStatusCode());
             }
 
             // Тестируем POST запросы для критических операций
@@ -219,8 +222,8 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                             user1, "system", fullUrl
                     );
                     vulnerabilities.add(vuln);
-                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружено несанкционированное выполнение административной операции: " + endpoint + 
-                                     " пользователем " + user1 + ". Статус: " + postResponse.getStatusCode());
+                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружено несанкционированное выполнение административной операции: " + endpoint +
+                            " пользователем " + user1 + ". Статус: " + postResponse.getStatusCode());
                 }
             }
         }
@@ -258,15 +261,15 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                         Vulnerability vuln = createVulnerability(
                                 "Успешная эскалация привилегий",
                                 "Пользователь " + username + " успешно повысил свои привилегии до роли '" + role +
-                                        "' через эндпоинт " + endpoint + 
+                                        "' через эндпоинт " + endpoint +
                                         ". Доказательство: подтверждено изменение роли через запрос к /auth/me.",
                                 endpoint,
                                 response.getStatusCode(),
                                 username, "system", fullUrl
                         );
                         vulnerabilities.add(vuln);
-                        System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружена эскалация привилегий через эндпоинт: " + endpoint + 
-                                         ". Пользователь " + username + " получил роль: " + role);
+                        System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружена эскалация привилегий через эндпоинт: " + endpoint +
+                                ". Пользователь " + username + " получил роль: " + role);
                     }
                 }
             }
@@ -287,8 +290,8 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                             username, "system", fullUrl
                     );
                     vulnerabilities.add(vuln);
-                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружена возможная эскалация привилегий через PUT запрос: " + endpoint + 
-                                     ". Пользователь: " + username + ", запрошенная роль: " + role);
+                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружена возможная эскалация привилегий через PUT запрос: " + endpoint +
+                            ". Пользователь: " + username + ", запрошенная роль: " + role);
                 }
             }
         }
@@ -327,15 +330,15 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                     Vulnerability vuln = createVulnerability(
                             "Доступ к функциям другого пользователя",
                             "Пользователь " + user1 + " получил доступ к функциям пользователя " + user2 +
-                                    " через эндпоинт " + endpoint + 
+                                    " через эндпоинт " + endpoint +
                                     ". Доказательство: успешный доступ к персональным данным другого пользователя с идентификатором " + user2Id,
                             endpoint,
                             response.getStatusCode(),
                             user1, user2, fullUrl
                     );
                     vulnerabilities.add(vuln);
-                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен доступ к функциям другого пользователя: " + endpoint + 
-                                     ". Пользователь " + user1 + " получил доступ к данным пользователя " + user2);
+                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен доступ к функциям другого пользователя: " + endpoint +
+                            ". Пользователь " + user1 + " получил доступ к данным пользователя " + user2);
                 }
             }
         }
@@ -366,8 +369,8 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                             user1, user2, fullUrl
                     );
                     vulnerabilities.add(vuln);
-                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен доступ к счетам другого пользователя: " + endpoint + 
-                                     ". Пользователь " + user1 + " получил доступ к счету " + user2Account + " пользователя " + user2);
+                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен доступ к счетам другого пользователя: " + endpoint +
+                            ". Пользователь " + user1 + " получил доступ к счету " + user2Account + " пользователя " + user2);
                 }
             }
         }
@@ -405,8 +408,8 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                         "anonymous", "system", fullUrl
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен доступ без авторизации к административному эндпоинту: " + endpoint + 
-                                 ". Статус: " + response.getStatusCode());
+                System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружен доступ без авторизации к административному эндпоинту: " + endpoint +
+                        ". Статус: " + response.getStatusCode());
             }
 
             // Для критических операций тестируем также POST без авторизации
@@ -425,8 +428,8 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                             "anonymous", "system", fullUrl
                     );
                     vulnerabilities.add(vuln);
-                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружено выполнение операции без авторизации: " + endpoint + 
-                                     ". Статус: " + postResponse.getStatusCode());
+                    System.out.println("(API-5) УЯЗВИМОСТЬ: Обнаружено выполнение операции без авторизации: " + endpoint +
+                            ". Статус: " + postResponse.getStatusCode());
                 }
             }
         }
