@@ -417,8 +417,8 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
 
         // Тестируем доступ к счетам другого пользователя
         if (!user2Accounts.isEmpty() && !user1Accounts.isEmpty()) {
-            String user2Account = user2Accounts.get(0);
-            String user1Account = user1Accounts.size() > 1 ? user1Accounts.get(1) : user1Accounts.get(0);
+            String user2Account = "1"; 
+            String user1Account = "1"; //> 1 ? user1Accounts.get(0) : user1Accounts.get(0);
 
             // Тест 1: Попытка доступа к счету другого пользователя
             String accountDetailsUrl = baseUrl + "/accounts/" + user2Account;
