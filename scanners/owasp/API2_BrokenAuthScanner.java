@@ -16,6 +16,7 @@ import java.util.*;
 public class API2_BrokenAuthScanner implements SecurityScanner {
 
     private OpenAPI openAPI;
+    private String validToken; // Кэшируем валидный токен
 
     public API2_BrokenAuthScanner() {}
 
@@ -36,13 +37,37 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
             return vulnerabilities;
         }
 
+        // Получаем токены один раз в начале сканирования
+        Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(
+                config.getTargetBaseUrl(),
+                config.getPassword()
+        );
+
+        // Сохраняем первый валидный токен
+        for (String token : tokens.values()) {
+            if (token != null && AuthManager.isTokenValid(token)) {
+                this.validToken = token;
+                break;
+            }
+        }
+
+        if (validToken == null) {
+            System.out.println("(API-2) Не удалось получить валидный токен для тестирования");
+        } else {
+            System.out.println("(API-2) Получен валидный токен для тестирования");
+        }
+
         testAuthEndpointSecurity(config, apiClient, vulnerabilities);
         testProtectedEndpointsWithoutAuth(config, apiClient, vulnerabilities);
         testInvalidTokens(config, apiClient, vulnerabilities);
-        testTokenSecurity(config, apiClient, vulnerabilities);
+
+        if (validToken != null) {
+            testTokenSecurity(config, vulnerabilities);
+            testJWTWeaknesses(config, vulnerabilities);
+        }
+
         testBruteforceProtection(config, apiClient, vulnerabilities);
         testRateLimiting(config, apiClient, vulnerabilities);
-        testJWTWeaknesses(config, vulnerabilities);
 
         System.out.println("(API-2) Сканирование Broken Authentication завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
@@ -230,10 +255,9 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
         }
     }
 
-    private void testTokenSecurity(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
+    private void testTokenSecurity(ScanConfig config, List<Vulnerability> vulnerabilities) {
         System.out.println("(API-2) Тестирование безопасности токенов...");
 
-        String validToken = getValidToken(config);
         if (validToken == null) {
             System.out.println("(API-2) Не удалось получить валидный токен для тестирования");
             return;
@@ -404,11 +428,13 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
     private void testJWTWeaknesses(ScanConfig config, List<Vulnerability> vulnerabilities) {
         System.out.println("(API-2) Анализ слабостей JWT...");
 
-        String token = getValidToken(config);
-        if (token == null) return;
+        if (validToken == null) {
+            System.out.println("(API-2) Не удалось получить валидный токен для анализа");
+            return;
+        }
 
         try {
-            String[] parts = token.split("\\.");
+            String[] parts = validToken.split("\\.");
             if (parts.length == 3) {
                 String header = new String(java.util.Base64.getUrlDecoder().decode(parts[0]));
 
@@ -437,21 +463,6 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
     private String replacePathParameters(String url) {
         // Заменяем path parameters на тестовые значения
         return url.replaceAll("\\{.*?\\}", "test123");
-    }
-
-    private String getValidToken(ScanConfig config) {
-        Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(
-                config.getTargetBaseUrl(),
-                config.getPassword()
-        );
-
-        for (String token : tokens.values()) {
-            if (token != null && AuthManager.isTokenValid(token)) {
-                return token;
-            }
-        }
-
-        return null;
     }
 
     private boolean isSuccessResponse(HttpApiClient.ApiResponse response) {
