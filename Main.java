@@ -78,8 +78,20 @@ public class Main {
                 config.setTargetBaseUrl(cleanBaseUrl);
                 config.setPassword(PASSWORD);
                 config.setBankBaseUrl(cleanBaseUrl);
-                config.setClientId("team172");
+                config.setClientId("team172-8");
                 config.setClientSecret(PASSWORD);
+
+                // === ЦЕНТРАЛИЗОВАННОЕ ПОЛУЧЕНИЕ ТОКЕНОВ ===
+                System.out.println("Получение токенов для пользователей...");
+                Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(cleanBaseUrl, PASSWORD);
+                config.setUserTokens(tokens);
+
+                System.out.println("Получено токенов: " + tokens.size());
+                for (String user : tokens.keySet()) {
+                    String tokenPreview = tokens.get(user).length() > 20 ?
+                            tokens.get(user).substring(0, 20) + "..." : tokens.get(user);
+                    System.out.println(user + ": " + tokenPreview);
+                }
 
                 List<Vulnerability> allVulnerabilities = new ArrayList<>();
 
@@ -89,7 +101,7 @@ public class Main {
                     System.out.println("-".repeat(40));
 
                     try {
-                        // Передаём объект OpenAPI (может быть null)
+                        // Передаём объект OpenAPI и config с токенами
                         List<Vulnerability> scannerResults = scanner.scan(openAPI, config, new HttpApiClient());
                         allVulnerabilities.addAll(scannerResults);
 
@@ -103,7 +115,7 @@ public class Main {
 
                     } catch (Exception e) {
                         System.err.println("Ошибка в сканере " + scanner.getName() + ": " + e.getMessage());
-                        e.printStackTrace(); // для отладки в хакатоне
+                        e.printStackTrace();
                     }
 
                     try { Thread.sleep(500); } catch (InterruptedException ignored) {}

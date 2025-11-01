@@ -5,6 +5,7 @@ import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
 import core.HttpApiClient;
+import core.AuthManager;
 import scanners.SecurityScanner;
 import java.util.*;
 import java.util.concurrent.*;
@@ -27,19 +28,24 @@ public class API4_URCScanner implements SecurityScanner {
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         String baseUrl = config.getTargetBaseUrl();
+        String password = config.getPassword();
 
         System.out.println("(API-4) Запуск OWASP API4 Unrestricted Resource Consumption Scanner...");
         System.out.println("(API-4) Цель: Проверка устойчивости к атакам на ресурсы");
 
         try {
-            // Получаем токен для аутентификации
-            String token = authenticate(baseUrl, config.getPassword());
-            if (token == null) {
-                System.err.println("(API-4) Не удалось аутентифицироваться для API4 сканирования");
+            // Получаем токены через AuthManager
+            Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(baseUrl, password);
+            if (tokens.isEmpty()) {
+                System.err.println("(API-4) Не удалось получить токены для API4 сканирования");
                 return vulnerabilities;
             }
 
-            System.out.println("(API-4) Токен получен, начинаем нагрузочное тестирование...");
+            // Берем первого доступного пользователя
+            String username = tokens.keySet().iterator().next();
+            String token = tokens.get(username);
+
+            System.out.println("(API-4) Токен получен для пользователя: " + username + ", начинаем нагрузочное тестирование...");
 
             // Выполняем основные тесты
             testRateLimiting(baseUrl, token, vulnerabilities, apiClient);
@@ -60,15 +66,6 @@ public class API4_URCScanner implements SecurityScanner {
 
         System.out.println("(API-4) API4 сканирование завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
-    }
-
-    private String authenticate(String baseUrl, String password) {
-        try {
-            return core.AuthManager.getBankAccessToken(baseUrl, "team172-1", password);
-        } catch (Exception e) {
-            System.err.println("(API-4) Ошибка аутентификации: " + e.getMessage());
-            return null;
-        }
     }
 
     private void testRateLimiting(String baseUrl, String token,
@@ -199,7 +196,7 @@ public class API4_URCScanner implements SecurityScanner {
                             "Уязвимость к большим payload",
                             "Сервер принял и обработал большой payload (" +
                                     (payload.length() / 1024) + "KB) за " + responseTime + "ms. " +
-                                    "Это может быть использовано для исчерпания ресурсов сервера. Доказательство: система успешно обработала чрезмерно большой запрос размером " + 
+                                    "Это может быть использовано для исчерпания ресурсов сервера. Доказательство: система успешно обработала чрезмерно большой запрос размером " +
                                     (payload.length() / 1024) + "KB без ограничений.",
                             Vulnerability.Severity.HIGH,
                             "/accounts",
@@ -253,7 +250,7 @@ public class API4_URCScanner implements SecurityScanner {
                     Vulnerability vuln = createURCVulnerability(
                             "Уязвимость к глубокой вложенности JSON",
                             "Сервер обработал JSON с " + DEEP_NESTING_LEVELS + " уровнями вложенности за " +
-                                    responseTime + "ms. Глубокая вложенность может вызвать переполнение стека. Доказательство: система приняла JSON с " + 
+                                    responseTime + "ms. Глубокая вложенность может вызвать переполнение стека. Доказательство: система приняла JSON с " +
                                     DEEP_NESTING_LEVELS + " уровнями вложенности без ограничений.",
                             Vulnerability.Severity.MEDIUM,
                             "/accounts",

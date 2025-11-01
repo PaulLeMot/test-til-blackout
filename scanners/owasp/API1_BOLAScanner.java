@@ -33,7 +33,6 @@ public class API1_BOLAScanner implements SecurityScanner {
 
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         String baseUrl = config.getTargetBaseUrl().trim();
-        String password = config.getPassword();
 
         // === Проверка документирования эндпоинтов в OpenAPI ===
         boolean accountsEndpointDocumented = false;
@@ -54,26 +53,22 @@ public class API1_BOLAScanner implements SecurityScanner {
                         " " + (accountsEndpointDocumented ? "задокументирован" : "НЕ задокументирован") + " в OpenAPI");
                 System.out.println("(API-1) Эндпоинт детализации счёта " +
                         (accountDetailEndpointDocumented ? "задокументирован" : "НЕ задокументирован") + " в OpenAPI");
-
-                // Опционально: можно создать уязвимость API9 здесь, но лучше в API9_InventoryScanner
             }
         } else {
             System.out.println("(API-1) OpenAPI-спецификация недоступна — пропуск проверки контракта");
         }
 
-        if (password == null || password.isEmpty()) {
-            System.err.println("(API-1) Пароль не задан в конфигурации. BOLA-сканер пропущен.");
-            return vulnerabilities;
-        }
-
-        Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(baseUrl, password);
-        if (tokens.size() < 2) {
+        // === ИСПОЛЬЗУЕМ ТОКЕНЫ ИЗ КОНФИГА ===
+        Map<String, String> tokens = config.getUserTokens();
+        if (tokens == null || tokens.size() < 2) {
             System.err.println("(API-1) Недостаточно токенов для BOLA-теста (нужно минимум 2).");
             return vulnerabilities;
         }
 
-        String user1 = "team172-1";
-        String user2 = "team172-2";
+        // Получаем первых двух пользователей из карты токенов
+        List<String> users = new ArrayList<>(tokens.keySet());
+        String user1 = users.get(0);
+        String user2 = users.get(1);
         String token1 = tokens.get(user1);
         String token2 = tokens.get(user2);
 
@@ -82,7 +77,7 @@ public class API1_BOLAScanner implements SecurityScanner {
             return vulnerabilities;
         }
 
-        System.out.println("(API-1) Получены токены для пользователей: " + user1 + ", " + user2);
+        System.out.println("(API-1) Используются токены для пользователей: " + user1 + ", " + user2);
 
         String accountId = getFirstAccountId(baseUrl, token1, apiClient);
         if (accountId == null) {
