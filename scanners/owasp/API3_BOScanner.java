@@ -5,12 +5,13 @@ import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
 import core.HttpApiClient;
+import core.AuthManager;
 import scanners.SecurityScanner;
 import java.util.*;
 
 /**
  * Улучшенный сканер для OWASP API3: Broken Object Property Level Authorization
- * Специально адаптирован для Virtual Bank API
+ * Специально адаптирован для Virtual Bank API с защитой от rate limiting
  */
 public class API3_BOScanner implements SecurityScanner {
 
@@ -35,34 +36,61 @@ public class API3_BOScanner implements SecurityScanner {
             "consent_id", "request_id", "agreement_id", "application_id"
     );
 
+    // Конфигурация задержек для избежания rate limiting
+    private static final int BASE_DELAY_MS = 2000;
+    private static final int LONG_DELAY_MS = 3000;
+    private static final int AFTER_429_DELAY_MS = 5000;
+
     public API3_BOScanner() {}
 
     @Override
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         String baseUrl = config.getTargetBaseUrl();
+        String password = config.getPassword();
 
         System.out.println("(API-3) Запуск улучшенного сканера OWASP API3 BOPLA...");
         System.out.println("(API-3) Целевой API: Virtual Bank API (OpenBanking Russia v2.1)");
 
         try {
-            // Получаем токен для аутентификации
-            String token = authenticate(baseUrl, config.getPassword());
-            if (token == null) {
-                System.err.println("(API-3) Не удалось аутентифицироваться для API3 сканирования");
+            // Получаем токены через AuthManager
+            Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(baseUrl, password);
+            if (tokens.isEmpty()) {
+                System.err.println("(API-3) Не удалось получить токены для API3 сканирования");
                 return vulnerabilities;
             }
 
-            System.out.println("(API-3) Токен получен, начинаем тестирование...");
+            // Берем первого доступного пользователя
+            String username = tokens.keySet().iterator().next();
+            String token = tokens.get(username);
+
+            System.out.println("(API-3) Токен получен для пользователя: " + username + ", начинаем тестирование...");
+
+            // Задержка перед началом тестирования
+            delay(BASE_DELAY_MS);
 
             // Расширенные тесты на основе документации API
             testEnhancedMassAssignment(baseUrl, token, vulnerabilities, apiClient);
+            delay(LONG_DELAY_MS);
+
             testAccountStatusManipulation(baseUrl, token, vulnerabilities, apiClient);
+            delay(LONG_DELAY_MS);
+
             testAccountCloseManipulation(baseUrl, token, vulnerabilities, apiClient);
+            delay(LONG_DELAY_MS);
+
             testEnhancedSensitiveDataExposure(baseUrl, token, vulnerabilities, apiClient);
+            delay(LONG_DELAY_MS);
+
             testEnhancedConsentManipulation(baseUrl, token, vulnerabilities, apiClient);
+            delay(LONG_DELAY_MS);
+
             testEnhancedPaymentManipulation(baseUrl, token, vulnerabilities, apiClient);
+            delay(LONG_DELAY_MS);
+
             testProductManipulation(baseUrl, token, vulnerabilities, apiClient);
+            delay(LONG_DELAY_MS);
+
             testAdminEndpointsAccess(baseUrl, token, vulnerabilities, apiClient);
 
         } catch (Exception e) {
@@ -74,12 +102,14 @@ public class API3_BOScanner implements SecurityScanner {
         return vulnerabilities;
     }
 
-    private String authenticate(String baseUrl, String password) {
+    /**
+     * Метод для добавления задержки между запросами
+     */
+    private void delay(int milliseconds) {
         try {
-            return core.AuthManager.getBankAccessToken(baseUrl, "team172-1", password);
-        } catch (Exception e) {
-            System.err.println("(API-3) Ошибка аутентификации: " + e.getMessage());
-            return null;
+            Thread.sleep(milliseconds);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -88,7 +118,6 @@ public class API3_BOScanner implements SecurityScanner {
                                             ApiClient apiClient) {
         System.out.println("(API-3) Расширенное тестирование массового присвоения...");
 
-        // Расширенный набор тестовых payloads
         Map<String, String> maliciousPayloads = new LinkedHashMap<>();
         maliciousPayloads.put("Высокий баланс + овердрафт",
                 "{\"account_type\":\"checking\",\"initial_balance\":9999999,\"overdraft_limit\":50000}");
@@ -108,6 +137,8 @@ public class API3_BOScanner implements SecurityScanner {
             System.out.println("(API-3) Тест: " + testName);
 
             try {
+                delay(BASE_DELAY_MS);
+
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Authorization", "Bearer " + token);
                 headers.put("Content-Type", "application/json");
@@ -118,10 +149,15 @@ public class API3_BOScanner implements SecurityScanner {
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
 
-                    System.out.println("(API-3) Статус ответа: " + apiResponse.getStatusCode());
+                    System.out.println("(API-3) Статус: " + apiResponse.getStatusCode());
+
+                    if (apiResponse.getStatusCode() == 429) {
+                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
+                        delay(AFTER_429_DELAY_MS);
+                        continue;
+                    }
 
                     if (apiResponse.getStatusCode() == 200) {
-                        // Детальный анализ ответа
                         String responseBody = apiResponse.getBody().toLowerCase();
                         Map<String, Boolean> fieldChecks = new HashMap<>();
                         fieldChecks.put("overdraft", responseBody.contains("overdraft"));
@@ -154,17 +190,13 @@ public class API3_BOScanner implements SecurityScanner {
                             );
                             vulnerabilities.add(vuln);
                             System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                            System.out.println("(API-3) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
-                            System.out.println("(API-3) - Тип теста: " + testName);
-                            System.out.println("(API-3) - Отправленный payload: " + payload);
-                            System.out.println("(API-3) - Код ответа сервера: 200 (успешное выполнение)");
-                            System.out.println("(API-3) - Принятые сервером поля: " + acceptedFields);
-                            System.out.println("(API-3) - Вывод: сервер не выполняет валидацию полей, что позволяет злоумышленнику устанавливать привилегированные параметры");
                         } else {
                             System.out.println("(API-3) Защита работает: сервер отклонил подозрительные поля");
                         }
                     } else if (apiResponse.getStatusCode() == 422 || apiResponse.getStatusCode() == 400) {
                         System.out.println("(API-3) Защита работает: сервер вернул ошибку валидации");
+                    } else if (apiResponse.getStatusCode() >= 500) {
+                        System.out.println("(API-3) ⚠️ Серверная ошибка: " + apiResponse.getStatusCode());
                     }
                 }
             } catch (Exception e) {
@@ -197,6 +229,8 @@ public class API3_BOScanner implements SecurityScanner {
             String payload = entry.getValue();
 
             try {
+                delay(BASE_DELAY_MS);
+
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Authorization", "Bearer " + token);
                 headers.put("Content-Type", "application/json");
@@ -207,6 +241,14 @@ public class API3_BOScanner implements SecurityScanner {
 
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    System.out.println("(API-3) Тест: " + testName + " - Статус: " + apiResponse.getStatusCode());
+
+                    if (apiResponse.getStatusCode() == 429) {
+                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
+                        delay(AFTER_429_DELAY_MS);
+                        continue;
+                    }
 
                     if (apiResponse.getStatusCode() == 200) {
                         String responseBody = apiResponse.getBody().toLowerCase();
@@ -233,14 +275,11 @@ public class API3_BOScanner implements SecurityScanner {
                             );
                             vulnerabilities.add(vuln);
                             System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                            System.out.println("(API-3) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
-                            System.out.println("(API-3) - Тип теста: манипуляция статусом счета");
-                            System.out.println("(API-3) - Идентификатор счета: " + accountId);
-                            System.out.println("(API-3) - Отправленный payload: " + payload);
-                            System.out.println("(API-3) - Код ответа сервера: 200 (успешное выполнение)");
-                            System.out.println("(API-3) - Ответ сервера содержит измененные параметры: ДА");
-                            System.out.println("(API-3) - Вывод: пользователь может произвольно изменять статус счета без ограничений");
+                        } else {
+                            System.out.println("(API-3) Защита работает: сервер отклонил подозрительный статус");
                         }
+                    } else if (apiResponse.getStatusCode() >= 500) {
+                        System.out.println("(API-3) ⚠️ Серверная ошибка");
                     }
                 }
             } catch (Exception e) {
@@ -273,6 +312,8 @@ public class API3_BOScanner implements SecurityScanner {
             String payload = entry.getValue();
 
             try {
+                delay(BASE_DELAY_MS);
+
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Authorization", "Bearer " + token);
                 headers.put("Content-Type", "application/json");
@@ -283,6 +324,14 @@ public class API3_BOScanner implements SecurityScanner {
 
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    System.out.println("(API-3) Тест: " + testName + " - Статус: " + apiResponse.getStatusCode());
+
+                    if (apiResponse.getStatusCode() == 429) {
+                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
+                        delay(AFTER_429_DELAY_MS);
+                        continue;
+                    }
 
                     if (apiResponse.getStatusCode() == 200) {
                         String responseBody = apiResponse.getBody().toLowerCase();
@@ -308,14 +357,11 @@ public class API3_BOScanner implements SecurityScanner {
                             );
                             vulnerabilities.add(vuln);
                             System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                            System.out.println("(API-3) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
-                            System.out.println("(API-3) - Тип теста: манипуляция параметрами закрытия счета");
-                            System.out.println("(API-3) - Идентификатор счета: " + accountId);
-                            System.out.println("(API-3) - Отправленный payload: " + payload);
-                            System.out.println("(API-3) - Код ответа сервера: 200 (успешное выполнение)");
-                            System.out.println("(API-3) - Обнаруженные подозрительные параметры в ответе: ДА");
-                            System.out.println("(API-3) - Вывод: возможен обход финансовых ограничений при закрытии счета");
+                        } else {
+                            System.out.println("(API-3) Защита работает: сервер отклонил подозрительные параметры");
                         }
+                    } else if (apiResponse.getStatusCode() >= 500) {
+                        System.out.println("(API-3) ⚠️ Серверная ошибка");
                     }
                 }
             } catch (Exception e) {
@@ -342,6 +388,8 @@ public class API3_BOScanner implements SecurityScanner {
             System.out.println("(API-3) Проверка эндпоинта: " + endpoint);
 
             try {
+                delay(BASE_DELAY_MS);
+
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Authorization", "Bearer " + token);
                 headers.put("Accept", "application/json");
@@ -350,6 +398,14 @@ public class API3_BOScanner implements SecurityScanner {
 
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    System.out.println("(API-3) Статус: " + apiResponse.getStatusCode());
+
+                    if (apiResponse.getStatusCode() == 429) {
+                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
+                        delay(AFTER_429_DELAY_MS);
+                        continue;
+                    }
 
                     if (apiResponse.getStatusCode() == 200) {
                         String responseBody = apiResponse.getBody();
@@ -370,7 +426,7 @@ public class API3_BOScanner implements SecurityScanner {
                                     endpoint,
                                     method,
                                     apiResponse.getStatusCode(),
-                                    "N/A", // GET запрос без тела
+                                    "N/A",
                                     responseBody,
                                     "Маскируйте чувствительные данные в ответах API. " +
                                             "Используйте DTO для фильтрации полей. " +
@@ -378,12 +434,6 @@ public class API3_BOScanner implements SecurityScanner {
                             );
                             vulnerabilities.add(vuln);
                             System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: Раскрытие чувствительных данных");
-                            System.out.println("(API-3) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
-                            System.out.println("(API-3) - Эндпоинт: " + endpoint);
-                            System.out.println("(API-3) - Метод: " + method);
-                            System.out.println("(API-3) - Код ответа: 200");
-                            System.out.println("(API-3) - Обнаруженные чувствительные поля: " + sensitiveFields);
-                            System.out.println("(API-3) - Вывод: сервер раскрывает конфиденциальную информацию в ответах API");
                         }
 
                         if (!piiFields.isEmpty()) {
@@ -403,10 +453,6 @@ public class API3_BOScanner implements SecurityScanner {
                             );
                             vulnerabilities.add(vuln);
                             System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: Раскрытие персональных данных (PII)");
-                            System.out.println("(API-3) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
-                            System.out.println("(API-3) - Эндпоинт: " + endpoint);
-                            System.out.println("(API-3) - Обнаруженные PII поля: " + piiFields);
-                            System.out.println("(API-3) - Вывод: нарушение требований защиты персональных данных");
                         }
 
                         if (!internalFields.isEmpty()) {
@@ -426,10 +472,6 @@ public class API3_BOScanner implements SecurityScanner {
                             );
                             vulnerabilities.add(vuln);
                             System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: Раскрытие внутренней информации");
-                            System.out.println("(API-3) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
-                            System.out.println("(API-3) - Эндпоинт: " + endpoint);
-                            System.out.println("(API-3) - Обнаруженные внутренние поля: " + internalFields);
-                            System.out.println("(API-3) - Вывод: раскрытие внутренней структуры системы");
                         }
 
                         if (!privilegedFields.isEmpty()) {
@@ -448,16 +490,14 @@ public class API3_BOScanner implements SecurityScanner {
                             );
                             vulnerabilities.add(vuln);
                             System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: Раскрытие привилегированной информации");
-                            System.out.println("(API-3) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
-                            System.out.println("(API-3) - Эндпоинт: " + endpoint);
-                            System.out.println("(API-3) - Обнаруженные привилегированные поля: " + privilegedFields);
-                            System.out.println("(API-3) - Вывод: раскрытие информации о правах доступа и ролях");
                         }
 
                         if (sensitiveFields.isEmpty() && piiFields.isEmpty() &&
                                 internalFields.isEmpty() && privilegedFields.isEmpty()) {
                             System.out.println("(API-3) Данные защищены правильно");
                         }
+                    } else if (apiResponse.getStatusCode() >= 500) {
+                        System.out.println("(API-3) ⚠️ Серверная ошибка");
                     }
                 }
             } catch (Exception e) {
@@ -484,6 +524,8 @@ public class API3_BOScanner implements SecurityScanner {
             String payload = entry.getValue();
 
             try {
+                delay(BASE_DELAY_MS);
+
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Authorization", "Bearer " + token);
                 headers.put("Content-Type", "application/json");
@@ -494,6 +536,14 @@ public class API3_BOScanner implements SecurityScanner {
 
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    System.out.println("(API-3) Тест: " + testName + " - Статус: " + apiResponse.getStatusCode());
+
+                    if (apiResponse.getStatusCode() == 429) {
+                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
+                        delay(AFTER_429_DELAY_MS);
+                        continue;
+                    }
 
                     if (apiResponse.getStatusCode() == 200) {
                         String responseBody = apiResponse.getBody().toLowerCase();
@@ -520,13 +570,11 @@ public class API3_BOScanner implements SecurityScanner {
                             );
                             vulnerabilities.add(vuln);
                             System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                            System.out.println("(API-3) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
-                            System.out.println("(API-3) - Тип теста: манипуляция правами согласия");
-                            System.out.println("(API-3) - Отправленный payload: " + payload);
-                            System.out.println("(API-3) - Код ответа сервера: 200 (успешное выполнение)");
-                            System.out.println("(API-3) - Ответ содержит расширенные права: ДА");
-                            System.out.println("(API-3) - Вывод: пользователь может назначать себе административные права через согласия");
+                        } else {
+                            System.out.println("(API-3) Защита работает: сервер отклонил подозрительные права");
                         }
+                    } else if (apiResponse.getStatusCode() >= 500) {
+                        System.out.println("(API-3) ⚠️ Серверная ошибка");
                     }
                 }
             } catch (Exception e) {
@@ -553,6 +601,8 @@ public class API3_BOScanner implements SecurityScanner {
             String payload = entry.getValue();
 
             try {
+                delay(BASE_DELAY_MS);
+
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Authorization", "Bearer " + token);
                 headers.put("Content-Type", "application/json");
@@ -563,6 +613,14 @@ public class API3_BOScanner implements SecurityScanner {
 
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    System.out.println("(API-3) Тест: " + testName + " - Статус: " + apiResponse.getStatusCode());
+
+                    if (apiResponse.getStatusCode() == 429) {
+                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
+                        delay(AFTER_429_DELAY_MS);
+                        continue;
+                    }
 
                     if (apiResponse.getStatusCode() == 200) {
                         String responseBody = apiResponse.getBody().toLowerCase();
@@ -590,13 +648,11 @@ public class API3_BOScanner implements SecurityScanner {
                             );
                             vulnerabilities.add(vuln);
                             System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                            System.out.println("(API-3) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
-                            System.out.println("(API-3) - Тип теста: манипуляция параметрами платежа");
-                            System.out.println("(API-3) - Отправленный payload: " + payload);
-                            System.out.println("(API-3) - Код ответа сервера: 200 (успешное выполнение)");
-                            System.out.println("(API-3) - Обнаружены переопределенные параметры в ответе: ДА");
-                            System.out.println("(API-3) - Вывод: возможен обход финансовых ограничений и бизнес-правил платежной системы");
+                        } else {
+                            System.out.println("(API-3) Защита работает: сервер отклонил подозрительные параметры");
                         }
+                    } else if (apiResponse.getStatusCode() >= 500) {
+                        System.out.println("(API-3) ⚠️ Серверная ошибка");
                     }
                 }
             } catch (Exception e) {
@@ -621,6 +677,8 @@ public class API3_BOScanner implements SecurityScanner {
             String payload = entry.getValue();
 
             try {
+                delay(BASE_DELAY_MS);
+
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Authorization", "Bearer " + token);
                 headers.put("Content-Type", "application/json");
@@ -631,6 +689,14 @@ public class API3_BOScanner implements SecurityScanner {
 
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    System.out.println("(API-3) Тест: " + testName + " - Статус: " + apiResponse.getStatusCode());
+
+                    if (apiResponse.getStatusCode() == 429) {
+                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
+                        delay(AFTER_429_DELAY_MS);
+                        continue;
+                    }
 
                     if (apiResponse.getStatusCode() == 200) {
                         String responseBody = apiResponse.getBody().toLowerCase();
@@ -657,13 +723,11 @@ public class API3_BOScanner implements SecurityScanner {
                             );
                             vulnerabilities.add(vuln);
                             System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                            System.out.println("(API-3) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
-                            System.out.println("(API-3) - Тип теста: манипуляция параметрами продукта");
-                            System.out.println("(API-3) - Отправленный payload: " + payload);
-                            System.out.println("(API-3) - Код ответа сервера: 200 (успешное выполнение)");
-                            System.out.println("(API-3) - Ответ содержит привилегированные параметры: ДА");
-                            System.out.println("(API-3) - Вывод: обычный пользователь может создавать продукты с административными привилегиями");
+                        } else {
+                            System.out.println("(API-3) Защита работает: сервер отклонил подозрительные параметры");
                         }
+                    } else if (apiResponse.getStatusCode() >= 500) {
+                        System.out.println("(API-3) ⚠️ Серверная ошибка");
                     }
                 }
             } catch (Exception e) {
@@ -688,6 +752,8 @@ public class API3_BOScanner implements SecurityScanner {
             String method = entry.getValue();
 
             try {
+                delay(BASE_DELAY_MS);
+
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Authorization", "Bearer " + token);
                 headers.put("Accept", "application/json");
@@ -696,6 +762,14 @@ public class API3_BOScanner implements SecurityScanner {
 
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    System.out.println("(API-3) Эндпоинт: " + endpoint + " - Статус: " + apiResponse.getStatusCode());
+
+                    if (apiResponse.getStatusCode() == 429) {
+                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
+                        delay(AFTER_429_DELAY_MS);
+                        continue;
+                    }
 
                     if (apiResponse.getStatusCode() == 200) {
                         Vulnerability vuln = createEnhancedVulnerability(
@@ -710,19 +784,15 @@ public class API3_BOScanner implements SecurityScanner {
                                 "N/A",
                                 apiResponse.getBody(),
                                 "Реализуйте строгую проверку ролей и прав доступа. " +
-                                        "Ограничьте административные эндпоинты только пользователями с соответствующими правами. " +
+                                        "Ограничьте административные эндпоинты только пользователям с соответствующими правами. " +
                                         "Используйте middleware для проверки авторизации."
                         );
                         vulnerabilities.add(vuln);
                         System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: Неавторизованный доступ к админскому эндпоинту");
-                        System.out.println("(API-3) ДОКАЗАТЕЛЬСТВА УЯЗВИМОСТИ:");
-                        System.out.println("(API-3) - Админский эндпоинт: " + endpoint);
-                        System.out.println("(API-3) - Метод: " + method);
-                        System.out.println("(API-3) - Код ответа: 200 (успешный доступ)");
-                        System.out.println("(API-3) - Использован токен обычного пользователя: ДА");
-                        System.out.println("(API-3) - Вывод: отсутствует проверка ролей для административных функций");
                     } else if (apiResponse.getStatusCode() == 403 || apiResponse.getStatusCode() == 401) {
                         System.out.println("(API-3) Доступ к админке запрещен: " + endpoint);
+                    } else if (apiResponse.getStatusCode() >= 500) {
+                        System.out.println("(API-3) ⚠️ Серверная ошибка");
                     }
                 }
             } catch (Exception e) {
@@ -733,6 +803,8 @@ public class API3_BOScanner implements SecurityScanner {
 
     private String getFirstAccountId(String baseUrl, String token, ApiClient apiClient) {
         try {
+            delay(BASE_DELAY_MS);
+
             Map<String, String> headers = new HashMap<>();
             headers.put("Authorization", "Bearer " + token);
             headers.put("Accept", "application/json");
@@ -741,6 +813,15 @@ public class API3_BOScanner implements SecurityScanner {
 
             if (response instanceof HttpApiClient.ApiResponse) {
                 HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                System.out.println("(API-3) Запрос счетов - Статус: " + apiResponse.getStatusCode());
+
+                if (apiResponse.getStatusCode() == 429) {
+                    System.out.println("(API-3) ⚠️ Rate limiting при получении счетов");
+                    delay(AFTER_429_DELAY_MS);
+                    return null;
+                }
+
                 if (apiResponse.getStatusCode() == 200) {
                     String body = apiResponse.getBody();
                     // Ищем account_id в ответе
@@ -756,7 +837,7 @@ public class API3_BOScanner implements SecurityScanner {
                         return matcher.group(1);
                     }
                 } else {
-                    System.err.println("(API-3) Получен статус " + apiResponse.getStatusCode() + " при запросе счетов");
+                    System.err.println("(API-3) Ошибка при запросе счетов: " + apiResponse.getStatusCode());
                 }
             }
         } catch (Exception e) {

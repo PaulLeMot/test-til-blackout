@@ -1,5 +1,8 @@
 package core;
 
+import java.util.Map;
+import java.util.HashMap;
+
 public class ScanConfig {
     private String targetBaseUrl;
     private String password;
@@ -7,8 +10,12 @@ public class ScanConfig {
     private String bankBaseUrl;
     private String clientId;
     private String clientSecret;
-    private String targetUrl;          // например: https://vbank.open.bankingapi.ru
+    private String targetUrl;
     private String openApiSpecUrl;
+
+    // Добавляем поля для хранения токенов пользователей
+    private Map<String, String> userTokens = new HashMap<>();
+
     public ScanConfig() {}
 
     // Getters and Setters
@@ -21,9 +28,9 @@ public class ScanConfig {
     public String getAccessToken() { return accessToken; }
     public void setAccessToken(String accessToken) { this.accessToken = accessToken; }
 
-    public String getBankBaseUrl() { 
+    public String getBankBaseUrl() {
         if (bankBaseUrl != null) return bankBaseUrl;
-        return targetBaseUrl; // fallback to targetBaseUrl if bankBaseUrl not set
+        return targetBaseUrl;
     }
     public void setBankBaseUrl(String bankBaseUrl) { this.bankBaseUrl = bankBaseUrl; }
 
@@ -32,9 +39,30 @@ public class ScanConfig {
 
     public String getClientSecret() { return clientSecret; }
     public void setClientSecret(String clientSecret) { this.clientSecret = clientSecret; }
+
     public String getTargetUrl() { return targetUrl; }
     public void setTargetUrl(String targetUrl) { this.targetUrl = targetUrl; }
 
     public String getOpenApiSpecUrl() { return openApiSpecUrl; }
     public void setOpenApiSpecUrl(String specUrl) { this.openApiSpecUrl = specUrl; }
+
+    // Новые методы для работы с токенами пользователей
+    public Map<String, String> getUserTokens() { return userTokens; }
+    public void setUserTokens(Map<String, String> userTokens) { this.userTokens = userTokens; }
+
+    public void addUserToken(String username, String token) {
+        this.userTokens.put(username, token);
+    }
+
+    public String getUserToken(String username) {
+        return this.userTokens.get(username);
+    }
+
+    public boolean hasUserTokens() {
+        return !this.userTokens.isEmpty();
+    }
+
+    public boolean hasMultipleUserTokens() {
+        return this.userTokens.size() >= 2;
+    }
 }
