@@ -11,7 +11,6 @@ import java.util.List;
 public class HttpApiClient implements ApiClient {
     private final HttpClient httpClient;
 
-    // Внутренний класс ApiResponse
     public static class ApiResponse {
         private final int statusCode;
         private final String body;
@@ -23,19 +22,18 @@ public class HttpApiClient implements ApiClient {
             this.headers = headers;
         }
 
-        public int getStatusCode() { 
-            return statusCode; 
+        public int getStatusCode() {
+            return statusCode;
         }
-        
-        public String getBody() { 
-            return body; 
+
+        public String getBody() {
+            return body;
         }
-        
-        public Map<String, List<String>> getHeaders() { 
-            return headers; 
+
+        public Map<String, List<String>> getHeaders() {
+            return headers;
         }
-        
-        // Метод getStatus() для совместимости
+
         public int getStatus() {
             return statusCode;
         }
@@ -43,7 +41,9 @@ public class HttpApiClient implements ApiClient {
 
     public HttpApiClient() {
         this.httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_2)  // Явно указываем HTTP/2
                 .connectTimeout(Duration.ofSeconds(30))
+                .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
     }
 
@@ -51,13 +51,19 @@ public class HttpApiClient implements ApiClient {
     public Object executeRequest(String method, String url, String body, Map<String, String> headers) {
         try {
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(url));
+                    .uri(URI.create(url))
+                    .version(HttpClient.Version.HTTP_2);  // HTTP/2 для каждого запроса
 
             // Добавляем заголовки
             if (headers != null) {
                 for (Map.Entry<String, String> header : headers.entrySet()) {
                     requestBuilder.header(header.getKey(), header.getValue());
                 }
+            }
+
+            // Устанавливаем User-Agent как в curl, если не указан
+            if (headers == null || !headers.containsKey("User-Agent")) {
+                requestBuilder.header("User-Agent", "GOSTGuardian/1.0");
             }
 
             // Устанавливаем метод и тело запроса
