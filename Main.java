@@ -11,8 +11,12 @@ import scanners.owasp.API8_SecurityConfigScanner;
 import scanners.owasp.API9_InventoryScanner;
 import scanners.owasp.API10_UnsafeConsumptionScanner;
 
+import gost.GostToHttpAdapter;
+import java.io.File;
+
 import java.util.Arrays;
 import java.util.List;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -21,6 +25,33 @@ public class Main {
     public static void main(String[] args) {
         System.out.println("Запуск GOSTGuardian Security Scanner");
         System.out.println("Целевые уязвимости: OWASP API Security Top 10\n");
+        
+        boolean USE_GOST = true;
+        String PFX_PATH = "serf.pfx";
+        String PFX_PASSWORD = null;
+        
+        File certFile = new File(PFX_PATH);
+        if (USE_GOST) {
+            if (certFile.exists()) {
+                System.out.println("✅ Сертификат найден: " + certFile.getAbsolutePath());
+            } else {
+                System.err.println("❌ Сертификат НЕ найден: " + certFile.getAbsolutePath());
+                System.err.println("⚠️  Переключаемся на обычный режим без GOST");
+                USE_GOST = false;
+            }
+        }
+
+        ApiClient apiClient;
+        if (USE_GOST) {
+            if (PFX_PASSWORD != null) {
+                apiClient = new GostToHttpAdapter(PFX_PATH, PFX_PASSWORD);
+            } else {
+                apiClient = new GostToHttpAdapter(PFX_PATH);
+            }
+            System.out.println("✅ GOST-клиент инициализирован");
+        } else {
+            apiClient = new HttpApiClient();
+        }
 
         final String PASSWORD = "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
         final List<String> BANKS = Arrays.asList(
@@ -102,7 +133,7 @@ public class Main {
 
                     try {
                         // Передаём объект OpenAPI и config с токенами
-                        List<Vulnerability> scannerResults = scanner.scan(openAPI, config, new HttpApiClient());
+                        List<Vulnerability> scannerResults = scanner.scan(openAPI, config, apiClient);
                         allVulnerabilities.addAll(scannerResults);
 
                         System.out.println("Сканер " + scanner.getName() + " завершен. Найдено уязвимостей: " + scannerResults.size());
