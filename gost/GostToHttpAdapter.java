@@ -47,7 +47,7 @@ public class GostToHttpAdapter implements ApiClient {
             command.add("--show-error");
             command.add("--write-out");
             command.add("%{http_code}");
-            command.add("--legacy-ssl-renegotiation");
+
             // Метод запроса
             command.add("-X");
             command.add(method);
