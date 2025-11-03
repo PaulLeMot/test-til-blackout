@@ -16,7 +16,7 @@ import java.io.File;
 
 import java.util.Arrays;
 import java.util.List;
-import java.io.File;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -27,8 +27,8 @@ public class Main {
         System.out.println("Целевые уязвимости: OWASP API Security Top 10\n");
         
         boolean USE_GOST = true;
-        String PFX_PATH = "serf.pfx";
-        String PFX_PASSWORD = null;
+        String PFX_PATH = "gost/serf.pfx";;
+        String PFX_PASSWORD = "123456789";
         
         File certFile = new File(PFX_PATH);
         if (USE_GOST) {
@@ -43,11 +43,8 @@ public class Main {
 
         ApiClient apiClient;
         if (USE_GOST) {
-            if (PFX_PASSWORD != null) {
-                apiClient = new GostToHttpAdapter(PFX_PATH, PFX_PASSWORD);
-            } else {
-                apiClient = new GostToHttpAdapter(PFX_PATH);
-            }
+            // Всегда используем конструктор с паролем, передаем null если пароля нет
+            apiClient = new GostToHttpAdapter(PFX_PATH, PFX_PASSWORD);
             System.out.println("✅ GOST-клиент инициализирован");
         } else {
             apiClient = new HttpApiClient();
