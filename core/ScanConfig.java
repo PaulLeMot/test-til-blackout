@@ -46,6 +46,23 @@ public class ScanConfig {
     public String getOpenApiSpecUrl() { return openApiSpecUrl; }
     public void setOpenApiSpecUrl(String specUrl) { this.openApiSpecUrl = specUrl; }
 
+    // Метод для получения bankId
+    public String getBankId() {
+        if (bankId == null || bankId.isEmpty()) {
+            // Если bankId не задан, попробуем извлечь из clientId
+            if (clientId != null && clientId.contains("-")) {
+                return clientId.split("-")[0]; // Например, team172-8 -> team172
+            }
+            return "default-bank"; // Дефолтное значение
+        }
+        return bankId;
+    }
+
+    // Метод для установки bankId
+    public void setBankId(String bankId) {
+        this.bankId = bankId;
+    }
+
     // Новые методы для работы с токенами пользователей
     public Map<String, String> getUserTokens() { return userTokens; }
     public void setUserTokens(Map<String, String> userTokens) { this.userTokens = userTokens; }
