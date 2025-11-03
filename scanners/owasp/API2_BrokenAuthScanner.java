@@ -151,7 +151,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
 
         String[] invalidTokens = {
                 "invalid_token_123",
-                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZWFtMTcyLTgiLCJ0eXBlIjoiY2xpZW50IiwiYmFuayI6InNlbGYiLCJleHAiOjE3NjIyNjI1MzF9.C3e_h5RSYuNHeFNH_oyPAbH1B7-4z3BLrLGMgOQpLGE",
                 "Bearer invalid",
                 "null",
                 ""
