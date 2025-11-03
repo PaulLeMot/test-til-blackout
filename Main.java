@@ -11,8 +11,12 @@ import scanners.owasp.API8_SecurityConfigScanner;
 import scanners.owasp.API9_InventoryScanner;
 import scanners.owasp.API10_UnsafeConsumptionScanner;
 
+import gost.GostToHttpAdapter;
+import java.io.File;
+
 import java.util.Arrays;
 import java.util.List;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
@@ -21,26 +25,51 @@ public class Main {
     public static void main(String[] args) {
         System.out.println("Запуск GOSTGuardian Security Scanner");
         System.out.println("Целевые уязвимости: OWASP API Security Top 10\n");
+        
+        boolean USE_GOST = true;
+        String PFX_PATH = "gost/serf.pfx";;
+        String PFX_PASSWORD = "123456789";
+        
+        File certFile = new File(PFX_PATH);
+        if (USE_GOST) {
+            if (certFile.exists()) {
+                System.out.println("✅ Сертификат найден: " + certFile.getAbsolutePath());
+            } else {
+                System.err.println("❌ Сертификат НЕ найден: " + certFile.getAbsolutePath());
+                System.err.println("⚠️  Переключаемся на обычный режим без GOST");
+                USE_GOST = false;
+            }
+        }
+
+        ApiClient apiClient;
+        if (USE_GOST) {
+            // Всегда используем конструктор с паролем, передаем null если пароля нет
+            apiClient = new GostToHttpAdapter(PFX_PATH, PFX_PASSWORD);
+            System.out.println("✅ GOST-клиент инициализирован");
+        } else {
+            apiClient = new HttpApiClient();
+        }
 
         final String PASSWORD = "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
         final List<String> BANKS = Arrays.asList(
-                "https://vbank.open.bankingapi.ru  ",
-                "https://abank.open.bankingapi.ru  ",
-                "https://sbank.open.bankingapi.ru  "
+                "https://api.gost.bankingapi.ru:8443/api/rb/rewardsPay/hackathon/v1/vbank  ",
+                "https://api.gost.bankingapi.ru:8443/api/rb/rewardsPay/hackathon/v1/abank",
+                "https://api.gost.bankingapi.ru:8443/api/rb/rewardsPay/hackathon/v1/sbank"
         );
 
-        // Создаём сканеры
+        // Создаём сканеры - начинаем с основных
         List<SecurityScanner> securityScanners = Arrays.asList(
                 new API1_BOLAScanner(),
                 new API2_BrokenAuthScanner(),
-                new API3_BOScanner(),
-                new API4_URCScanner(),
-                new API5_BrokenFunctionLevelAuthScanner(),
-                new API6_BusinessFlowScanner(),
-                new API7_SSRFScanner(),
-                new API8_SecurityConfigScanner(),
-                new API9_InventoryScanner(),
-                new API10_UnsafeConsumptionScanner()
+                new API3_BOScanner()
+                // Остальные пока закомментируем для теста
+                // new API4_URCScanner(),
+                // new API5_BrokenFunctionLevelAuthScanner(),
+                // new API6_BusinessFlowScanner(),
+                // new API7_SSRFScanner(),
+                // new API8_SecurityConfigScanner(),
+                // new API9_InventoryScanner(),
+                // new API10_UnsafeConsumptionScanner()
         );
 
         System.out.println("Зарегистрировано сканеров: " + securityScanners.size());
@@ -87,6 +116,33 @@ public class Main {
                 config.setUserTokens(tokens);
 
                 System.out.println("Получено токенов: " + tokens.size());
+
+                // Проверяем, есть ли валидные токены
+                if (tokens.isEmpty()) {
+                    System.out.println("❌ Не удалось получить токены для сканирования. Пропускаем банк.");
+                    failedBanks.add(cleanBaseUrl);
+                    continue;
+                }
+
+                // Выбираем основного пользователя для сканирования
+                String primaryUser = null;
+                String primaryToken = null;
+                for (Map.Entry<String, String> entry : tokens.entrySet()) {
+                    if (entry.getValue() != null && AuthManager.isTokenValid(entry.getValue())) {
+                        primaryUser = entry.getKey();
+                        primaryToken = entry.getValue();
+                        break;
+                    }
+                }
+
+                if (primaryToken == null) {
+                    System.out.println("❌ Нет валидных токенов. Пропускаем банк.");
+                    failedBanks.add(cleanBaseUrl);
+                    continue;
+                }
+
+                System.out.println("Основной пользователь для сканирования: " + primaryUser);
+
                 for (String user : tokens.keySet()) {
                     String tokenPreview = tokens.get(user).length() > 20 ?
                             tokens.get(user).substring(0, 20) + "..." : tokens.get(user);
@@ -95,14 +151,14 @@ public class Main {
 
                 List<Vulnerability> allVulnerabilities = new ArrayList<>();
 
-                // Последовательно запускаем каждый сканер
+                // Последовательно запускаем каждый сканер с увеличенными задержками
                 for (SecurityScanner scanner : securityScanners) {
                     System.out.println("\nЗапуск сканера: " + scanner.getName());
                     System.out.println("-".repeat(40));
 
                     try {
                         // Передаём объект OpenAPI и config с токенами
-                        List<Vulnerability> scannerResults = scanner.scan(openAPI, config, new HttpApiClient());
+                        List<Vulnerability> scannerResults = scanner.scan(openAPI, config, apiClient);
                         allVulnerabilities.addAll(scannerResults);
 
                         System.out.println("Сканер " + scanner.getName() + " завершен. Найдено уязвимостей: " + scannerResults.size());
@@ -118,12 +174,14 @@ public class Main {
                         e.printStackTrace();
                     }
 
-                    try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+                    // Увеличиваем задержку между сканерами
+                    try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
                 }
 
                 totalScannedBanks++;
                 currentBankVulnerabilities = allVulnerabilities.size();
                 totalVulnerabilities += currentBankVulnerabilities;
+                bankVulnerabilities.put(cleanBaseUrl, currentBankVulnerabilities);
 
                 // Статистика по сканерам
                 Map<String, Integer> scannerStats = new HashMap<>();
@@ -153,13 +211,6 @@ public class Main {
                 printScannerStats(scannerStats, "OWASP_API1_BOLA", "API1 - BOLA");
                 printScannerStats(scannerStats, "OWASP_API2_BROKEN_AUTH", "API2 - Broken Auth");
                 printScannerStats(scannerStats, "OWASP_API3_BOPLA", "API3 - BOPLA");
-                printScannerStats(scannerStats, "OWASP_API4_URC", "API4 - URC");
-                printScannerStats(scannerStats, "OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH", "API5 - Broken Function Level Auth");
-                printScannerStats(scannerStats, "OWASP_API6_BUSINESS_FLOW", "API6 - Business Flow");
-                printScannerStats(scannerStats, "OWASP_API7_SSRF", "API7 - SSRF");
-                printScannerStats(scannerStats, "OWASP_API8_SM", "API8 - Security Config");
-                printScannerStats(scannerStats, "OWASP_API9_INVENTORY", "API9 - Inventory");
-                printScannerStats(scannerStats, "OWASP_API10_UNSAFE_CONSUMPTION", "API10 - Unsafe Consumption");
 
             } catch (Exception e) {
                 System.err.println("Ошибка при сканировании банка " + cleanBaseUrl + ": " + e.getMessage());
@@ -174,7 +225,8 @@ public class Main {
             System.out.println("Завершено сканирование: " + cleanBaseUrl);
             System.out.println("=".repeat(50));
 
-            try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+            // Увеличиваем задержку между банками
+            try { Thread.sleep(5000); } catch (InterruptedException ignored) {}
         }
 
         // Финальная сводка
