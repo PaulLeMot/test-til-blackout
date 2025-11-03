@@ -31,13 +31,13 @@ public class Main {
 
         // Создаём сканеры - начинаем с основных
         List<SecurityScanner> securityScanners = Arrays.asList(
-//                new API1_BOLAScanner(),
-//                new API2_BrokenAuthScanner(),
-//                new API3_BOScanner(),
+                new API1_BOLAScanner(),
+                new API2_BrokenAuthScanner(),
+                new API3_BOScanner(),
 //                 Остальные пока закомментируем для теста
-//                 new API4_URCScanner(),
-//                 new API5_BrokenFunctionLevelAuthScanner(),
-//                 new API6_BusinessFlowScanner(),
+                 new API4_URCScanner(),
+                 new API5_BrokenFunctionLevelAuthScanner(),
+                 new API6_BusinessFlowScanner(),
                  new API7_SSRFScanner(),
                  new API8_SecurityConfigScanner(),
                  new API9_InventoryScanner(),
