@@ -65,4 +65,25 @@ public class ScanConfig {
     public boolean hasMultipleUserTokens() {
         return this.userTokens.size() >= 2;
     }
+
+    // Новое поле для хранения bankId
+    private String bankId;
+
+    // Метод для получения bankId
+    public String getBankId() {
+        if (bankId == null || bankId.isEmpty()) {
+            // Если bankId не задан, пытаемся извлечь из clientId
+            if (clientId != null && clientId.contains("-")) {
+                return clientId.split("-")[0]; // Например, team172-8 -> team172
+            }
+            return "default-bank"; // Дефолтное значение
+        }
+        return bankId;
+    }
+
+    // Метод для установки bankId
+    public void setBankId(String bankId) {
+        this.bankId = bankId;
+    }
+
 }
