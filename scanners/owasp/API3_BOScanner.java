@@ -5,13 +5,12 @@ import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
 import core.HttpApiClient;
-import core.AuthManager;
 import scanners.SecurityScanner;
 import java.util.*;
 
 /**
- * Улучшенный сканер для OWASP API3: Broken Object Property Level Authorization
- * Специально адаптирован для Virtual Bank API с защитой от rate limiting
+ * Сканер для OWASP API3: Broken Object Property Level Authorization
+ * Адаптирован для работы с доступными эндпоинтами Virtual Bank API
  */
 public class API3_BOScanner implements SecurityScanner {
 
@@ -37,9 +36,7 @@ public class API3_BOScanner implements SecurityScanner {
     );
 
     // Конфигурация задержек для избежания rate limiting
-    private static final int BASE_DELAY_MS = 2000;
-    private static final int LONG_DELAY_MS = 3000;
-    private static final int AFTER_429_DELAY_MS = 5000;
+    private static final int BASE_DELAY_MS = 1000;
 
     public API3_BOScanner() {}
 
@@ -47,51 +44,35 @@ public class API3_BOScanner implements SecurityScanner {
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         String baseUrl = config.getTargetBaseUrl();
-        String password = config.getPassword();
 
-        System.out.println("(API-3) Запуск улучшенного сканера OWASP API3 BOPLA...");
+        System.out.println("(API-3) Запуск сканера OWASP API3 BOPLA...");
         System.out.println("(API-3) Целевой API: Virtual Bank API (OpenBanking Russia v2.1)");
 
         try {
-            // Получаем токены через AuthManager
-            Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(baseUrl, password);
-            if (tokens.isEmpty()) {
-                System.err.println("(API-3) Не удалось получить токены для API3 сканирования");
+            // Используем уже полученные клиентские токены
+            Map<String, String> userTokens = config.getUserTokens();
+            if (userTokens == null || userTokens.isEmpty()) {
+                System.err.println("(API-3) Нет доступных токенов для сканирования");
                 return vulnerabilities;
             }
 
-            // Берем первого доступного пользователя
-            String username = tokens.keySet().iterator().next();
-            String token = tokens.get(username);
+            // Берем первый доступный токен
+            String username = userTokens.keySet().iterator().next();
+            String clientToken = userTokens.get(username);
 
-            System.out.println("(API-3) Токен получен для пользователя: " + username + ", начинаем тестирование...");
+            System.out.println("(API-3) Используем клиентский токен для пользователя: " + username);
 
-            // Задержка перед началом тестирования
+            // Основные тесты
+            testPublicEndpointsDataLeakage(baseUrl, vulnerabilities, apiClient);
             delay(BASE_DELAY_MS);
 
-            // Расширенные тесты на основе документации API
-            testEnhancedMassAssignment(baseUrl, token, vulnerabilities, apiClient);
-            delay(LONG_DELAY_MS);
+            testProductCatalogueMassAssignment(baseUrl, clientToken, vulnerabilities, apiClient);
+            delay(BASE_DELAY_MS);
 
-            testAccountStatusManipulation(baseUrl, token, vulnerabilities, apiClient);
-            delay(LONG_DELAY_MS);
+            testJWKSEndpoint(baseUrl, vulnerabilities, apiClient);
+            delay(BASE_DELAY_MS);
 
-            testAccountCloseManipulation(baseUrl, token, vulnerabilities, apiClient);
-            delay(LONG_DELAY_MS);
-
-            testEnhancedSensitiveDataExposure(baseUrl, token, vulnerabilities, apiClient);
-            delay(LONG_DELAY_MS);
-
-            testEnhancedConsentManipulation(baseUrl, token, vulnerabilities, apiClient);
-            delay(LONG_DELAY_MS);
-
-            testEnhancedPaymentManipulation(baseUrl, token, vulnerabilities, apiClient);
-            delay(LONG_DELAY_MS);
-
-            testProductManipulation(baseUrl, token, vulnerabilities, apiClient);
-            delay(LONG_DELAY_MS);
-
-            testAdminEndpointsAccess(baseUrl, token, vulnerabilities, apiClient);
+            testHealthEndpoint(baseUrl, vulnerabilities, apiClient);
 
         } catch (Exception e) {
             System.err.println("(API-3) Ошибка при сканировании API3: " + e.getMessage());
@@ -100,6 +81,345 @@ public class API3_BOScanner implements SecurityScanner {
 
         System.out.println("(API-3) Сканирование API3 завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
+    }
+
+    /**
+     * Тестирование публичных эндпоинтов на раскрытие данных
+     */
+    private void testPublicEndpointsDataLeakage(String baseUrl,
+                                                List<Vulnerability> vulnerabilities,
+                                                ApiClient apiClient) {
+        System.out.println("(API-3) Тестирование публичных эндпоинтов на раскрытие данных...");
+
+        // Тестируем публичные эндпоинты без аутентификации
+        testPublicEndpoint(baseUrl + "/products", "GET", "Каталог продуктов", vulnerabilities, apiClient);
+        testPublicEndpoint(baseUrl + "/.well-known/jwks.json", "GET", "JWKS endpoint", vulnerabilities, apiClient);
+        testPublicEndpoint(baseUrl + "/health", "GET", "Health check", vulnerabilities, apiClient);
+        testPublicEndpoint(baseUrl + "/", "GET", "Root endpoint", vulnerabilities, apiClient);
+    }
+
+    private void testPublicEndpoint(String url, String method, String endpointName,
+                                    List<Vulnerability> vulnerabilities, ApiClient apiClient) {
+        System.out.println("(API-3) Проверка публичного эндпоинта: " + endpointName);
+
+        try {
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Accept", "application/json");
+            headers.put("User-Agent", "Security-Scanner/1.0");
+
+            Object response = apiClient.executeRequest(method, url, null, headers);
+
+            if (response instanceof HttpApiClient.ApiResponse) {
+                HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                System.out.println("(API-3) " + endpointName + " - Статус: " + apiResponse.getStatusCode());
+
+                if (apiResponse.getStatusCode() == 200) {
+                    analyzeResponseForSensitiveData(endpointName, url, method, apiResponse, vulnerabilities);
+
+                    // Дополнительно проверяем массовое присвоение для продуктов
+                    if (url.contains("/products")) {
+                        testProductMassAssignment(url, apiResponse, vulnerabilities, apiClient);
+                    }
+                } else if (apiResponse.getStatusCode() == 403) {
+                    System.out.println("(API-3) Доступ запрещен к публичному эндпоинту: " + endpointName);
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("(API-3) Ошибка при тесте публичного эндпоинта " + endpointName + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * Тестирование массового присвоения в каталоге продуктов
+     */
+    private void testProductCatalogueMassAssignment(String baseUrl, String token,
+                                                    List<Vulnerability> vulnerabilities,
+                                                    ApiClient apiClient) {
+        System.out.println("(API-3) Тестирование массового присвоения в каталоге продуктов...");
+
+        // Пытаемся создать продукт с привилегированными полями (должно быть запрещено)
+        Map<String, String> productPayloads = new LinkedHashMap<>();
+        productPayloads.put("Продукт с административными правами",
+                "{\"name\":\"Test Product\",\"type\":\"premium\",\"admin_access\":true,\"special_permissions\":\"all\"}");
+        productPayloads.put("Продукт с завышенными лимитами",
+                "{\"name\":\"Test\",\"type\":\"loan\",\"max_amount\":999999999,\"interest_rate\":0.1}");
+        productPayloads.put("Продукт с внутренними полями",
+                "{\"name\":\"Test\",\"type\":\"deposit\",\"internal_id\":\"admin-001\",\"system_flag\":true}");
+
+        for (Map.Entry<String, String> test : productPayloads.entrySet()) {
+            String testName = test.getKey();
+            String payload = test.getValue();
+
+            System.out.println("(API-3) Тест массового присвоения: " + testName);
+
+            try {
+                Map<String, String> headers = new HashMap<>();
+                headers.put("Authorization", "Bearer " + token);
+                headers.put("Content-Type", "application/json");
+                headers.put("Accept", "application/json");
+
+                Object response = apiClient.executeRequest("POST", baseUrl + "/products", payload, headers);
+
+                if (response instanceof HttpApiClient.ApiResponse) {
+                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    System.out.println("(API-3) Статус: " + apiResponse.getStatusCode());
+
+                    analyzeMassAssignmentResponse(testName, apiResponse, payload, vulnerabilities);
+                }
+            } catch (Exception e) {
+                System.err.println("(API-3) Ошибка при тесте массового присвоения '" + testName + "': " + e.getMessage());
+            }
+
+            delay(BASE_DELAY_MS);
+        }
+    }
+
+    /**
+     * Тестирование массового присвоения через GET параметры
+     */
+    private void testProductMassAssignment(String url, HttpApiClient.ApiResponse apiResponse,
+                                           List<Vulnerability> vulnerabilities, ApiClient apiClient) {
+        System.out.println("(API-3) Тестирование массового присвоения через параметры запроса...");
+
+        // Пытаемся использовать привилегированные параметры в GET запросах
+        String[] maliciousParams = {
+                "?admin=true&type=premium",
+                "?internal_access=1&system_mode=debug",
+                "?max_limit=9999999&override_restrictions=true"
+        };
+
+        for (String param : maliciousParams) {
+            try {
+                Map<String, String> headers = new HashMap<>();
+                headers.put("Accept", "application/json");
+
+                Object response = apiClient.executeRequest("GET", url + param, null, headers);
+
+                if (response instanceof HttpApiClient.ApiResponse) {
+                    HttpApiClient.ApiResponse paramResponse = (HttpApiClient.ApiResponse) response;
+
+                    if (paramResponse.getStatusCode() == 200) {
+                        // Проверяем, не повлияли ли параметры на ответ
+                        String originalBody = apiResponse.getBody();
+                        String paramBody = paramResponse.getBody();
+
+                        if (!originalBody.equals(paramBody)) {
+                            Vulnerability vuln = createVulnerability(
+                                    "Массовое присвоение через параметры запроса",
+                                    "Параметры запроса влияют на ответ сервера: " + param + ". " +
+                                            "Это может указывать на уязвимость массового присвоения.",
+                                    Vulnerability.Severity.MEDIUM,
+                                    url + param,
+                                    "GET",
+                                    paramResponse.getStatusCode(),
+                                    "N/A",
+                                    "Ответ отличается от стандартного",
+                                    "Валидируйте и фильтруйте все входные параметры. Запретите использование внутренних параметров."
+                            );
+                            vulnerabilities.add(vuln);
+                            System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: Массовое присвоение через параметры");
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                System.err.println("(API-3) Ошибка при тесте параметров '" + param + "': " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Тестирование JWKS endpoint на раскрытие чувствительной информации
+     */
+    private void testJWKSEndpoint(String baseUrl, List<Vulnerability> vulnerabilities, ApiClient apiClient) {
+        System.out.println("(API-3) Тестирование JWKS endpoint...");
+
+        try {
+            String jwksUrl = baseUrl + "/.well-known/jwks.json";
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Accept", "application/json");
+
+            Object response = apiClient.executeRequest("GET", jwksUrl, null, headers);
+
+            if (response instanceof HttpApiClient.ApiResponse) {
+                HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                if (apiResponse.getStatusCode() == 200) {
+                    String responseBody = apiResponse.getBody();
+
+                    // Проверяем наличие чувствительной информации в JWKS
+                    if (responseBody.contains("private") || responseBody.contains("PRIVATE") ||
+                            responseBody.contains("d ") || responseBody.contains("p ") ||
+                            responseBody.contains("q ") || responseBody.contains("dp ") ||
+                            responseBody.contains("dq ") || responseBody.contains("qi ")) {
+
+                        Vulnerability vuln = createVulnerability(
+                                "Раскрытие приватных ключей в JWKS",
+                                "В JWKS endpoint обнаружены приватные ключи или чувствительные параметры RSA. " +
+                                        "Это критическая уязвимость, позволяющая подделывать JWT токены.",
+                                Vulnerability.Severity.HIGH,
+                                jwksUrl,
+                                "GET",
+                                apiResponse.getStatusCode(),
+                                "N/A",
+                                responseBody.length() > 500 ? responseBody.substring(0, 500) + "..." : responseBody,
+                                "Немедленно удалите приватные ключи из JWKS. JWKS должен содержать только публичные ключи."
+                        );
+                        vulnerabilities.add(vuln);
+                        System.out.println("(API-3) КРИТИЧЕСКАЯ УЯЗВИМОСТЬ: Приватные ключи в JWKS");
+                    }
+
+                    // Проверяем на избыточное раскрытие информации
+                    analyzeResponseForSensitiveData("JWKS endpoint", jwksUrl, "GET", apiResponse, vulnerabilities);
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("(API-3) Ошибка при тесте JWKS endpoint: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Тестирование health endpoint
+     */
+    private void testHealthEndpoint(String baseUrl, List<Vulnerability> vulnerabilities, ApiClient apiClient) {
+        System.out.println("(API-3) Тестирование health endpoint...");
+
+        try {
+            String healthUrl = baseUrl + "/health";
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Accept", "application/json");
+
+            Object response = apiClient.executeRequest("GET", healthUrl, null, headers);
+
+            if (response instanceof HttpApiClient.ApiResponse) {
+                HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                if (apiResponse.getStatusCode() == 200) {
+                    analyzeResponseForSensitiveData("Health endpoint", healthUrl, "GET", apiResponse, vulnerabilities);
+
+                    // Проверяем, не раскрывает ли health endpoint внутреннюю информацию
+                    String responseBody = apiResponse.getBody().toLowerCase();
+                    if (responseBody.contains("database") || responseBody.contains("internal") ||
+                            responseBody.contains("secret") || responseBody.contains("password") ||
+                            responseBody.contains("server_info") || responseBody.contains("version")) {
+
+                        Vulnerability vuln = createVulnerability(
+                                "Раскрытие внутренней информации в health endpoint",
+                                "Health endpoint раскрывает внутреннюю информацию о системе: " +
+                                        extractFoundPatterns(responseBody, Set.of("database", "internal", "secret", "password", "server_info", "version")),
+                                Vulnerability.Severity.LOW,
+                                healthUrl,
+                                "GET",
+                                apiResponse.getStatusCode(),
+                                "N/A",
+                                responseBody,
+                                "Ограничьте информацию, возвращаемую health endpoint. Не раскрывайте внутренние детали системы."
+                        );
+                        vulnerabilities.add(vuln);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("(API-3) Ошибка при тесте health endpoint: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Анализ ответа на наличие чувствительных данных
+     */
+    private void analyzeResponseForSensitiveData(String endpointName, String url, String method,
+                                                 HttpApiClient.ApiResponse apiResponse,
+                                                 List<Vulnerability> vulnerabilities) {
+        String responseBody = apiResponse.getBody();
+
+        if (responseBody == null || responseBody.trim().isEmpty()) {
+            return;
+        }
+
+        // Поиск чувствительных полей по паттернам
+        List<String> sensitiveFields = findFieldsByPatterns(responseBody, SENSITIVE_PATTERNS);
+        List<String> piiFields = findFieldsByPatterns(responseBody, PII_PATTERNS);
+        List<String> internalFields = findFieldsByPatterns(responseBody, INTERNAL_PATTERNS);
+        List<String> privilegedFields = findFieldsByPatterns(responseBody, PRIVILEGED_PATTERNS);
+
+        // Создание уязвимостей для найденных проблем
+        if (!sensitiveFields.isEmpty()) {
+            vulnerabilities.add(createSensitiveDataVulnerability(
+                    "Раскрытие чувствительных данных в " + endpointName,
+                    "Обнаружены критические чувствительные поля: " + sensitiveFields,
+                    Vulnerability.Severity.HIGH,
+                    url, method, apiResponse, sensitiveFields
+            ));
+            System.out.println("(API-3) ОБНАРУЖЕНО: Чувствительные данные в " + endpointName + ": " + sensitiveFields);
+        }
+
+        if (!piiFields.isEmpty()) {
+            vulnerabilities.add(createSensitiveDataVulnerability(
+                    "Раскрытие PII данных в " + endpointName,
+                    "Обнаружены персональные данные (PII): " + piiFields,
+                    Vulnerability.Severity.MEDIUM,
+                    url, method, apiResponse, piiFields
+            ));
+            System.out.println("(API-3) ОБНАРУЖЕНО: PII данные в " + endpointName + ": " + piiFields);
+        }
+
+        if (!internalFields.isEmpty()) {
+            vulnerabilities.add(createSensitiveDataVulnerability(
+                    "Раскрытие внутренней информации в " + endpointName,
+                    "Обнаружены внутренние технические поля: " + internalFields,
+                    Vulnerability.Severity.LOW,
+                    url, method, apiResponse, internalFields
+            ));
+            System.out.println("(API-3) ОБНАРУЖЕНО: Внутренняя информация в " + endpointName + ": " + internalFields);
+        }
+
+        if (sensitiveFields.isEmpty() && piiFields.isEmpty() &&
+                internalFields.isEmpty() && privilegedFields.isEmpty()) {
+            System.out.println("(API-3) Чувствительные данные не обнаружены в " + endpointName);
+        }
+    }
+
+    /**
+     * Анализ ответа на уязвимости массового присвоения
+     */
+    private void analyzeMassAssignmentResponse(String testName, HttpApiClient.ApiResponse apiResponse,
+                                               String payload, List<Vulnerability> vulnerabilities) {
+        if (apiResponse.getStatusCode() == 200 || apiResponse.getStatusCode() == 201) {
+            String responseBody = apiResponse.getBody().toLowerCase();
+
+            // Проверяем, принял ли сервер подозрительные поля
+            boolean acceptedMaliciousFields =
+                    responseBody.contains("admin") ||
+                            responseBody.contains("internal") ||
+                            responseBody.contains("system") ||
+                            responseBody.contains("999999999") ||
+                            responseBody.contains("special_permissions");
+
+            if (acceptedMaliciousFields) {
+                Vulnerability vuln = createVulnerability(
+                        "Массовое присвоение - " + testName,
+                        "Сервер принял привилегированные поля в запросе. " +
+                                "Это указывает на отсутствие proper server-side валидации.",
+                        Vulnerability.Severity.HIGH,
+                        "/products",
+                        "POST",
+                        apiResponse.getStatusCode(),
+                        payload,
+                        apiResponse.getBody(),
+                        "Сервер должен отклонять запросы с неразрешенными полями. " +
+                                "Реализуйте whitelist валидацию и используйте отдельные DTO для клиентских запросов."
+                );
+                vulnerabilities.add(vuln);
+                System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
+            }
+        } else if (apiResponse.getStatusCode() == 422 || apiResponse.getStatusCode() == 400) {
+            System.out.println("(API-3) Защита работает: сервер вернул ошибку валидации");
+        } else if (apiResponse.getStatusCode() == 403) {
+            System.out.println("(API-3) Доступ запрещен - это ожидаемое поведение");
+        } else if (apiResponse.getStatusCode() == 405) {
+            System.out.println("(API-3) Метод не разрешен - это ожидаемое поведение");
+        }
     }
 
     /**
@@ -113,744 +433,11 @@ public class API3_BOScanner implements SecurityScanner {
         }
     }
 
-    private void testEnhancedMassAssignment(String baseUrl, String token,
-                                            List<Vulnerability> vulnerabilities,
-                                            ApiClient apiClient) {
-        System.out.println("(API-3) Расширенное тестирование массового присвоения...");
-
-        Map<String, String> maliciousPayloads = new LinkedHashMap<>();
-        maliciousPayloads.put("Высокий баланс + овердрафт",
-                "{\"account_type\":\"checking\",\"initial_balance\":9999999,\"overdraft_limit\":50000}");
-        maliciousPayloads.put("Премиум статус",
-                "{\"account_type\":\"checking\",\"initial_balance\":0,\"status\":\"premium\",\"interest_rate\":15}");
-        maliciousPayloads.put("Административные права",
-                "{\"account_type\":\"checking\",\"initial_balance\":0,\"is_admin\":true,\"permissions\":\"all\"}");
-        maliciousPayloads.put("Нестандартная валюта",
-                "{\"account_type\":\"checking\",\"initial_balance\":1000,\"currency\":\"BTC\"}");
-        maliciousPayloads.put("Расширенные разрешения",
-                "{\"account_type\":\"checking\",\"initial_balance\":0,\"features\":[\"overdraft\",\"priority_support\",\"fee_waiver\"]}");
-
-        for (Map.Entry<String, String> entry : maliciousPayloads.entrySet()) {
-            String testName = entry.getKey();
-            String payload = entry.getValue();
-
-            System.out.println("(API-3) Тест: " + testName);
-
-            try {
-                delay(BASE_DELAY_MS);
-
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + token);
-                headers.put("Content-Type", "application/json");
-                headers.put("Accept", "application/json");
-
-                Object response = apiClient.executeRequest("POST", baseUrl + "/accounts", payload, headers);
-
-                if (response instanceof HttpApiClient.ApiResponse) {
-                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-
-                    System.out.println("(API-3) Статус: " + apiResponse.getStatusCode());
-
-                    if (apiResponse.getStatusCode() == 429) {
-                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
-                        delay(AFTER_429_DELAY_MS);
-                        continue;
-                    }
-
-                    if (apiResponse.getStatusCode() == 200) {
-                        String responseBody = apiResponse.getBody().toLowerCase();
-                        Map<String, Boolean> fieldChecks = new HashMap<>();
-                        fieldChecks.put("overdraft", responseBody.contains("overdraft"));
-                        fieldChecks.put("premium", responseBody.contains("premium"));
-                        fieldChecks.put("admin", responseBody.contains("admin"));
-                        fieldChecks.put("btc", responseBody.contains("btc"));
-                        fieldChecks.put("9999999", responseBody.contains("9999999"));
-
-                        boolean acceptedMaliciousFields = fieldChecks.containsValue(true);
-
-                        if (acceptedMaliciousFields) {
-                            List<String> acceptedFields = new ArrayList<>();
-                            for (Map.Entry<String, Boolean> check : fieldChecks.entrySet()) {
-                                if (check.getValue()) acceptedFields.add(check.getKey());
-                            }
-
-                            Vulnerability vuln = createEnhancedVulnerability(
-                                    "Массовое присвоение при создании счета - " + testName,
-                                    "Сервер принял привилегированные поля в запросе создания счета. " +
-                                            "Принятые поля: " + acceptedFields + ". " +
-                                            "Это указывает на отсутствие proper server-side валидации.",
-                                    Vulnerability.Severity.HIGH,
-                                    "/accounts",
-                                    "POST",
-                                    apiResponse.getStatusCode(),
-                                    payload,
-                                    apiResponse.getBody(),
-                                    "Сервер должен отклонять запросы с неразрешенными полями. " +
-                                            "Реализуйте whitelist валидацию и используйте отдельные DTO для клиентских запросов."
-                            );
-                            vulnerabilities.add(vuln);
-                            System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                        } else {
-                            System.out.println("(API-3) Защита работает: сервер отклонил подозрительные поля");
-                        }
-                    } else if (apiResponse.getStatusCode() == 422 || apiResponse.getStatusCode() == 400) {
-                        System.out.println("(API-3) Защита работает: сервер вернул ошибку валидации");
-                    } else if (apiResponse.getStatusCode() >= 500) {
-                        System.out.println("(API-3) ⚠️ Серверная ошибка: " + apiResponse.getStatusCode());
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("(API-3) Ошибка при тесте '" + testName + "': " + e.getMessage());
-            }
-        }
-    }
-
-    private void testAccountStatusManipulation(String baseUrl, String token,
-                                               List<Vulnerability> vulnerabilities,
-                                               ApiClient apiClient) {
-        System.out.println("(API-3) Расширенное тестирование манипуляции статусом...");
-
-        String accountId = getFirstAccountId(baseUrl, token, apiClient);
-        if (accountId == null) {
-            System.out.println("(API-3) Нет доступных счетов для тестирования статусов");
-            return;
-        }
-
-        System.out.println("(API-3) Используем счет: " + accountId);
-
-        Map<String, String> statusPayloads = new LinkedHashMap<>();
-        statusPayloads.put("Премиум статус", "{\"status\":\"premium\"}");
-        statusPayloads.put("Верифицированный статус", "{\"status\":\"verified\"}");
-        statusPayloads.put("Золотой статус", "{\"status\":\"gold\"}");
-        statusPayloads.put("Статус с доп. параметрами", "{\"status\":\"active\",\"overdraft_limit\":50000}");
-
-        for (Map.Entry<String, String> entry : statusPayloads.entrySet()) {
-            String testName = entry.getKey();
-            String payload = entry.getValue();
-
-            try {
-                delay(BASE_DELAY_MS);
-
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + token);
-                headers.put("Content-Type", "application/json");
-                headers.put("Accept", "application/json");
-
-                Object response = apiClient.executeRequest("PUT",
-                        baseUrl + "/accounts/" + accountId + "/status", payload, headers);
-
-                if (response instanceof HttpApiClient.ApiResponse) {
-                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-
-                    System.out.println("(API-3) Тест: " + testName + " - Статус: " + apiResponse.getStatusCode());
-
-                    if (apiResponse.getStatusCode() == 429) {
-                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
-                        delay(AFTER_429_DELAY_MS);
-                        continue;
-                    }
-
-                    if (apiResponse.getStatusCode() == 200) {
-                        String responseBody = apiResponse.getBody().toLowerCase();
-                        boolean acceptedMaliciousStatus =
-                                responseBody.contains("premium") ||
-                                        responseBody.contains("verified") ||
-                                        responseBody.contains("gold") ||
-                                        responseBody.contains("overdraft_limit");
-
-                        if (acceptedMaliciousStatus) {
-                            Vulnerability vuln = createEnhancedVulnerability(
-                                    "Манипуляция статусом счета - " + testName,
-                                    "Сервер принял недопустимый статус счета или дополнительные параметры. " +
-                                            "Ответ сервера подтверждает применение изменений.",
-                                    Vulnerability.Severity.MEDIUM,
-                                    "/accounts/{account_id}/status",
-                                    "PUT",
-                                    apiResponse.getStatusCode(),
-                                    payload,
-                                    apiResponse.getBody(),
-                                    "Ограничьте допустимые значения статуса enum'ом. " +
-                                            "Реализуйте бизнес-логику проверки переходов статусов. " +
-                                            "Запретите прямой произвольный выбор статуса."
-                            );
-                            vulnerabilities.add(vuln);
-                            System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                        } else {
-                            System.out.println("(API-3) Защита работает: сервер отклонил подозрительный статус");
-                        }
-                    } else if (apiResponse.getStatusCode() >= 500) {
-                        System.out.println("(API-3) ⚠️ Серверная ошибка");
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("(API-3) Ошибка при тесте статуса '" + testName + "': " + e.getMessage());
-            }
-        }
-    }
-
-    private void testAccountCloseManipulation(String baseUrl, String token,
-                                              List<Vulnerability> vulnerabilities,
-                                              ApiClient apiClient) {
-        System.out.println("(API-3) Расширенное тестирование закрытия счетов...");
-
-        String accountId = getFirstAccountId(baseUrl, token, apiClient);
-        if (accountId == null) {
-            System.out.println("(API-3) Нет доступных счетов для тестирования закрытия");
-            return;
-        }
-
-        Map<String, String> closePayloads = new LinkedHashMap<>();
-        closePayloads.put("Перевод с бонусом",
-                "{\"action\":\"transfer\",\"destination_account_id\":\"acc-999999\",\"bonus_amount\":1000}");
-        closePayloads.put("Перевод с комиссией",
-                "{\"action\":\"transfer\",\"destination_account_id\":\"acc-999999\",\"fee_override\":0}");
-        closePayloads.put("Донат с наградой",
-                "{\"action\":\"donate\",\"reward_points\":10000}");
-
-        for (Map.Entry<String, String> entry : closePayloads.entrySet()) {
-            String testName = entry.getKey();
-            String payload = entry.getValue();
-
-            try {
-                delay(BASE_DELAY_MS);
-
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + token);
-                headers.put("Content-Type", "application/json");
-                headers.put("Accept", "application/json");
-
-                Object response = apiClient.executeRequest("PUT",
-                        baseUrl + "/accounts/" + accountId + "/close", payload, headers);
-
-                if (response instanceof HttpApiClient.ApiResponse) {
-                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-
-                    System.out.println("(API-3) Тест: " + testName + " - Статус: " + apiResponse.getStatusCode());
-
-                    if (apiResponse.getStatusCode() == 429) {
-                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
-                        delay(AFTER_429_DELAY_MS);
-                        continue;
-                    }
-
-                    if (apiResponse.getStatusCode() == 200) {
-                        String responseBody = apiResponse.getBody().toLowerCase();
-                        boolean acceptedMaliciousParams =
-                                responseBody.contains("bonus_amount") ||
-                                        responseBody.contains("fee_override") ||
-                                        responseBody.contains("reward_points");
-
-                        if (acceptedMaliciousParams) {
-                            Vulnerability vuln = createEnhancedVulnerability(
-                                    "Манипуляция при закрытии счета - " + testName,
-                                    "Сервер принял подозрительные параметры при закрытии счета. " +
-                                            "Это может позволить обойти бизнес-логику финансовых операций.",
-                                    Vulnerability.Severity.HIGH,
-                                    "/accounts/{account_id}/close",
-                                    "PUT",
-                                    apiResponse.getStatusCode(),
-                                    payload,
-                                    apiResponse.getBody(),
-                                    "Строго валидируйте параметры закрытия счета. " +
-                                            "Запретите дополнительные поля в запросе закрытия. " +
-                                            "Проверяйте принадлежность счетов и бизнес-правила."
-                            );
-                            vulnerabilities.add(vuln);
-                            System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                        } else {
-                            System.out.println("(API-3) Защита работает: сервер отклонил подозрительные параметры");
-                        }
-                    } else if (apiResponse.getStatusCode() >= 500) {
-                        System.out.println("(API-3) ⚠️ Серверная ошибка");
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("(API-3) Ошибка при тесте закрытия '" + testName + "': " + e.getMessage());
-            }
-        }
-    }
-
-    private void testEnhancedSensitiveDataExposure(String baseUrl, String token,
-                                                   List<Vulnerability> vulnerabilities,
-                                                   ApiClient apiClient) {
-        System.out.println("(API-3) Расширенное тестирование раскрытия данных...");
-
-        Map<String, String> endpointsToTest = new LinkedHashMap<>();
-        endpointsToTest.put("/accounts", "GET");
-        endpointsToTest.put("/auth/me", "GET");
-        endpointsToTest.put("/products", "GET");
-        endpointsToTest.put("/account-consents", "GET");
-
-        for (Map.Entry<String, String> entry : endpointsToTest.entrySet()) {
-            String endpoint = entry.getKey();
-            String method = entry.getValue();
-
-            System.out.println("(API-3) Проверка эндпоинта: " + endpoint);
-
-            try {
-                delay(BASE_DELAY_MS);
-
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + token);
-                headers.put("Accept", "application/json");
-
-                Object response = apiClient.executeRequest(method, baseUrl + endpoint, null, headers);
-
-                if (response instanceof HttpApiClient.ApiResponse) {
-                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-
-                    System.out.println("(API-3) Статус: " + apiResponse.getStatusCode());
-
-                    if (apiResponse.getStatusCode() == 429) {
-                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
-                        delay(AFTER_429_DELAY_MS);
-                        continue;
-                    }
-
-                    if (apiResponse.getStatusCode() == 200) {
-                        String responseBody = apiResponse.getBody();
-
-                        // Детальный анализ ответа
-                        List<String> sensitiveFields = findFieldsByPatterns(responseBody, SENSITIVE_PATTERNS);
-                        List<String> piiFields = findFieldsByPatterns(responseBody, PII_PATTERNS);
-                        List<String> internalFields = findFieldsByPatterns(responseBody, INTERNAL_PATTERNS);
-                        List<String> privilegedFields = findFieldsByPatterns(responseBody, PRIVILEGED_PATTERNS);
-
-                        // Создаем детальный отчет для каждого типа уязвимости
-                        if (!sensitiveFields.isEmpty()) {
-                            Vulnerability vuln = createEnhancedVulnerability(
-                                    "Раскрытие чувствительных данных в " + endpoint,
-                                    "Обнаружены критические чувствительные поля: " + sensitiveFields + ". " +
-                                            "Раскрытие таких данных может привести к компрометации аккаунтов.",
-                                    Vulnerability.Severity.HIGH,
-                                    endpoint,
-                                    method,
-                                    apiResponse.getStatusCode(),
-                                    "N/A",
-                                    responseBody,
-                                    "Маскируйте чувствительные данные в ответах API. " +
-                                            "Используйте DTO для фильтрации полей. " +
-                                            "Реализуйте принцип минимальных привилегий."
-                            );
-                            vulnerabilities.add(vuln);
-                            System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: Раскрытие чувствительных данных");
-                        }
-
-                        if (!piiFields.isEmpty()) {
-                            Vulnerability vuln = createEnhancedVulnerability(
-                                    "Раскрытие PII данных в " + endpoint,
-                                    "Обнаружены персональные данные (PII): " + piiFields + ". " +
-                                            "Нарушение GDPR и законодательства о защите данных.",
-                                    Vulnerability.Severity.MEDIUM,
-                                    endpoint,
-                                    method,
-                                    apiResponse.getStatusCode(),
-                                    "N/A",
-                                    responseBody,
-                                    "Соблюдайте GDPR/законодательство о защите данных. " +
-                                            "Маскируйте PII данные в ответах. " +
-                                            "Используйте дифференцированный доступ к данным."
-                            );
-                            vulnerabilities.add(vuln);
-                            System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: Раскрытие персональных данных (PII)");
-                        }
-
-                        if (!internalFields.isEmpty()) {
-                            Vulnerability vuln = createEnhancedVulnerability(
-                                    "Раскрытие внутренней информации в " + endpoint,
-                                    "Обнаружены внутренние технические поля: " + internalFields + ". " +
-                                            "Раскрытие внутренней структуры может помочь атакующему.",
-                                    Vulnerability.Severity.LOW,
-                                    endpoint,
-                                    method,
-                                    apiResponse.getStatusCode(),
-                                    "N/A",
-                                    responseBody,
-                                    "Удалите внутренние технические поля из production ответов. " +
-                                            "Используйте отдельные DTO для внутреннего и внешнего представления. " +
-                                            "Настройте фильтрацию полей в сериализации."
-                            );
-                            vulnerabilities.add(vuln);
-                            System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: Раскрытие внутренней информации");
-                        }
-
-                        if (!privilegedFields.isEmpty()) {
-                            Vulnerability vuln = createEnhancedVulnerability(
-                                    "Раскрытие привилегированной информации в " + endpoint,
-                                    "Обнаружены поля, связанные с правами доступа: " + privilegedFields + ". " +
-                                            "Может помочь в эскалации привилегий.",
-                                    Vulnerability.Severity.MEDIUM,
-                                    endpoint,
-                                    method,
-                                    apiResponse.getStatusCode(),
-                                    "N/A",
-                                    responseBody,
-                                    "Скрывайте информацию о правах и ролях в ответах. " +
-                                            "Используйте минимально необходимый набор полей в ответах."
-                            );
-                            vulnerabilities.add(vuln);
-                            System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: Раскрытие привилегированной информации");
-                        }
-
-                        if (sensitiveFields.isEmpty() && piiFields.isEmpty() &&
-                                internalFields.isEmpty() && privilegedFields.isEmpty()) {
-                            System.out.println("(API-3) Данные защищены правильно");
-                        }
-                    } else if (apiResponse.getStatusCode() >= 500) {
-                        System.out.println("(API-3) ⚠️ Серверная ошибка");
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("(API-3) Ошибка при тесте эндпоинта " + endpoint + ": " + e.getMessage());
-            }
-        }
-    }
-
-    private void testEnhancedConsentManipulation(String baseUrl, String token,
-                                                 List<Vulnerability> vulnerabilities,
-                                                 ApiClient apiClient) {
-        System.out.println("(API-3) Расширенное тестирование согласий...");
-
-        Map<String, String> consentPayloads = new LinkedHashMap<>();
-        consentPayloads.put("Административные права",
-                "{\"permissions\":[\"accounts\",\"payments\",\"admin_operations\"],\"scope\":\"full_access\"}");
-        consentPayloads.put("Расширенный доступ",
-                "{\"permissions\":[\"*\"],\"scope\":\"*\",\"duration\":\"permanent\"}");
-        consentPayloads.put("Дополнительные привилегии",
-                "{\"permissions\":[\"accounts\",\"payments\"],\"max_amount\":9999999,\"override_limits\":true}");
-
-        for (Map.Entry<String, String> entry : consentPayloads.entrySet()) {
-            String testName = entry.getKey();
-            String payload = entry.getValue();
-
-            try {
-                delay(BASE_DELAY_MS);
-
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + token);
-                headers.put("Content-Type", "application/json");
-                headers.put("Accept", "application/json");
-
-                Object response = apiClient.executeRequest("POST",
-                        baseUrl + "/account-consents/request", payload, headers);
-
-                if (response instanceof HttpApiClient.ApiResponse) {
-                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-
-                    System.out.println("(API-3) Тест: " + testName + " - Статус: " + apiResponse.getStatusCode());
-
-                    if (apiResponse.getStatusCode() == 429) {
-                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
-                        delay(AFTER_429_DELAY_MS);
-                        continue;
-                    }
-
-                    if (apiResponse.getStatusCode() == 200) {
-                        String responseBody = apiResponse.getBody().toLowerCase();
-                        boolean acceptedMaliciousConsent =
-                                responseBody.contains("admin_operations") ||
-                                        responseBody.contains("full_access") ||
-                                        responseBody.contains("permanent") ||
-                                        responseBody.contains("override_limits");
-
-                        if (acceptedMaliciousConsent) {
-                            Vulnerability vuln = createEnhancedVulnerability(
-                                    "Манипуляция правами согласия - " + testName,
-                                    "Сервер принял запрос согласия с расширенными или административными правами. " +
-                                            "Это может позволить несанкционированный доступ к данным.",
-                                    Vulnerability.Severity.HIGH,
-                                    "/account-consents/request",
-                                    "POST",
-                                    apiResponse.getStatusCode(),
-                                    payload,
-                                    apiResponse.getBody(),
-                                    "Ограничьте доступные разрешения для клиентов. " +
-                                            "Реализуйте проверку scope согласий. " +
-                                            "Запретите клиентам выбирать административные права."
-                            );
-                            vulnerabilities.add(vuln);
-                            System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                        } else {
-                            System.out.println("(API-3) Защита работает: сервер отклонил подозрительные права");
-                        }
-                    } else if (apiResponse.getStatusCode() >= 500) {
-                        System.out.println("(API-3) ⚠️ Серверная ошибка");
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("(API-3) Ошибка при тесте согласия '" + testName + "': " + e.getMessage());
-            }
-        }
-    }
-
-    private void testEnhancedPaymentManipulation(String baseUrl, String token,
-                                                 List<Vulnerability> vulnerabilities,
-                                                 ApiClient apiClient) {
-        System.out.println("(API-3) Расширенное тестирование платежей...");
-
-        Map<String, String> paymentPayloads = new LinkedHashMap<>();
-        paymentPayloads.put("Обход комиссий",
-                "{\"amount\":0.01,\"currency\":\"RUB\",\"fee_override\":0,\"priority\":\"urgent\"}");
-        paymentPayloads.put("Изменение лимитов",
-                "{\"amount\":1000,\"currency\":\"RUB\",\"max_limit_override\":9999999}");
-        paymentPayloads.put("Привилегированный платеж",
-                "{\"amount\":1000,\"currency\":\"RUB\",\"is_privileged\":true,\"skip_validation\":true}");
-
-        for (Map.Entry<String, String> entry : paymentPayloads.entrySet()) {
-            String testName = entry.getKey();
-            String payload = entry.getValue();
-
-            try {
-                delay(BASE_DELAY_MS);
-
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + token);
-                headers.put("Content-Type", "application/json");
-                headers.put("Accept", "application/json");
-
-                Object response = apiClient.executeRequest("POST",
-                        baseUrl + "/payments", payload, headers);
-
-                if (response instanceof HttpApiClient.ApiResponse) {
-                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-
-                    System.out.println("(API-3) Тест: " + testName + " - Статус: " + apiResponse.getStatusCode());
-
-                    if (apiResponse.getStatusCode() == 429) {
-                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
-                        delay(AFTER_429_DELAY_MS);
-                        continue;
-                    }
-
-                    if (apiResponse.getStatusCode() == 200) {
-                        String responseBody = apiResponse.getBody().toLowerCase();
-                        boolean acceptedMaliciousPayment =
-                                responseBody.contains("fee_override") ||
-                                        responseBody.contains("urgent") ||
-                                        responseBody.contains("max_limit_override") ||
-                                        responseBody.contains("privileged") ||
-                                        responseBody.contains("skip_validation");
-
-                        if (acceptedMaliciousPayment) {
-                            Vulnerability vuln = createEnhancedVulnerability(
-                                    "Манипуляция параметрами платежа - " + testName,
-                                    "Сервер принял запрос платежа с переопределенными параметрами. " +
-                                            "Это может позволить обойти бизнес-правила и финансовые ограничения.",
-                                    Vulnerability.Severity.HIGH,
-                                    "/payments",
-                                    "POST",
-                                    apiResponse.getStatusCode(),
-                                    payload,
-                                    apiResponse.getBody(),
-                                    "Фиксируйте комиссии на сервере. " +
-                                            "Ограничьте доступные приоритеты платежей. " +
-                                            "Валидируйте все параметры платежа на стороне сервера."
-                            );
-                            vulnerabilities.add(vuln);
-                            System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                        } else {
-                            System.out.println("(API-3) Защита работает: сервер отклонил подозрительные параметры");
-                        }
-                    } else if (apiResponse.getStatusCode() >= 500) {
-                        System.out.println("(API-3) ⚠️ Серверная ошибка");
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("(API-3) Ошибка при тесте платежа '" + testName + "': " + e.getMessage());
-            }
-        }
-    }
-
-    private void testProductManipulation(String baseUrl, String token,
-                                         List<Vulnerability> vulnerabilities,
-                                         ApiClient apiClient) {
-        System.out.println("(API-3) Тестирование манипуляции продуктами...");
-
-        Map<String, String> productPayloads = new LinkedHashMap<>();
-        productPayloads.put("Создание премиум продукта",
-                "{\"name\":\"Test Product\",\"type\":\"premium\",\"interest_rate\":15,\"special_conditions\":\"vip\"}");
-        productPayloads.put("Продукт с расширенными лимитами",
-                "{\"name\":\"Test\",\"type\":\"standard\",\"max_limit\":9999999,\"overdraft_allowed\":true}");
-
-        for (Map.Entry<String, String> entry : productPayloads.entrySet()) {
-            String testName = entry.getKey();
-            String payload = entry.getValue();
-
-            try {
-                delay(BASE_DELAY_MS);
-
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + token);
-                headers.put("Content-Type", "application/json");
-                headers.put("Accept", "application/json");
-
-                Object response = apiClient.executeRequest("POST",
-                        baseUrl + "/products", payload, headers);
-
-                if (response instanceof HttpApiClient.ApiResponse) {
-                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-
-                    System.out.println("(API-3) Тест: " + testName + " - Статус: " + apiResponse.getStatusCode());
-
-                    if (apiResponse.getStatusCode() == 429) {
-                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
-                        delay(AFTER_429_DELAY_MS);
-                        continue;
-                    }
-
-                    if (apiResponse.getStatusCode() == 200) {
-                        String responseBody = apiResponse.getBody().toLowerCase();
-                        boolean acceptedMaliciousProduct =
-                                responseBody.contains("premium") ||
-                                        responseBody.contains("vip") ||
-                                        responseBody.contains("9999999") ||
-                                        responseBody.contains("overdraft_allowed");
-
-                        if (acceptedMaliciousProduct) {
-                            Vulnerability vuln = createEnhancedVulnerability(
-                                    "Манипуляция продуктами - " + testName,
-                                    "Сервер принял запрос на создание продукта с привилегированными параметрами. " +
-                                            "Обычно создание продуктов должно быть ограничено административными ролями.",
-                                    Vulnerability.Severity.HIGH,
-                                    "/products",
-                                    "POST",
-                                    apiResponse.getStatusCode(),
-                                    payload,
-                                    apiResponse.getBody(),
-                                    "Ограничьте создание продуктов административными ролями. " +
-                                            "Валидируйте параметры продуктов на сервере. " +
-                                            "Запретите клиентам устанавливать привилегированные параметры."
-                            );
-                            vulnerabilities.add(vuln);
-                            System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: " + testName);
-                        } else {
-                            System.out.println("(API-3) Защита работает: сервер отклонил подозрительные параметры");
-                        }
-                    } else if (apiResponse.getStatusCode() >= 500) {
-                        System.out.println("(API-3) ⚠️ Серверная ошибка");
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("(API-3) Ошибка при тесте продукта '" + testName + "': " + e.getMessage());
-            }
-        }
-    }
-
-    private void testAdminEndpointsAccess(String baseUrl, String token,
-                                          List<Vulnerability> vulnerabilities,
-                                          ApiClient apiClient) {
-        System.out.println("(API-3) Тестирование доступа к админским эндпоинтам...");
-
-        Map<String, String> adminEndpoints = new LinkedHashMap<>();
-        adminEndpoints.put("/admin/stats", "GET");
-        adminEndpoints.put("/admin/teams", "GET");
-        adminEndpoints.put("/admin/capital", "GET");
-        adminEndpoints.put("/admin/key-rate", "GET");
-
-        for (Map.Entry<String, String> entry : adminEndpoints.entrySet()) {
-            String endpoint = entry.getKey();
-            String method = entry.getValue();
-
-            try {
-                delay(BASE_DELAY_MS);
-
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + token);
-                headers.put("Accept", "application/json");
-
-                Object response = apiClient.executeRequest(method, baseUrl + endpoint, null, headers);
-
-                if (response instanceof HttpApiClient.ApiResponse) {
-                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-
-                    System.out.println("(API-3) Эндпоинт: " + endpoint + " - Статус: " + apiResponse.getStatusCode());
-
-                    if (apiResponse.getStatusCode() == 429) {
-                        System.out.println("(API-3) ⚠️ Rate limiting, пропускаем тест");
-                        delay(AFTER_429_DELAY_MS);
-                        continue;
-                    }
-
-                    if (apiResponse.getStatusCode() == 200) {
-                        Vulnerability vuln = createEnhancedVulnerability(
-                                "Неавторизованный доступ к админскому эндпоинту",
-                                "Обычный пользователь получил доступ к административному эндпоинту: " + endpoint + ". " +
-                                        "Статус ответа: " + apiResponse.getStatusCode() + ". " +
-                                        "Это указывает на недостаточную проверку прав доступа.",
-                                Vulnerability.Severity.HIGH,
-                                endpoint,
-                                method,
-                                apiResponse.getStatusCode(),
-                                "N/A",
-                                apiResponse.getBody(),
-                                "Реализуйте строгую проверку ролей и прав доступа. " +
-                                        "Ограничьте административные эндпоинты только пользователям с соответствующими правами. " +
-                                        "Используйте middleware для проверки авторизации."
-                        );
-                        vulnerabilities.add(vuln);
-                        System.out.println("(API-3) УЯЗВИМОСТЬ ОБНАРУЖЕНА: Неавторизованный доступ к админскому эндпоинту");
-                    } else if (apiResponse.getStatusCode() == 403 || apiResponse.getStatusCode() == 401) {
-                        System.out.println("(API-3) Доступ к админке запрещен: " + endpoint);
-                    } else if (apiResponse.getStatusCode() >= 500) {
-                        System.out.println("(API-3) ⚠️ Серверная ошибка");
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("(API-3) Ошибка при тесте админского эндпоинта " + endpoint + ": " + e.getMessage());
-            }
-        }
-    }
-
-    private String getFirstAccountId(String baseUrl, String token, ApiClient apiClient) {
-        try {
-            delay(BASE_DELAY_MS);
-
-            Map<String, String> headers = new HashMap<>();
-            headers.put("Authorization", "Bearer " + token);
-            headers.put("Accept", "application/json");
-
-            Object response = apiClient.executeRequest("GET", baseUrl + "/accounts", null, headers);
-
-            if (response instanceof HttpApiClient.ApiResponse) {
-                HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-
-                System.out.println("(API-3) Запрос счетов - Статус: " + apiResponse.getStatusCode());
-
-                if (apiResponse.getStatusCode() == 429) {
-                    System.out.println("(API-3) ⚠️ Rate limiting при получении счетов");
-                    delay(AFTER_429_DELAY_MS);
-                    return null;
-                }
-
-                if (apiResponse.getStatusCode() == 200) {
-                    String body = apiResponse.getBody();
-                    // Ищем account_id в ответе
-                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("\"account_id\"\\s*:\\s*\"([^\"]+)\"");
-                    java.util.regex.Matcher matcher = pattern.matcher(body);
-                    if (matcher.find()) {
-                        return matcher.group(1);
-                    }
-                    // Альтернативный вариант
-                    pattern = java.util.regex.Pattern.compile("\"accountId\"\\s*:\\s*\"([^\"]+)\"");
-                    matcher = pattern.matcher(body);
-                    if (matcher.find()) {
-                        return matcher.group(1);
-                    }
-                } else {
-                    System.err.println("(API-3) Ошибка при запросе счетов: " + apiResponse.getStatusCode());
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("(API-3) Ошибка при получении account_id: " + e.getMessage());
-        }
-        return null;
-    }
-
-    private Vulnerability createEnhancedVulnerability(String title, String description,
-                                                      Vulnerability.Severity severity,
-                                                      String endpoint, String method, int statusCode,
-                                                      String requestBody, String responseBody,
-                                                      String recommendation) {
+    private Vulnerability createVulnerability(String title, String description,
+                                              Vulnerability.Severity severity,
+                                              String endpoint, String method, int statusCode,
+                                              String requestBody, String responseBody,
+                                              String recommendation) {
         Vulnerability vuln = new Vulnerability();
         vuln.setTitle("API3:2023 - " + title);
         vuln.setDescription(description);
@@ -860,28 +447,57 @@ public class API3_BOScanner implements SecurityScanner {
         vuln.setMethod(method);
         vuln.setStatusCode(statusCode);
 
-        // Детальное evidence с запросом и ответом
         String evidence = String.format(
-                "=== ДЕТАЛИ УЯЗВИМОСТИ ===\n" +
-                        "Эндпоинт: %s %s\n" +
+                "Эндпоинт: %s %s\n" +
                         "HTTP Статус: %d\n" +
                         "Тело запроса: %s\n" +
-                        "Тело ответа: %s\n" +
-                        "Описание: %s",
+                        "Тело ответа: %s",
                 method, endpoint, statusCode,
                 requestBody != null ? requestBody : "N/A",
-                responseBody.length() > 500 ? responseBody.substring(0, 500) + "..." : responseBody,
-                description
+                responseBody.length() > 500 ? responseBody.substring(0, 500) + "..." : responseBody
         );
         vuln.setEvidence(evidence);
 
-        // Специфические рекомендации
         vuln.setRecommendations(Arrays.asList(
                 recommendation,
                 "Реализуйте строгую схему валидации для всех входных данных",
                 "Используйте whitelist подход для разрешенных полей",
-                "Разделяйте DTO для клиентов и внутреннего использования",
-                "Внедрите проверки прав на уровне свойств объектов"
+                "Разделяйте DTO для клиентов и внутреннего использования"
+        ));
+
+        return vuln;
+    }
+
+    private Vulnerability createSensitiveDataVulnerability(String title, String description,
+                                                           Vulnerability.Severity severity,
+                                                           String endpoint, String method,
+                                                           HttpApiClient.ApiResponse apiResponse,
+                                                           List<String> exposedFields) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API3:2023 - " + title);
+        vuln.setDescription(description + " в ответе API");
+        vuln.setSeverity(severity);
+        vuln.setCategory(Vulnerability.Category.OWASP_API3_BOPLA);
+        vuln.setEndpoint(endpoint);
+        vuln.setMethod(method);
+        vuln.setStatusCode(apiResponse.getStatusCode());
+
+        String evidence = String.format(
+                "Эндпоинт: %s %s\n" +
+                        "HTTP Статус: %d\n" +
+                        "Обнаруженные поля: %s\n" +
+                        "Фрагмент ответа: %s",
+                method, endpoint, apiResponse.getStatusCode(),
+                exposedFields,
+                apiResponse.getBody().length() > 300 ? apiResponse.getBody().substring(0, 300) + "..." : apiResponse.getBody()
+        );
+        vuln.setEvidence(evidence);
+
+        vuln.setRecommendations(Arrays.asList(
+                "Маскируйте чувствительные данные в ответах API",
+                "Используйте DTO для фильтрации полей",
+                "Реализуйте принцип минимальных привилегий",
+                "Настройте фильтрацию полей в сериализации"
         ));
 
         return vuln;
@@ -889,11 +505,15 @@ public class API3_BOScanner implements SecurityScanner {
 
     @Override
     public String getName() {
-        return "OWASP API3 - Enhanced Broken Object Property Level Authorization Scanner";
+        return "OWASP API3 - Broken Object Property Level Authorization Scanner";
     }
 
     private List<String> findFieldsByPatterns(String json, Set<String> patterns) {
         List<String> results = new ArrayList<>();
+        if (json == null || json.trim().isEmpty()) {
+            return results;
+        }
+
         String lowerJson = json.toLowerCase();
 
         for (String pattern : patterns) {
@@ -909,5 +529,18 @@ public class API3_BOScanner implements SecurityScanner {
         }
 
         return results;
+    }
+
+    private String extractFoundPatterns(String text, Set<String> patterns) {
+        List<String> found = new ArrayList<>();
+        String lowerText = text.toLowerCase();
+
+        for (String pattern : patterns) {
+            if (lowerText.contains(pattern)) {
+                found.add(pattern);
+            }
+        }
+
+        return found.toString();
     }
 }
