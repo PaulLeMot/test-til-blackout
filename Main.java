@@ -52,9 +52,9 @@ public class Main {
 
         final String PASSWORD = "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
         final List<String> BANKS = Arrays.asList(
-                "https://api.gost.bankingapi.ru:8443/api/rb/rewardsPay/hackathon/v1/vbank  ",
-                "https://api.gost.bankingapi.ru:8443/api/rb/rewardsPay/hackathon/v1/abank",
-                "https://api.gost.bankingapi.ru:8443/api/rb/rewardsPay/hackathon/v1/sbank"
+                "https://vbank.open.bankingapi.ru ",
+                "https://abank.open.bankingapi.ru ",
+                "https://sbank.open.bankingapi.ru "
         );
 
         // Создаём сканеры - начинаем с основных
