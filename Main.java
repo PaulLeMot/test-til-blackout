@@ -10,6 +10,7 @@ import scanners.owasp.API7_SSRFScanner;
 import scanners.owasp.API8_SecurityConfigScanner;
 import scanners.owasp.API9_InventoryScanner;
 import scanners.owasp.API10_UnsafeConsumptionScanner;
+import scanners.owasp.ContractValidationScanner;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.Arrays;
@@ -60,16 +61,17 @@ public class Main {
 
             // Создаём сканеры - начинаем с основных
             List<SecurityScanner> securityScanners = Arrays.asList(
-                new API1_BOLAScanner(),
-                new API2_BrokenAuthScanner(),
-                new API3_BOScanner(),
-                new API4_URCScanner(),
-                new API5_BrokenFunctionLevelAuthScanner(),
-                new API6_BusinessFlowScanner(),
-                new API7_SSRFScanner(),
-                new API8_SecurityConfigScanner(),
-                new API9_InventoryScanner(),
-                new API10_UnsafeConsumptionScanner()
+                //new API1_BOLAScanner(),
+                //new API2_BrokenAuthScanner(),
+                //new API3_BOScanner(),
+                //new API4_URCScanner(),
+                //new API5_BrokenFunctionLevelAuthScanner(),
+                //new API6_BusinessFlowScanner(),
+                //new API7_SSRFScanner(),
+                //new API8_SecurityConfigScanner(),
+                //new API9_InventoryScanner(),
+                //new API10_UnsafeConsumptionScanner(),
+		new ContractValidationScanner()
             );
 
             log("Зарегистрировано сканеров: " + securityScanners.size());
