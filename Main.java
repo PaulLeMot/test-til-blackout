@@ -10,7 +10,8 @@ import scanners.owasp.API7_SSRFScanner;
 import scanners.owasp.API8_SecurityConfigScanner;
 import scanners.owasp.API9_InventoryScanner;
 import scanners.owasp.API10_UnsafeConsumptionScanner;
-
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Arrays;
 import java.util.List;
 import java.util.ArrayList;
@@ -20,15 +21,26 @@ import java.io.FileWriter;
 import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.io.File;
 
 public class Main {
     private static PrintWriter logWriter;
     
     public static void main(String[] args) {
+        // Создаем папку logs, если она не существует
+        File logsDir = new File("logs");
+        if (!logsDir.exists()) {
+            if (logsDir.mkdirs()) {
+                System.out.println("Создана папка logs");
+            } else {
+                System.err.println("Не удалось создать папку logs");
+            }
+        }
+        
         // Инициализация логгера
         try {
             String timestamp = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date());
-            String logFileName = "security_scan_" + timestamp + ".txt";
+            String logFileName = "logs/security_scan_" + timestamp + ".txt";
             logWriter = new PrintWriter(new FileWriter(logFileName, true));
             log("Логирование в файл: " + logFileName);
         } catch (Exception e) {
@@ -194,11 +206,9 @@ public class Main {
                     log("   Уровни: КРИТИЧЕСКИХ-" + criticalCount + " ВЫСОКИХ-" + highCount +
                             " СРЕДНИХ-" + mediumCount + " НИЗКИХ-" + lowCount);
 
-                    // Статистика по сканерам
+                    // Статистика по сканерам - ВЫВОДИМ ВСЕ КАТЕГОРИИ
                     log("\n   Результаты по сканерам:");
-                    printScannerStats(scannerStats, "OWASP_API1_BOLA", "API1 - BOLA");
-                    printScannerStats(scannerStats, "OWASP_API2_BROKEN_AUTH", "API2 - Broken Auth");
-                    printScannerStats(scannerStats, "OWASP_API3_BOPLA", "API3 - BOPLA");
+                    printAllScannerStats(scannerStats);
 
                 } catch (Exception e) {
                     log("Ошибка при сканировании банка " + cleanBaseUrl + ": " + e.getMessage());
@@ -254,7 +264,7 @@ public class Main {
             // Закрытие файла лога
             if (logWriter != null) {
                 logWriter.close();
-                System.out.println("Лог сохранен в файл");
+                System.out.println("Лог сохранен в папку logs/");
             }
         }
     }
@@ -281,6 +291,87 @@ public class Main {
         int count = stats.getOrDefault(category, 0);
         if (count > 0) {
             log("      • " + name + ": " + count + " уязвимостей");
+        }
+    }
+
+    
+    private static void printAllScannerStats(Map<String, Integer> stats) {
+        // Создаем маппинг категорий к читаемым названиям
+        Map<String, String> categoryNames = new HashMap<>();
+        categoryNames.put("OWASP_API1_BOLA", "API1 - BOLA");
+        categoryNames.put("OWASP_API2_BROKEN_AUTH", "API2 - Broken Auth");
+        categoryNames.put("OWASP_API3_BOPLA", "API3 - BOPLA");
+        categoryNames.put("OWASP_API4_URC", "API4 - URC");
+        categoryNames.put("OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH", "API5 - Broken Function Level Auth");
+        categoryNames.put("OWASP_API6_BUSINESS_FLOW", "API6 - Business Flow");
+        categoryNames.put("OWASP_API7_SSRF", "API7 - SSRF");
+        categoryNames.put("OWASP_API8_SM", "API8 - Security Misconfiguration");
+        categoryNames.put("OWASP_API9_INVENTORY", "API9 - Inventory");
+        categoryNames.put("OWASP_API10_UNSAFE_CONSUMPTION", "API10 - Unsafe Consumption");
+        categoryNames.put("CONTRACT_VALIDATION", "Contract Validation");
+    
+        // Дополнительные категории, которые могут использоваться в сканерах
+        categoryNames.put("API1_BOLA", "API1 - BOLA");
+        categoryNames.put("API2_BROKEN_AUTH", "API2 - Broken Auth");
+        categoryNames.put("API3_BOPLA", "API3 - BOPLA");
+        categoryNames.put("API4_URC", "API4 - URC");
+        categoryNames.put("API5_BROKEN_FUNCTION_LEVEL_AUTH", "API5 - Broken Function Level Auth");
+        categoryNames.put("API6_BUSINESS_FLOW", "API6 - Business Flow");
+        categoryNames.put("API7_SSRF", "API7 - SSRF");
+        categoryNames.put("API8_SM", "API8 - Security Misconfiguration");
+        categoryNames.put("API9_INVENTORY", "API9 - Inventory");
+        categoryNames.put("API10_UNSAFE_CONSUMPTION", "API10 - Unsafe Consumption");
+    
+        // Выводим все категории, где есть уязвимости
+        boolean hasResults = false;
+        
+        // Сначала выводим известные категории в правильном порядке
+        String[] orderedCategories = {
+            "OWASP_API1_BOLA", "API1_BOLA",
+            "OWASP_API2_BROKEN_AUTH", "API2_BROKEN_AUTH", 
+            "OWASP_API3_BOPLA", "API3_BOPLA",
+            "OWASP_API4_URC", "API4_URC",
+            "OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH", "API5_BROKEN_FUNCTION_LEVEL_AUTH",
+            "OWASP_API6_BUSINESS_FLOW", "API6_BUSINESS_FLOW",
+            "OWASP_API7_SSRF", "API7_SSRF",
+            "OWASP_API8_SM", "API8_SM",
+            "OWASP_API9_INVENTORY", "API9_INVENTORY",
+            "OWASP_API10_UNSAFE_CONSUMPTION", "API10_UNSAFE_CONSUMPTION",
+            "CONTRACT_VALIDATION"
+        };
+    
+        // Используем Set для отслеживания уже выведенных категорий
+        Set<String> displayedCategories = new HashSet<>();
+    
+        for (String category : orderedCategories) {
+            if (stats.containsKey(category)) {
+                int count = stats.get(category);
+                if (count > 0) {
+                    String displayName = categoryNames.getOrDefault(category, category);
+                    // Проверяем, не выводили ли мы уже эту категорию
+                    if (!displayedCategories.contains(displayName)) {
+                        log("      • " + displayName + ": " + count + " уязвимостей");
+                        displayedCategories.add(displayName);
+                        hasResults = true;
+                    }
+                }
+            }
+        }
+    
+        // Затем выводим любые другие категории, которые не были обработаны
+        for (Map.Entry<String, Integer> entry : stats.entrySet()) {
+            String category = entry.getKey();
+            int count = entry.getValue();
+            if (count > 0 && !displayedCategories.contains(categoryNames.getOrDefault(category, category))) {
+                String displayName = categoryNames.getOrDefault(category, category);
+                log("      • " + displayName + ": " + count + " уязвимостей");
+                hasResults = true;
+            }
+        }
+    
+        // Если нет результатов, выводим сообщение
+        if (!hasResults) {
+            log("      • Уязвимостей не обнаружено");
         }
     }
 }

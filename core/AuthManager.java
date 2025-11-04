@@ -76,7 +76,7 @@ public class AuthManager {
                                 return accessToken;
                             }
                         } else if (response.statusCode() == 429) {
-                            System.out.println("⚠️ Rate limiting, пробуем следующую комбинацию...");
+                            System.out.println("⚠ Rate limiting, пробуем следующую комбинацию...");
                             Thread.sleep(2000);
                         }
 
@@ -205,13 +205,13 @@ public class AuthManager {
     }
 
     /**
-     * Улучшенный метод получения токенов для команды
+     * Улучшенный метод получения токенов для команды - ВСЕГДА получаем несколько токенов для BOLA
      */
     public static Map<String, String> getBankAccessTokensForTeam(String bankBaseUrl, String password) {
         Map<String, String> tokens = new HashMap<>();
         System.out.println("🔐 Получение токенов для команды...");
 
-        boolean gotRealTokens = false;
+        int tokenCount = 0;
 
         // Сначала пробуем получить банковский токен
         System.out.println("\n--- Получение банковского токена ---");
@@ -220,37 +220,45 @@ public class AuthManager {
 
         if (bankToken != null && isTokenValid(bankToken)) {
             tokens.put("bank_token", bankToken);
-            gotRealTokens = true;
+            tokenCount++;
             System.out.println("✅ Банковский токен успешно получен и сохранен");
         } else {
             System.err.println("❌ Не удалось получить банковский токен. Пробуем альтернативные методы...");
         }
 
-        // Если банковский токен не получен, пробуем клиентские токены
-        if (!gotRealTokens) {
-            for (String username : new String[]{***REMOVED***,"***REMOVED***"}) {
-                System.out.println("\n--- Аутентификация пользователя: " + username + " ---");
+        // ВСЕГДА пытаемся получить клиентские токены, даже если есть банковский
+        System.out.println("\n--- Получение пользовательских токенов ---");
+        for (String username : new String[]{***REMOVED***,"***REMOVED***"}) {
+            System.out.println("\n--- Аутентификация пользователя: " + username + " ---");
 
-                String token = getBankAccessToken(bankBaseUrl, username, password);
+            String token = getBankAccessToken(bankBaseUrl, username, password);
 
-                if (token != null && isTokenValid(token)) {
-                    tokens.put(username, token);
-                    gotRealTokens = true;
-                    System.out.println("✅ Реальный токен получен для " + username);
-                } else {
-                    System.err.println("❌ Не удалось получить реальный токен для " + username);
+            if (token != null && isTokenValid(token)) {
+                tokens.put(username, token);
+                tokenCount++;
+                System.out.println("✅ Реальный токен получен для " + username);
+            } else {
+                System.err.println("❌ Не удалось получить реальный токен для " + username);
+            }
+
+            try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+        }
+
+        // Если не получили достаточно токенов, используем аварийные
+        if (tokenCount < 2) {
+            System.out.println("\n🆘 Получено только " + tokenCount + " токенов. Переходим в аварийный режим...");
+            Map<String, String> emergencyTokens = getEmergencyTokens();
+            
+            // Добавляем аварийные токены к уже полученным, но не перезаписываем существующие
+            for (Map.Entry<String, String> entry : emergencyTokens.entrySet()) {
+                if (!tokens.containsKey(entry.getKey())) {
+                    tokens.put(entry.getKey(), entry.getValue());
+                    tokenCount++;
                 }
-
-                try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
             }
         }
 
-        // Если не получили реальные токены, используем аварийные
-        if (!gotRealTokens || tokens.isEmpty()) {
-            System.out.println("\n🆘 Переходим в аварийный режим...");
-            return getEmergencyTokens();
-        }
-
+        System.out.println("\n✅ Итого получено токенов: " + tokenCount);
         return tokens;
     }
 
