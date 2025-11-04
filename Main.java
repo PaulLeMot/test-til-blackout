@@ -22,11 +22,22 @@ import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.io.File;
+import java.io.IOException;
 
 public class Main {
     private static PrintWriter logWriter;
-    
+    private static WebServer webServer;
+
     public static void main(String[] args) {
+        // Запуск веб-сервера с PostgreSQL
+        try {
+            webServer = new WebServer(8081);
+            webServer.start();
+        } catch (IOException e) {
+            System.err.println("❌ Не удалось запустить веб-сервер: " + e.getMessage());
+            e.printStackTrace();
+        }
+
         // Создаем папку logs, если она не существует
         File logsDir = new File("logs");
         if (!logsDir.exists()) {
@@ -36,7 +47,7 @@ public class Main {
                 System.err.println("Не удалось создать папку logs");
             }
         }
-        
+
         // Инициализация логгера
         try {
             String timestamp = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss").format(new Date());
@@ -46,7 +57,7 @@ public class Main {
         } catch (Exception e) {
             System.err.println("Не удалось создать файл лога: " + e.getMessage());
         }
-        
+
         try {
             log("Запуск GOSTGuardian Security Scanner");
             log("Целевые уязвимости: OWASP API Security Top 10\n");
@@ -60,16 +71,16 @@ public class Main {
 
             // Создаём сканеры - начинаем с основных
             List<SecurityScanner> securityScanners = Arrays.asList(
-                new API1_BOLAScanner(),
-                new API2_BrokenAuthScanner(),
-                new API3_BOScanner(),
-                new API4_URCScanner(),
-                new API5_BrokenFunctionLevelAuthScanner(),
-                new API6_BusinessFlowScanner(),
-                new API7_SSRFScanner(),
-                new API8_SecurityConfigScanner(),
-                new API9_InventoryScanner(),
-                new API10_UnsafeConsumptionScanner()
+                    new API1_BOLAScanner(),
+                    new API2_BrokenAuthScanner(),
+                    new API3_BOScanner(),
+                    new API4_URCScanner(),
+                    new API5_BrokenFunctionLevelAuthScanner(),
+                    new API6_BusinessFlowScanner(),
+                    new API7_SSRFScanner(),
+                    new API8_SecurityConfigScanner(),
+                    new API9_InventoryScanner(),
+                    new API10_UnsafeConsumptionScanner()
             );
 
             log("Зарегистрировано сканеров: " + securityScanners.size());
@@ -160,6 +171,11 @@ public class Main {
                             // Передаём объект OpenAPI и config с токенами
                             List<Vulnerability> scannerResults = scanner.scan(openAPI, config, new HttpApiClient());
                             allVulnerabilities.addAll(scannerResults);
+
+                            // ✅ СОХРАНЯЕМ РЕЗУЛЬТАТЫ В POSTGRESQL
+                            for (Vulnerability vuln : scannerResults) {
+                                saveVulnerabilityToDatabase(vuln, cleanBaseUrl, scanner.getName());
+                            }
 
                             log("Сканер " + scanner.getName() + " завершен. Найдено уязвимостей: " + scannerResults.size());
 
@@ -266,6 +282,92 @@ public class Main {
                 logWriter.close();
                 System.out.println("Лог сохранен в папку logs/");
             }
+            // Остановка веб-сервера
+            if (webServer != null) {
+                webServer.stop();
+                System.out.println("Веб-сервер остановлен");
+            }
+        }
+    }
+
+    // Метод для сохранения уязвимости в PostgreSQL
+    private static void saveVulnerabilityToDatabase(Vulnerability vuln, String bankName, String scannerName) {
+        if (webServer != null) {
+            // Получаем доказательства и рекомендации из уязвимости
+            String proof = extractProofFromVulnerability(vuln);
+            String recommendation = extractRecommendationFromVulnerability(vuln);
+
+            webServer.saveScanResult(
+                    bankName,
+                    vuln.getTitle(),
+                    vuln.getSeverity().toString(),
+                    vuln.getCategory().toString(),
+                    "200", // Можно получить реальный статус если доступен
+                    proof,
+                    recommendation,
+                    scannerName
+            );
+        }
+    }
+
+    private static String extractProofFromVulnerability(Vulnerability vuln) {
+        // Получаем реальное доказательство из поля evidence
+        if (vuln.getEvidence() != null && !vuln.getEvidence().isEmpty()) {
+            return vuln.getEvidence();
+        }
+
+        // Если evidence пустой, пробуем другие поля
+        StringBuilder proofBuilder = new StringBuilder();
+
+        if (vuln.getEndpoint() != null) {
+            proofBuilder.append("Эндпоинт: ").append(vuln.getEndpoint()).append("\n");
+        }
+
+        if (vuln.getMethod() != null) {
+            proofBuilder.append("Метод: ").append(vuln.getMethod()).append("\n");
+        }
+
+        if (vuln.getParameter() != null) {
+            proofBuilder.append("Параметр: ").append(vuln.getParameter()).append("\n");
+        }
+
+        if (vuln.getStatusCode() != -1) {
+            proofBuilder.append("Статус код: ").append(vuln.getStatusCode()).append("\n");
+        }
+
+        if (proofBuilder.length() > 0) {
+            return proofBuilder.toString();
+        }
+
+        // Если нет никаких данных, возвращаем описание
+        return "Доказательство не доступно для уязвимости: " + vuln.getTitle();
+    }
+
+    private static String extractRecommendationFromVulnerability(Vulnerability vuln) {
+        // Базовые рекомендации по категориям OWASP
+        switch (vuln.getCategory().toString()) {
+            case "OWASP_API1_BOLA":
+                return "Реализуйте проверки авторизации на уровне объектов. Убедитесь, что пользователи могут access только свои данные.";
+            case "OWASP_API2_BROKEN_AUTH":
+                return "Усильте механизмы аутентификации. Внедрите ограничение попыток входа и многофакторную аутентификацию.";
+            case "OWASP_API3_BOPLA":
+                return "Валидируйте и фильтруйте свойства объектов на основе привилегий пользователя.";
+            case "OWASP_API4_URC":
+                return "Внедрите лимиты на потребление ресурсов и мониторинг.";
+            case "OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH":
+                return "Реализуйте проверки авторизации на уровне функций.";
+            case "OWASP_API6_BUSINESS_FLOW":
+                return "Защитите чувствительные бизнес-процессы дополнительными контролями.";
+            case "OWASP_API7_SSRF":
+                return "Валидируйте и санируйте все URL, предоставленные пользователем.";
+            case "OWASP_API8_SM":
+                return "Усильте конфигурацию безопасности и устраните раскрытие информации.";
+            case "OWASP_API9_INVENTORY":
+                return "Ведите правильную инвентаризацию API и документацию.";
+            case "OWASP_API10_UNSAFE_CONSUMPTION":
+                return "Валидируйте все данные от сторонних API.";
+            default:
+                return "Проверьте и исправьте выявленную уязвимость безопасности.";
         }
     }
 
@@ -277,7 +379,7 @@ public class Main {
             logWriter.flush(); // Сбрасываем буфер после каждой записи
         }
     }
-    
+
     // Перегруженный метод для логирования без перевода строки
     private static void logNoNewline(String message) {
         System.out.print(message);
@@ -294,7 +396,7 @@ public class Main {
         }
     }
 
-    
+
     private static void printAllScannerStats(Map<String, Integer> stats) {
         // Создаем маппинг категорий к читаемым названиям
         Map<String, String> categoryNames = new HashMap<>();
@@ -309,7 +411,7 @@ public class Main {
         categoryNames.put("OWASP_API9_INVENTORY", "API9 - Inventory");
         categoryNames.put("OWASP_API10_UNSAFE_CONSUMPTION", "API10 - Unsafe Consumption");
         categoryNames.put("CONTRACT_VALIDATION", "Contract Validation");
-    
+
         // Дополнительные категории, которые могут использоваться в сканерах
         categoryNames.put("API1_BOLA", "API1 - BOLA");
         categoryNames.put("API2_BROKEN_AUTH", "API2 - Broken Auth");
@@ -321,28 +423,28 @@ public class Main {
         categoryNames.put("API8_SM", "API8 - Security Misconfiguration");
         categoryNames.put("API9_INVENTORY", "API9 - Inventory");
         categoryNames.put("API10_UNSAFE_CONSUMPTION", "API10 - Unsafe Consumption");
-    
+
         // Выводим все категории, где есть уязвимости
         boolean hasResults = false;
-        
+
         // Сначала выводим известные категории в правильном порядке
         String[] orderedCategories = {
-            "OWASP_API1_BOLA", "API1_BOLA",
-            "OWASP_API2_BROKEN_AUTH", "API2_BROKEN_AUTH", 
-            "OWASP_API3_BOPLA", "API3_BOPLA",
-            "OWASP_API4_URC", "API4_URC",
-            "OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH", "API5_BROKEN_FUNCTION_LEVEL_AUTH",
-            "OWASP_API6_BUSINESS_FLOW", "API6_BUSINESS_FLOW",
-            "OWASP_API7_SSRF", "API7_SSRF",
-            "OWASP_API8_SM", "API8_SM",
-            "OWASP_API9_INVENTORY", "API9_INVENTORY",
-            "OWASP_API10_UNSAFE_CONSUMPTION", "API10_UNSAFE_CONSUMPTION",
-            "CONTRACT_VALIDATION"
+                "OWASP_API1_BOLA", "API1_BOLA",
+                "OWASP_API2_BROKEN_AUTH", "API2_BROKEN_AUTH",
+                "OWASP_API3_BOPLA", "API3_BOPLA",
+                "OWASP_API4_URC", "API4_URC",
+                "OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH", "API5_BROKEN_FUNCTION_LEVEL_AUTH",
+                "OWASP_API6_BUSINESS_FLOW", "API6_BUSINESS_FLOW",
+                "OWASP_API7_SSRF", "API7_SSRF",
+                "OWASP_API8_SM", "API8_SM",
+                "OWASP_API9_INVENTORY", "API9_INVENTORY",
+                "OWASP_API10_UNSAFE_CONSUMPTION", "API10_UNSAFE_CONSUMPTION",
+                "CONTRACT_VALIDATION"
         };
-    
+
         // Используем Set для отслеживания уже выведенных категорий
         Set<String> displayedCategories = new HashSet<>();
-    
+
         for (String category : orderedCategories) {
             if (stats.containsKey(category)) {
                 int count = stats.get(category);
@@ -357,7 +459,7 @@ public class Main {
                 }
             }
         }
-    
+
         // Затем выводим любые другие категории, которые не были обработаны
         for (Map.Entry<String, Integer> entry : stats.entrySet()) {
             String category = entry.getKey();
@@ -368,7 +470,7 @@ public class Main {
                 hasResults = true;
             }
         }
-    
+
         // Если нет результатов, выводим сообщение
         if (!hasResults) {
             log("      • Уязвимостей не обнаружено");
