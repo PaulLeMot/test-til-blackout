@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GOSTGuardian Security Scanner</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+        <div class="header-content">
+            <h1 class="app-title">
+                <span class="logo">🛡️</span>
+                GOSTGuardian Security Scanner
+            </h1>
+            <div class="header-actions">
+                <button id="startScanBtn" class="btn btn-primary">
+                    🚀 Запустить сканирование
+                </button>
+                <div class="connection-status">
+                    <span id="connectionStatus" class="status-offline">● Offline</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Dashboard -->
+    <main class="dashboard">
+        <!-- Statistics Cards -->
+        <section class="stats-section">
+            <div class="stats-grid">
+                <div class="stat-card total">
+                    <div class="stat-icon">📊</div>
+                    <div class="stat-info">
+                        <h3>Всего уязвимостей</h3>
+                        <div class="stat-value" id="totalVulns">0</div>
+                    </div>
+                </div>
+
+                <div class="stat-card critical">
+                    <div class="stat-icon">🔥</div>
+                    <div class="stat-info">
+                        <h3>Критические</h3>
+                        <div class="stat-value" id="criticalCount">0</div>
+                    </div>
+                </div>
+
+                <div class="stat-card high">
+                    <div class="stat-icon">⚠️</div>
+                    <div class="stat-info">
+                        <h3>Высокие</h3>
+                        <div class="stat-value" id="highCount">0</div>
+                    </div>
+                </div>
+
+                <div class="stat-card medium">
+                    <div class="stat-icon">🔶</div>
+                    <div class="stat-info">
+                        <h3>Средние</h3>
+                        <div class="stat-value" id="mediumCount">0</div>
+                    </div>
+                </div>
+
+                <div class="stat-card low">
+                    <div class="stat-icon">ℹ️</div>
+                    <div class="stat-info">
+                        <h3>Низкие</h3>
+                        <div class="stat-value" id="lowCount">0</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Charts and Filters -->
+        <section class="content-section">
+            <div class="filters-panel">
+                <div class="filter-group">
+                    <label for="severityFilter">Уровень критичности:</label>
+                    <select id="severityFilter" class="filter-select">
+                        <option value="">Все уровни</option>
+                        <option value="CRITICAL">Критические</option>
+                        <option value="HIGH">Высокие</option>
+                        <option value="MEDIUM">Средние</option>
+                        <option value="LOW">Низкие</option>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label for="categoryFilter">Категория:</label>
+                    <select id="categoryFilter" class="filter-select">
+                        <option value="">Все категории</option>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label for="bankFilter">Банк:</label>
+                    <select id="bankFilter" class="filter-select">
+                        <option value="">Все банки</option>
+                    </select>
+                </div>
+
+                <button id="applyFilters" class="btn btn-secondary">Применить фильтры</button>
+                <button id="clearFilters" class="btn btn-outline">Очистить</button>
+            </div>
+
+            <div class="charts-container">
+                <div class="chart-wrapper">
+                    <h3>Распределение по категориям</h3>
+                    <div id="categoryChart" class="chart">
+                        <div class="chart-placeholder">Данные загружаются...</div>
+                    </div>
+                </div>
+
+                <div class="chart-wrapper">
+                    <h3>Уровни критичности</h3>
+                    <div id="severityChart" class="chart">
+                        <div class="chart-placeholder">Данные загружаются...</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Results Table -->
+        <section class="results-section">
+            <h2>Результаты сканирования</h2>
+            <div class="table-container">
+                <table id="resultsTable" class="results-table">
+                    <thead>
+                    <tr>
+                        <th>Банк</th>
+                        <th>Уязвимость</th>
+                        <th>Уровень</th>
+                        <th>Категория</th>
+                        <th>Статус</th>
+                        <th>Дата</th>
+                        <th>Действия</th>
+                    </tr>
+                    </thead>
+                    <tbody id="resultsBody">
+                    <tr>
+                        <td colspan="7" class="no-data">Запустите сканирование для получения результатов</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="table-footer">
+                <div class="pagination">
+                    <button id="prevPage" class="btn btn-outline" disabled>← Назад</button>
+                    <span id="pageInfo">Страница 1 из 1</span>
+                    <button id="nextPage" class="btn btn-outline" disabled>Вперед →</button>
+                </div>
+                <div class="export-actions">
+                    <button id="exportCsv" class="btn btn-secondary">📥 Экспорт CSV</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Real-time notifications -->
+    <div id="notifications" class="notifications"></div>
+</div>
+
+<!-- Modal for vulnerability details -->
+<div id="vulnerabilityModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 id="modalTitle">Детали уязвимости</h2>
+            <span class="close">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div id="modalContent"></div>
+        </div>
+    </div>
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
