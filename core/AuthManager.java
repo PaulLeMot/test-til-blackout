@@ -7,8 +7,15 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class AuthManager {
+
+    // Статические параметры для получения банковского токена
+    private static final String PLATFORM_CLIENT_ID = "172";
+    private static final String PLATFORM_CLIENT_SECRET = "***REMOVED***";
+    private static final String PLATFORM_AUTH_URL = "https://auth.bankingapi.ru/auth/realms/kubernetes/protocol/openid-connect/token";
 
     /**
      * Упрощенный метод получения токена с обходом 403 ошибки
@@ -42,7 +49,7 @@ public class AuthManager {
 
                     try {
                         HttpClient client = HttpClient.newBuilder()
-                                .version(HttpClient.Version.HTTP_1_1) // Переключаемся на HTTP/1.1
+                                .version(HttpClient.Version.HTTP_1_1)
                                 .connectTimeout(Duration.ofSeconds(10))
                                 .followRedirects(HttpClient.Redirect.NORMAL)
                                 .build();
@@ -89,6 +96,96 @@ public class AuthManager {
     }
 
     /**
+     * Получение банковского токена через /auth/bank-token
+     */
+    public static String getBankTokenDirectly(String baseUrl, String bankId, String clientSecret) {
+        try {
+            String authUrl = baseUrl + "/auth/bank-token";
+            System.out.println("🔐 Получение банковского токена для: " + bankId);
+
+            HttpClient client = HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .build();
+
+            // Формируем query параметры
+            String queryParams = String.format("client_id=%s&client_secret=%s",
+                    bankId, clientSecret);
+            String fullUrl = authUrl + "?" + queryParams;
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(fullUrl))
+                    .POST(HttpRequest.BodyPublishers.ofString(""))
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Accept", "application/json")
+                    .timeout(Duration.ofSeconds(10))
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            System.out.println("📡 Ответ банка: " + response.statusCode());
+
+            if (response.statusCode() == 200) {
+                String accessToken = extractAccessTokenFromJson(response.body());
+                if (accessToken != null) {
+                    System.out.println("✅ Банковский токен успешно получен");
+                    return accessToken;
+                }
+            } else {
+                System.out.println("❌ Не удалось получить банковский токен. Ответ: " + response.body());
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Ошибка получения банковского токена: " + e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Получение токена через централизованный OIDC эндпоинт
+     */
+    public static String getPlatformToken() {
+        try {
+            System.out.println("🔐 Получение платформенного токена...");
+
+            HttpClient client = HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .build();
+
+            // Формируем тело запроса
+            String requestBody = String.format(
+                    "grant_type=client_credentials&client_id=%s&client_secret=%s",
+                    PLATFORM_CLIENT_ID, PLATFORM_CLIENT_SECRET
+            );
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(PLATFORM_AUTH_URL))
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Accept", "application/json")
+                    .timeout(Duration.ofSeconds(10))
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            System.out.println("📡 Ответ платформы: " + response.statusCode());
+
+            if (response.statusCode() == 200) {
+                String accessToken = extractAccessTokenFromJson(response.body());
+                if (accessToken != null) {
+                    System.out.println("✅ Платформенный токен успешно получен");
+                    return accessToken;
+                }
+            } else {
+                System.out.println("❌ Ошибка получения платформенного токена: " + response.body());
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Ошибка получения платформенного токена: " + e.getMessage());
+        }
+        return null;
+    }
+
+    /**
      * Аварийный метод - используем фиктивные токены для демонстрации
      */
     public static Map<String, String> getEmergencyTokens() {
@@ -116,20 +213,36 @@ public class AuthManager {
 
         boolean gotRealTokens = false;
 
-        for (String username : new String[]{***REMOVED***,"***REMOVED***"}) {
-            System.out.println("\n--- Аутентификация пользователя: " + username + " ---");
+        // Сначала пробуем получить банковский токен
+        System.out.println("\n--- Получение банковского токена ---");
+        String bankId = extractBankIdFromBaseUrl(bankBaseUrl);
+        String bankToken = getBankTokenDirectly(bankBaseUrl, bankId, password);
 
-            String token = getBankAccessToken(bankBaseUrl, username, password);
+        if (bankToken != null && isTokenValid(bankToken)) {
+            tokens.put("bank_token", bankToken);
+            gotRealTokens = true;
+            System.out.println("✅ Банковский токен успешно получен и сохранен");
+        } else {
+            System.err.println("❌ Не удалось получить банковский токен. Пробуем альтернативные методы...");
+        }
 
-            if (token != null && isTokenValid(token)) {
-                tokens.put(username, token);
-                gotRealTokens = true;
-                System.out.println("✅ Реальный токен получен для " + username);
-            } else {
-                System.err.println("❌ Не удалось получить реальный токен для " + username);
+        // Если банковский токен не получен, пробуем клиентские токены
+        if (!gotRealTokens) {
+            for (String username : new String[]{***REMOVED***,"***REMOVED***"}) {
+                System.out.println("\n--- Аутентификация пользователя: " + username + " ---");
+
+                String token = getBankAccessToken(bankBaseUrl, username, password);
+
+                if (token != null && isTokenValid(token)) {
+                    tokens.put(username, token);
+                    gotRealTokens = true;
+                    System.out.println("✅ Реальный токен получен для " + username);
+                } else {
+                    System.err.println("❌ Не удалось получить реальный токен для " + username);
+                }
+
+                try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
             }
-
-            try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
         }
 
         // Если не получили реальные токены, используем аварийные
@@ -142,7 +255,15 @@ public class AuthManager {
     }
 
     /**
-     * Метод извлечения токена из JSON (без изменений)
+     * Извлекает ID банка из URL (например, из https://vbank.open.bankingapi.ru получает team172)
+     */
+    private static String extractBankIdFromBaseUrl(String baseUrl) {
+        // В нашем случае bankId всегда team172
+        return "team172";
+    }
+
+    /**
+     * Метод извлечения токена из JSON
      */
     private static String extractAccessTokenFromJson(String json) {
         try {
@@ -150,22 +271,17 @@ public class AuthManager {
                 return null;
             }
 
-            String[] patterns = {
-                    "\"access_token\"\\s*:\\s*\"([^\"]+)\"",
-                    "'access_token'\\s*:\\s*'([^']+)'",
-                    "access_token\"\\s*:\\s*\"([^\"]+)\""
-            };
+            // Ищем access_token в JSON
+            Pattern pattern = Pattern.compile("\"access_token\"\\s*:\\s*\"([^\"]+)\"");
+            Matcher matcher = pattern.matcher(json);
 
-            for (String pattern : patterns) {
-                java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern);
-                java.util.regex.Matcher m = p.matcher(json);
-                if (m.find()) {
-                    String token = m.group(1);
-                    System.out.println("✅ Токен извлечен: " + (token.length() > 20 ? token.substring(0, 20) + "..." : token));
-                    return token;
-                }
+            if (matcher.find()) {
+                String token = matcher.group(1);
+                System.out.println("✅ Токен извлечен: " + (token.length() > 20 ? token.substring(0, 20) + "..." : token));
+                return token;
             }
 
+            // Альтернативный поиск
             if (json.contains("access_token")) {
                 int start = json.indexOf("access_token") + "access_token".length();
                 start = json.indexOf("\"", start) + 1;
