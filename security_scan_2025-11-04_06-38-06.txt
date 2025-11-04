@@ -1,0 +1,132 @@
+Логирование в файл: security_scan_2025-11-04_06-38-06.txt
+Запуск GOSTGuardian Security Scanner
+Целевые уязвимости: OWASP API Security Top 10
+
+Зарегистрировано сканеров: 10
+
+==================================================
+Сканирование: https://vbank.open.bankingapi.ru
+==================================================
+OpenAPI-спецификация загружена: Virtual Bank API v2.1
+Получение токенов для пользователей...
+Получено токенов: 1
+Основной пользователь для сканирования: bank_token
+bank_token: eyJhbGciOiJIUzI1NiIs...
+
+Запуск сканера: OWASP API1: Broken Object Level Authorization (BOLA) Scanner
+----------------------------------------
+Сканер OWASP API1: Broken Object Level Authorization (BOLA) Scanner завершен. Найдено уязвимостей: 0
+
+Запуск сканера: API2_BrokenAuth
+----------------------------------------
+Сканер API2_BrokenAuth завершен. Найдено уязвимостей: 4
+  • Valid Token Rejected - Authorization Issue [MEDIUM]
+  • Valid Token Rejected - Authorization Issue [MEDIUM]
+  • Missing Rate Limiting [MEDIUM]
+  • Weak JWT Signature Algorithm [MEDIUM]
+
+Запуск сканера: OWASP API3 - Broken Object Property Level Authorization Scanner
+----------------------------------------
+Сканер OWASP API3 - Broken Object Property Level Authorization Scanner завершен. Найдено уязвимостей: 0
+
+Запуск сканера: OWASP API4 - Unrestricted Resource Consumption Scanner
+----------------------------------------
+Сканер OWASP API4 - Unrestricted Resource Consumption Scanner завершен. Найдено уязвимостей: 2
+  • API4:2023 - Нестабильность при нагрузке [MEDIUM]
+  • API4:2023 - Низкая устойчивость к конкурентной нагрузке [MEDIUM]
+
+Запуск сканера: OWASP API5: Broken Function Level Authorization Scanner
+----------------------------------------
+Сканер OWASP API5: Broken Function Level Authorization Scanner завершен. Найдено уязвимостей: 0
+
+Запуск сканера: OWASP API6:2023 - Unrestricted Access to Sensitive Business Flows
+----------------------------------------
+Сканер OWASP API6:2023 - Unrestricted Access to Sensitive Business Flows завершен. Найдено уязвимостей: 0
+
+Запуск сканера: OWASP API7: Server Side Request Forgery (SSRF) Scanner
+----------------------------------------
+Сканер OWASP API7: Server Side Request Forgery (SSRF) Scanner завершен. Найдено уязвимостей: 1
+  • OWASP API7: SSRF через callback_url [HIGH]
+
+Запуск сканера: API8_SecurityConfig
+----------------------------------------
+Сканер API8_SecurityConfig завершен. Найдено уязвимостей: 9
+  • API8:2023 - Security Misconfiguration - Informative Header [LOW]
+  • API8:2023 - Security Misconfiguration - Potential TLS Issues [MEDIUM]
+  • API8:2023 - Security Misconfiguration - Missing Security Header [MEDIUM]
+  • API8:2023 - Security Misconfiguration - Missing Security Header [MEDIUM]
+  • API8:2023 - Security Misconfiguration - Missing Security Header [MEDIUM]
+  • API8:2023 - Security Misconfiguration - Missing Security Header [MEDIUM]
+  • API8:2023 - Security Misconfiguration - Missing Cache Control [MEDIUM]
+  • API8:2023 - Security Misconfiguration - Missing Cache Control [MEDIUM]
+  • API8:2023 - Security Misconfiguration - Missing Cache Control [MEDIUM]
+
+Запуск сканера: OWASP API9:2023 - Improper Inventory Management
+----------------------------------------
+Сканер OWASP API9:2023 - Improper Inventory Management завершен. Найдено уязвимостей: 0
+
+Запуск сканера: API10_UnsafeConsumption
+----------------------------------------
+Сканер API10_UnsafeConsumption завершен. Найдено уязвимостей: 50
+  • API10:2023 - External Dependency in API Operation [LOW]
+  • API10:2023 - External Dependency in API Operation [LOW]
+  • API10:2023 - External Dependency in API Operation [LOW]
+  • API10:2023 - External Dependency in API Operation [LOW]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Interbank Integration Dependency [MEDIUM]
+  • API10:2023 - Trust Chain Vulnerabilities [HIGH]
+  • API10:2023 - Interbank Integration Risk [MEDIUM]
+  • API10:2023 - Interbank Integration Risk [MEDIUM]
+  • API10:2023 - Interbank Integration Risk [MEDIUM]
+  • API10:2023 - Interbank Integration Risk [MEDIUM]
+  • API10:2023 - Interbank Integration Risk [MEDIUM]
+  • API10:2023 - Interbank Integration Risk [MEDIUM]
+  • API10:2023 - Interbank Integration Risk [MEDIUM]
+  • API10:2023 - Interbank Integration Risk [MEDIUM]
+  • API10:2023 - Interbank Integration Risk [MEDIUM]
+  • API10:2023 - Interbank Integration Risk [MEDIUM]
+  • API10:2023 - Interbank Integration Risk [MEDIUM]
+  • API10:2023 - Consent Management External Dependency [MEDIUM]
+  • API10:2023 - Consent Management External Dependency [MEDIUM]
+  • API10:2023 - Consent Management External Dependency [MEDIUM]
+  • API10:2023 - Consent Management External Dependency [MEDIUM]
+  • API10:2023 - Consent Management External Dependency [MEDIUM]
+  • API10:2023 - Consent Management External Dependency [MEDIUM]
+  • API10:2023 - External Cryptographic Key Dependency [MEDIUM]
+  • API10:2023 - Sensitive Permission in External Consent [HIGH]
+  • API10:2023 - Sensitive Permission in External Consent [HIGH]
+
+Результаты сканирования https://vbank.open.bankingapi.ru:
+   Статус: ЗАВЕРШЕНО
+   Уязвимостей: 66
+   Уровни: КРИТИЧЕСКИХ-0 ВЫСОКИХ-4 СРЕДНИХ-57 НИЗКИХ-5
+
+   Результаты по сканерам:
+      • API2 - Broken Auth: 4 уязвимостей
+
+==================================================
+Завершено сканирование: https://vbank.open.bankingapi.ru
+==================================================
