@@ -13,6 +13,25 @@ import java.util.HashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.Set;
 
+// Добавляем простой JSON парсер
+class SimpleJsonParser {
+    public static Map<String, Object> parseJson(String json) {
+        Map<String, Object> result = new HashMap<>();
+        json = json.trim().substring(1, json.length() - 1); // Remove {}
+        String[] pairs = json.split(",");
+
+        for (String pair : pairs) {
+            String[] keyValue = pair.split(":", 2);
+            if (keyValue.length == 2) {
+                String key = keyValue[0].trim().replace("\"", "");
+                String value = keyValue[1].trim().replace("\"", "");
+                result.put(key, value);
+            }
+        }
+        return result;
+    }
+}
+
 public class WebServer {
     private HttpServer server;
     private int port;
@@ -119,21 +138,35 @@ public class WebServer {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if ("POST".equals(exchange.getRequestMethod())) {
-                if (scanLauncher != null) {
-                    scanLauncher.startScan();
-                    String response = "{\"status\": \"success\", \"message\": \"Сканирование запущено\"}";
+                // Читаем тело запроса с конфигурацией
+                String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
 
-                    exchange.getResponseHeaders().set("Content-Type", "application/json");
-                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
-                    exchange.sendResponseHeaders(200, response.length());
+                try {
+                    System.out.println("Received configuration: " + requestBody);
 
-                    try (OutputStream os = exchange.getResponseBody()) {
-                        os.write(response.getBytes());
+                    if (scanLauncher != null) {
+                        scanLauncher.startScan(requestBody);
+                        String response = "{\"status\": \"success\", \"message\": \"Сканирование запущено с пользовательской конфигурацией\"}";
+
+                        exchange.getResponseHeaders().set("Content-Type", "application/json");
+                        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                        exchange.sendResponseHeaders(200, response.length());
+
+                        try (OutputStream os = exchange.getResponseBody()) {
+                            os.write(response.getBytes());
+                        }
+                    } else {
+                        String response = "{\"status\": \"error\", \"message\": \"ScanLauncher not initialized\"}";
+                        exchange.getResponseHeaders().set("Content-Type", "application/json");
+                        exchange.sendResponseHeaders(500, response.length());
+                        try (OutputStream os = exchange.getResponseBody()) {
+                            os.write(response.getBytes());
+                        }
                     }
-                } else {
-                    String response = "{\"status\": \"error\", \"message\": \"ScanLauncher not initialized\"}";
+                } catch (Exception e) {
+                    String response = "{\"status\": \"error\", \"message\": \"Invalid configuration: \" + e.getMessage()}";
                     exchange.getResponseHeaders().set("Content-Type", "application/json");
-                    exchange.sendResponseHeaders(500, response.length());
+                    exchange.sendResponseHeaders(400, response.length());
                     try (OutputStream os = exchange.getResponseBody()) {
                         os.write(response.getBytes());
                     }

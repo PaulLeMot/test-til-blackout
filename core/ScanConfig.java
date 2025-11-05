@@ -2,6 +2,8 @@ package core;
 
 import java.util.Map;
 import java.util.HashMap;
+import java.util.List;
+import java.util.ArrayList;
 
 public class ScanConfig {
     private String targetBaseUrl;
@@ -15,6 +17,10 @@ public class ScanConfig {
 
     // Добавляем поля для хранения токенов пользователей
     private Map<String, String> userTokens = new HashMap<>();
+
+    // Новые поля для конфигурации из UI
+    private List<BankConfig> banks = new ArrayList<>();
+    private List<UserCredentials> credentials = new ArrayList<>();
 
     public ScanConfig() {}
 
@@ -86,4 +92,49 @@ public class ScanConfig {
         this.bankId = bankId;
     }
 
+    // Getters and Setters для новой конфигурации
+    public List<BankConfig> getBanks() { return banks; }
+    public void setBanks(List<BankConfig> banks) { this.banks = banks; }
+
+    public List<UserCredentials> getCredentials() { return credentials; }
+    public void setCredentials(List<UserCredentials> credentials) { this.credentials = credentials; }
+
+    // Внутренние классы для конфигурации
+    public static class BankConfig {
+        private String baseUrl;
+        private String specUrl;
+
+        public BankConfig() {}
+
+        public BankConfig(String baseUrl, String specUrl) {
+            this.baseUrl = baseUrl;
+            this.specUrl = specUrl;
+        }
+
+        // Getters and Setters
+        public String getBaseUrl() { return baseUrl; }
+        public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+
+        public String getSpecUrl() { return specUrl; }
+        public void setSpecUrl(String specUrl) { this.specUrl = specUrl; }
+    }
+
+    public static class UserCredentials {
+        private String username;
+        private String password;
+
+        public UserCredentials() {}
+
+        public UserCredentials(String username, String password) {
+            this.username = username;
+            this.password = password;
+        }
+
+        // Getters and Setters
+        public String getUsername() { return username; }
+        public void setUsername(String username) { this.username = username; }
+
+        public String getPassword() { return password; }
+        public void setPassword(String password) { this.password = password; }
+    }
 }
