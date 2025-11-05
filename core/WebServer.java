@@ -18,14 +18,13 @@ public class WebServer {
     private int port;
     private PostgresManager databaseManager;
     private final Set<WebSocketConnection> webSocketConnections = new CopyOnWriteArraySet<>();
-    private ScanLauncher scanLauncher; // Добавляем ссылку на ScanLauncher
+    private ScanLauncher scanLauncher;
 
     public WebServer(int port) {
         this.port = port;
         this.databaseManager = new PostgresManager();
     }
 
-    // Добавляем метод для установки ScanLauncher
     public void setScanLauncher(ScanLauncher scanLauncher) {
         this.scanLauncher = scanLauncher;
     }
@@ -56,7 +55,6 @@ public class WebServer {
         }
     }
 
-    // Метод для сохранения результатов сканирования
     public void saveScanResult(String bankName, String title, String severity,
                                String category, String statusCode, String proof,
                                String recommendation, String scannerName) {
@@ -64,15 +62,11 @@ public class WebServer {
                 statusCode, proof, recommendation, scannerName);
     }
 
-    // Метод для рассылки сообщений (пока заглушка)
     public void broadcastMessage(String type, Object data) {
         System.out.println("Broadcasting: " + type + " - " + data);
-        // В реальной реализации здесь будет WebSocket логика
     }
 
-    // WebSocket соединение (упрощенное)
     static class WebSocketConnection {
-        // Заглушка для WebSocket
     }
 
     class StaticFileHandler implements HttpHandler {
@@ -125,7 +119,6 @@ public class WebServer {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if ("POST".equals(exchange.getRequestMethod())) {
-                // Используем ScanLauncher вместо прямого вызова Main
                 if (scanLauncher != null) {
                     scanLauncher.startScan();
                     String response = "{\"status\": \"success\", \"message\": \"Сканирование запущено\"}";

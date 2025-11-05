@@ -4,8 +4,13 @@ class SecurityDashboard {
         this.filteredData = [];
         this.currentPage = 1;
         this.pageSize = 20;
-        this.filters = {};
+        this.filters = {
+            severity: '',
+            category: '',
+            bank: ''
+        };
         this.isScanning = false;
+        this.lastDataCount = 0;
         this.init();
     }
 
@@ -13,6 +18,9 @@ class SecurityDashboard {
         this.setupEventListeners();
         this.connectWebSocket();
         this.loadInitialData();
+
+        // Восстанавливаем состояние из localStorage при загрузке
+        this.restoreState();
     }
 
     setupEventListeners() {
@@ -49,6 +57,11 @@ class SecurityDashboard {
                 this.closeModal();
             }
         });
+
+        // Сохраняем состояние при закрытии страницы
+        window.addEventListener('beforeunload', () => {
+            this.saveState();
+        });
     }
 
     connectWebSocket() {
@@ -63,15 +76,76 @@ class SecurityDashboard {
         }, 2000);
     }
 
+    // Добавляем метод для сохранения состояния
+    saveState() {
+        const state = {
+            filters: this.filters,
+            currentPage: this.currentPage,
+            pageSize: this.pageSize
+        };
+        localStorage.setItem('dashboardState', JSON.stringify(state));
+    }
+
+    // Добавляем метод для восстановления состояния
+    restoreState() {
+        try {
+            const saved = localStorage.getItem('dashboardState');
+            if (saved) {
+                const state = JSON.parse(saved);
+                this.filters = state.filters || this.filters;
+                this.currentPage = state.currentPage || this.currentPage;
+                this.pageSize = state.pageSize || this.pageSize;
+
+                // Восстанавливаем значения в полях фильтров
+                if (this.filters.severity) {
+                    document.getElementById('severityFilter').value = this.filters.severity;
+                }
+                if (this.filters.category) {
+                    document.getElementById('categoryFilter').value = this.filters.category;
+                }
+                if (this.filters.bank) {
+                    document.getElementById('bankFilter').value = this.filters.bank;
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to restore state:', e);
+        }
+    }
+
     async loadInitialData() {
         try {
             const response = await fetch('/api/scan/results');
             if (response.ok) {
-                this.currentData = await response.json();
-                this.filteredData = [...this.currentData];
+                const newData = await response.json();
+
+                // Сохраняем текущее состояние перед обновлением
+                const previousFilteredCount = this.filteredData.length;
+                const hadData = this.currentData.length > 0;
+
+                this.currentData = newData;
+
+                // Если были применены фильтры, применяем их к новым данным
+                if (this.filters.severity || this.filters.category || this.filters.bank) {
+                    this.applyFilters(true); // true - не сбрасывать пагинацию
+                } else {
+                    this.filteredData = [...this.currentData];
+                }
+
+                // Обновляем интерфейс
                 this.renderTable();
                 this.updateStats();
                 this.populateFilters();
+
+                // Сохраняем состояние после обновления
+                this.saveState();
+
+                // Показываем уведомление о новых данных, если сканирование активно
+                if (this.isScanning && newData.length > this.lastDataCount && hadData) {
+                    const newCount = newData.length - this.lastDataCount;
+                    this.showNotification(`Обнаружено ${newCount} новых уязвимостей`, 'info');
+                }
+
+                this.lastDataCount = newData.length;
             }
         } catch (error) {
             console.error('Error loading data:', error);
@@ -85,6 +159,11 @@ class SecurityDashboard {
         }
 
         try {
+            this.isScanning = true;
+            this.updateScanButton(true);
+            this.showNotification('Сканирование запущено', 'success');
+            this.lastDataCount = this.currentData.length;
+
             const response = await fetch('/api/scan/start', {
                 method: 'POST',
                 headers: {
@@ -92,33 +171,42 @@ class SecurityDashboard {
                 }
             });
 
-            if (response.ok) {
-                this.isScanning = true;
-                this.updateScanButton(true);
-                this.showNotification('Сканирование запущено', 'success');
-
-                // Очищаем предыдущие результаты
-                this.currentData = [];
-                this.filteredData = [];
-                this.renderTable();
-                this.updateStats();
-            } else {
+            if (!response.ok) {
                 throw new Error('Server error');
             }
+
+            this.showNotification('Ожидайте первые результаты сканирования...', 'info');
+
         } catch (error) {
             console.error('Error starting scan:', error);
             this.showNotification('Ошибка запуска сканирования', 'error');
+            this.isScanning = false;
+            this.updateScanButton(false);
         }
     }
 
     updateScanButton(scanning) {
         const btn = document.getElementById('startScanBtn');
         if (scanning) {
-            btn.innerHTML = '⏳ Сканирование...';
+            btn.innerHTML = '<span class="scanning-indicator"><span class="pulse">⏳</span> Сканирование...</span>';
             btn.disabled = true;
         } else {
             btn.innerHTML = '🚀 Запустить сканирование';
             btn.disabled = false;
+        }
+        this.updateConnectionStatus();
+    }
+
+    updateConnectionStatus() {
+        const statusElement = document.getElementById('connectionStatus');
+        if (statusElement) {
+            if (this.isScanning) {
+                statusElement.className = 'status-connecting';
+                statusElement.textContent = '● Сканирование...';
+            } else {
+                statusElement.className = 'status-online';
+                statusElement.textContent = '● Online';
+            }
         }
     }
 
@@ -293,17 +381,26 @@ class SecurityDashboard {
             option.textContent = bank;
             bankFilter.appendChild(option);
         });
+
+        // Восстанавливаем выбранные значения после обновления опций
+        if (this.filters.category) {
+            categoryFilter.value = this.filters.category;
+        }
+        if (this.filters.bank) {
+            bankFilter.value = this.filters.bank;
+        }
     }
 
-    applyFilters() {
+    applyFilters(preservePagination = false) {
         const severity = document.getElementById('severityFilter').value;
         const category = document.getElementById('categoryFilter').value;
         const bank = document.getElementById('bankFilter').value;
 
-        this.filters = {};
-        if (severity) this.filters.severity = severity;
-        if (category) this.filters.category = category;
-        if (bank) this.filters.bank = bank;
+        this.filters = {
+            severity: severity || '',
+            category: category || '',
+            bank: bank || ''
+        };
 
         this.filteredData = this.currentData.filter(item => {
             return (!this.filters.severity || item.severity === this.filters.severity) &&
@@ -311,18 +408,27 @@ class SecurityDashboard {
                    (!this.filters.bank || item.bankName === this.filters.bank);
         });
 
-        this.currentPage = 1;
+        if (!preservePagination) {
+            this.currentPage = 1;
+        }
+
         this.renderTable();
+        this.saveState();
     }
 
     clearFilters() {
         document.getElementById('severityFilter').value = '';
         document.getElementById('categoryFilter').value = '';
         document.getElementById('bankFilter').value = '';
-        this.filters = {};
+        this.filters = {
+            severity: '',
+            category: '',
+            bank: ''
+        };
         this.filteredData = [...this.currentData];
         this.currentPage = 1;
         this.renderTable();
+        this.saveState();
     }
 
     renderTable() {
@@ -440,6 +546,7 @@ class SecurityDashboard {
         if (this.currentPage > 1) {
             this.currentPage--;
             this.renderTable();
+            this.saveState();
         }
     }
 
@@ -448,6 +555,7 @@ class SecurityDashboard {
         if (this.currentPage < totalPages) {
             this.currentPage++;
             this.renderTable();
+            this.saveState();
         }
     }
 
