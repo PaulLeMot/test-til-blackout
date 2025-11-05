@@ -1,51 +1,21 @@
 import core.*;
 import scanners.SecurityScanner;
-import scanners.owasp.API1_BOLAScanner;
-import scanners.owasp.API2_BrokenAuthScanner;
-import scanners.owasp.API3_BOScanner;
-import scanners.owasp.API4_URCScanner;
-import scanners.owasp.API5_BrokenFunctionLevelAuthScanner;
-import scanners.owasp.API6_BusinessFlowScanner;
-import scanners.owasp.API7_SSRFScanner;
-import scanners.owasp.API8_SecurityConfigScanner;
-import scanners.owasp.API9_InventoryScanner;
-import scanners.owasp.API10_UnsafeConsumptionScanner;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.Arrays;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Map;
-import java.io.FileWriter;
-import java.io.PrintWriter;
+import scanners.owasp.*;
+import java.util.*;
+import java.io.*;
 import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.io.File;
-import java.io.IOException;
 
-public class Main {
+// Реализуем интерфейс ScanLauncher
+public class Main implements core.ScanLauncher {
     private static PrintWriter logWriter;
     private static WebServer webServer;
+    private static boolean isScanning = false;
 
     public static void main(String[] args) {
-        // Запуск веб-сервера с PostgreSQL
-        try {
-            webServer = new WebServer(8081);
-            webServer.start();
-        } catch (IOException e) {
-            System.err.println("❌ Не удалось запустить веб-сервер: " + e.getMessage());
-            e.printStackTrace();
-        }
-
         // Создаем папку logs, если она не существует
         File logsDir = new File("logs");
         if (!logsDir.exists()) {
-            if (logsDir.mkdirs()) {
-                System.out.println("Создана папка logs");
-            } else {
-                System.err.println("Не удалось создать папку logs");
-            }
+            logsDir.mkdirs();
         }
 
         // Инициализация логгера
@@ -58,10 +28,72 @@ public class Main {
             System.err.println("Не удалось создать файл лога: " + e.getMessage());
         }
 
+        // Запуск веб-сервера
         try {
-            log("Запуск GOSTGuardian Security Scanner");
-            log("Целевые уязвимости: OWASP API Security Top 10\n");
+            webServer = new WebServer(8081);
 
+            // Устанавливаем ссылку на Main (который реализует ScanLauncher)
+            webServer.setScanLauncher(new Main());
+
+            webServer.start();
+            log("✅ Web server started on http://localhost:8081");
+            log("🌐 Open your browser and go to: http://localhost:8081");
+        } catch (IOException e) {
+            log("❌ Не удалось запустить веб-сервер: " + e.getMessage());
+            e.printStackTrace();
+            return;
+        }
+
+        log("GOSTGuardian Security Scanner готов к работе");
+        log("Откройте http://localhost:8081 и нажмите 'Запустить сканирование'");
+
+        // Ожидаем завершения работы
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (logWriter != null) logWriter.close();
+            if (webServer != null) webServer.stop();
+            log("Приложение завершено");
+        }));
+
+        // Бесконечный цикл для поддержания работы приложения
+        try {
+            while (true) {
+                Thread.sleep(1000);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    // Реализуем метод из интерфейса ScanLauncher
+    @Override
+    public void startScan() {
+        startScanFromWeb();
+    }
+
+    public static void startScanFromWeb() {
+        if (isScanning) {
+            log("Сканирование уже выполняется");
+            return;
+        }
+
+        isScanning = true;
+        new Thread(() -> {
+            try {
+                log("🚀 Запуск сканирования по запросу из веб-интерфейса");
+                runSecurityScan();
+                log("✅ Сканирование завершено");
+            } catch (Exception e) {
+                log("❌ Ошибка сканирования: " + e.getMessage());
+                e.printStackTrace();
+            } finally {
+                isScanning = false;
+            }
+        }).start();
+    }
+
+    // Остальные методы остаются без изменений...
+    private static void runSecurityScan() {
+        try {
             final String PASSWORD = "***REMOVED***";
             final List<String> BANKS = Arrays.asList(
                     "https://vbank.open.bankingapi.ru",
@@ -69,7 +101,7 @@ public class Main {
                     "https://sbank.open.bankingapi.ru"
             );
 
-            // Создаём сканеры - начинаем с основных
+            // Создаём сканеры
             List<SecurityScanner> securityScanners = Arrays.asList(
                     new API1_BOLAScanner(),
                     new API2_BrokenAuthScanner(),
@@ -85,7 +117,6 @@ public class Main {
 
             log("Зарегистрировано сканеров: " + securityScanners.size());
 
-            // Итоговая статистика
             int totalVulnerabilities = 0;
             int totalScannedBanks = 0;
             List<String> failedBanks = new ArrayList<>();
@@ -97,20 +128,9 @@ public class Main {
                 log("=".repeat(50));
 
                 String cleanBaseUrl = baseUrl.trim();
-                String specUrl = cleanBaseUrl + "/openapi.json";
 
-                // === ЗАГРУЗКА OPENAPI-СПЕЦИФИКАЦИИ ===
-                io.swagger.v3.oas.models.OpenAPI openAPI = null;
-                try {
-                    OpenApiSpecLoader loader = new OpenApiSpecLoader(specUrl);
-                    openAPI = loader.getOpenAPI();
-                    log("OpenAPI-спецификация загружена: " +
-                            openAPI.getInfo().getTitle() + " v" + openAPI.getInfo().getVersion());
-                } catch (Exception e) {
-                    log("Не удалось загрузить OpenAPI-спецификацию по адресу: " + specUrl);
-                    log("   Причина: " + e.getMessage());
-                    // Продолжаем сканирование без спецификации
-                }
+                // Отправляем уведомление в веб-интерфейс
+                webServer.broadcastMessage("scan_progress", "Сканирование банка: " + cleanBaseUrl);
 
                 int currentBankVulnerabilities = 0;
                 try {
@@ -121,77 +141,55 @@ public class Main {
                     config.setClientId("team172-8");
                     config.setClientSecret(PASSWORD);
 
-                    // === ЦЕНТРАЛИЗОВАННОЕ ПОЛУЧЕНИЕ ТОКЕНОВ ===
+                    // Получение токенов
                     log("Получение токенов для пользователей...");
                     Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(cleanBaseUrl, PASSWORD);
                     config.setUserTokens(tokens);
 
                     log("Получено токенов: " + tokens.size());
 
-                    // Проверяем, есть ли валидные токены
                     if (tokens.isEmpty()) {
                         log("❌ Не удалось получить токены для сканирования. Пропускаем банк.");
                         failedBanks.add(cleanBaseUrl);
                         continue;
                     }
 
-                    // Выбираем основного пользователя для сканирования
-                    String primaryUser = null;
-                    String primaryToken = null;
-                    for (Map.Entry<String, String> entry : tokens.entrySet()) {
-                        if (entry.getValue() != null && AuthManager.isTokenValid(entry.getValue())) {
-                            primaryUser = entry.getKey();
-                            primaryToken = entry.getValue();
-                            break;
-                        }
-                    }
-
-                    if (primaryToken == null) {
-                        log("❌ Нет валидных токенов. Пропускаем банк.");
-                        failedBanks.add(cleanBaseUrl);
-                        continue;
-                    }
-
-                    log("Основной пользователь для сканирования: " + primaryUser);
-
-                    for (String user : tokens.keySet()) {
-                        String tokenPreview = tokens.get(user).length() > 20 ?
-                                tokens.get(user).substring(0, 20) + "..." : tokens.get(user);
-                        log(user + ": " + tokenPreview);
-                    }
-
                     List<Vulnerability> allVulnerabilities = new ArrayList<>();
 
-                    // Последовательно запускаем каждый сканер с увеличенными задержками
+                    // Запуск сканеров
                     for (SecurityScanner scanner : securityScanners) {
                         log("\nЗапуск сканера: " + scanner.getName());
-                        log("-".repeat(40));
+                        webServer.broadcastMessage("scanner_start", "Запуск: " + scanner.getName());
 
                         try {
-                            // Передаём объект OpenAPI и config с токенами
-                            List<Vulnerability> scannerResults = scanner.scan(openAPI, config, new HttpApiClient());
+                            List<Vulnerability> scannerResults = scanner.scan(null, config, new HttpApiClient());
                             allVulnerabilities.addAll(scannerResults);
 
-                            // ✅ СОХРАНЯЕМ РЕЗУЛЬТАТЫ В POSTGRESQL
+                            // Сохранение результатов в реальном времени
                             for (Vulnerability vuln : scannerResults) {
                                 saveVulnerabilityToDatabase(vuln, cleanBaseUrl, scanner.getName());
+
+                                // Отправка уведомления о новой уязвимости
+                                Map<String, Object> vulnData = new HashMap<>();
+                                vulnData.put("bankName", cleanBaseUrl);
+                                vulnData.put("title", vuln.getTitle());
+                                vulnData.put("severity", vuln.getSeverity().toString());
+                                vulnData.put("category", vuln.getCategory().toString());
+                                vulnData.put("scanner", scanner.getName());
+                                webServer.broadcastMessage("new_vulnerability", vulnData);
                             }
 
-                            log("Сканер " + scanner.getName() + " завершен. Найдено уязвимостей: " + scannerResults.size());
-
-                            if (!scannerResults.isEmpty()) {
-                                for (Vulnerability vuln : scannerResults) {
-                                    log("  • " + vuln.getTitle() + " [" + vuln.getSeverity() + "]");
-                                }
-                            }
+                            log("Сканер " + scanner.getName() + " завершен. Найдено: " + scannerResults.size());
+                            webServer.broadcastMessage("scanner_complete",
+                                    scanner.getName() + " завершен: " + scannerResults.size() + " уязвимостей");
 
                         } catch (Exception e) {
                             log("Ошибка в сканере " + scanner.getName() + ": " + e.getMessage());
-                            e.printStackTrace();
+                            webServer.broadcastMessage("scanner_error",
+                                    "Ошибка в " + scanner.getName() + ": " + e.getMessage());
                         }
 
-                        // Увеличиваем задержку между сканерами
-                        try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+                        try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
                     }
 
                     totalScannedBanks++;
@@ -199,101 +197,49 @@ public class Main {
                     totalVulnerabilities += currentBankVulnerabilities;
                     bankVulnerabilities.put(cleanBaseUrl, currentBankVulnerabilities);
 
-                    // Статистика по сканерам
-                    Map<String, Integer> scannerStats = new HashMap<>();
-                    for (Vulnerability vuln : allVulnerabilities) {
-                        String category = vuln.getCategory().toString();
-                        scannerStats.put(category, scannerStats.getOrDefault(category, 0) + 1);
-                    }
-
-                    // Уровни серьезности
-                    long criticalCount = allVulnerabilities.stream()
-                            .filter(v -> v.getSeverity() == Vulnerability.Severity.CRITICAL).count();
-                    long highCount = allVulnerabilities.stream()
-                            .filter(v -> v.getSeverity() == Vulnerability.Severity.HIGH).count();
-                    long mediumCount = allVulnerabilities.stream()
-                            .filter(v -> v.getSeverity() == Vulnerability.Severity.MEDIUM).count();
-                    long lowCount = allVulnerabilities.stream()
-                            .filter(v -> v.getSeverity() == Vulnerability.Severity.LOW).count();
-
                     log("\nРезультаты сканирования " + cleanBaseUrl + ":");
                     log("   Статус: ЗАВЕРШЕНО");
                     log("   Уязвимостей: " + currentBankVulnerabilities);
-                    log("   Уровни: КРИТИЧЕСКИХ-" + criticalCount + " ВЫСОКИХ-" + highCount +
-                            " СРЕДНИХ-" + mediumCount + " НИЗКИХ-" + lowCount);
 
-                    // Статистика по сканерам - ВЫВОДИМ ВСЕ КАТЕГОРИИ
-                    log("\n   Результаты по сканерам:");
-                    printAllScannerStats(scannerStats);
+                    // Отправка итогов по банку
+                    Map<String, Object> bankResult = new HashMap<>();
+                    bankResult.put("bank", cleanBaseUrl);
+                    bankResult.put("vulnerabilities", currentBankVulnerabilities);
+                    webServer.broadcastMessage("bank_complete", bankResult);
 
                 } catch (Exception e) {
                     log("Ошибка при сканировании банка " + cleanBaseUrl + ": " + e.getMessage());
-                    e.printStackTrace();
                     failedBanks.add(cleanBaseUrl);
-                } finally {
-                    // Всегда добавляем результат в карту, даже если были ошибки
-                    bankVulnerabilities.put(cleanBaseUrl, currentBankVulnerabilities);
+                    webServer.broadcastMessage("bank_error", "Ошибка сканирования " + cleanBaseUrl);
                 }
 
-                log("\n" + "=".repeat(50));
-                log("Завершено сканирование: " + cleanBaseUrl);
-                log("=".repeat(50));
-
-                // Увеличиваем задержку между банками
-                try { Thread.sleep(5000); } catch (InterruptedException ignored) {}
+                try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
             }
 
             // Финальная сводка
             log("\n" + "=".repeat(50));
             log("СКАНИРОВАНИЕ ЗАВЕРШЕНО");
             log("=".repeat(50));
-
-            log("\nИТОГОВАЯ СТАТИСТИКА:");
             log("   Просканировано банков: " + totalScannedBanks + "/" + BANKS.size());
             log("   Всего уязвимостей: " + totalVulnerabilities);
 
-            // Результаты анализа по всем банкам
-            log("\nРезультаты по банкам:");
-            for (String bank : BANKS) {
-                String cleanBank = bank.trim();
-                int vulnCount = bankVulnerabilities.getOrDefault(cleanBank, 0);
-                log("   • " + cleanBank + ": " + vulnCount + " уязвимостей");
-            }
-
-            if (!failedBanks.isEmpty()) {
-                log("\n   Ошибки сканирования: " + failedBanks.size() + " банков");
-                for (String failedBank : failedBanks) {
-                    log("     • " + failedBank);
-                }
-            }
-
-            if (totalVulnerabilities == 0) {
-                log("\nУязвимостей не обнаружено.");
-            } else {
-                log("\nРекомендуется устранение уязвимостей ВЫСОКОГО и КРИТИЧЕСКОГО уровня");
-            }
+            // Отправка финальных результатов
+            Map<String, Object> finalResults = new HashMap<>();
+            finalResults.put("totalBanks", totalScannedBanks);
+            finalResults.put("totalVulnerabilities", totalVulnerabilities);
+            finalResults.put("failedBanks", failedBanks.size());
+            webServer.broadcastMessage("scan_complete", finalResults);
 
         } catch (Exception e) {
-            log("Критическая ошибка в main: " + e.getMessage());
+            log("Критическая ошибка в сканировании: " + e.getMessage());
             e.printStackTrace();
-        } finally {
-            // Закрытие файла лога
-            if (logWriter != null) {
-                logWriter.close();
-                System.out.println("Лог сохранен в папку logs/");
-            }
-            // Остановка веб-сервера
-            if (webServer != null) {
-                webServer.stop();
-                System.out.println("Веб-сервер остановлен");
-            }
+            webServer.broadcastMessage("scan_error", "Критическая ошибка: " + e.getMessage());
         }
     }
 
     // Метод для сохранения уязвимости в PostgreSQL
     private static void saveVulnerabilityToDatabase(Vulnerability vuln, String bankName, String scannerName) {
         if (webServer != null) {
-            // Получаем доказательства и рекомендации из уязвимости
             String proof = extractProofFromVulnerability(vuln);
             String recommendation = extractRecommendationFromVulnerability(vuln);
 
@@ -302,7 +248,7 @@ public class Main {
                     vuln.getTitle(),
                     vuln.getSeverity().toString(),
                     vuln.getCategory().toString(),
-                    "200", // Можно получить реальный статус если доступен
+                    "200",
                     proof,
                     recommendation,
                     scannerName
@@ -311,169 +257,45 @@ public class Main {
     }
 
     private static String extractProofFromVulnerability(Vulnerability vuln) {
-        // Получаем реальное доказательство из поля evidence
         if (vuln.getEvidence() != null && !vuln.getEvidence().isEmpty()) {
             return vuln.getEvidence();
         }
 
-        // Если evidence пустой, пробуем другие поля
         StringBuilder proofBuilder = new StringBuilder();
+        if (vuln.getEndpoint() != null) proofBuilder.append("Эндпоинт: ").append(vuln.getEndpoint()).append("\n");
+        if (vuln.getMethod() != null) proofBuilder.append("Метод: ").append(vuln.getMethod()).append("\n");
+        if (vuln.getParameter() != null) proofBuilder.append("Параметр: ").append(vuln.getParameter()).append("\n");
+        if (vuln.getStatusCode() != -1) proofBuilder.append("Статус код: ").append(vuln.getStatusCode()).append("\n");
 
-        if (vuln.getEndpoint() != null) {
-            proofBuilder.append("Эндпоинт: ").append(vuln.getEndpoint()).append("\n");
-        }
-
-        if (vuln.getMethod() != null) {
-            proofBuilder.append("Метод: ").append(vuln.getMethod()).append("\n");
-        }
-
-        if (vuln.getParameter() != null) {
-            proofBuilder.append("Параметр: ").append(vuln.getParameter()).append("\n");
-        }
-
-        if (vuln.getStatusCode() != -1) {
-            proofBuilder.append("Статус код: ").append(vuln.getStatusCode()).append("\n");
-        }
-
-        if (proofBuilder.length() > 0) {
-            return proofBuilder.toString();
-        }
-
-        // Если нет никаких данных, возвращаем описание
-        return "Доказательство не доступно для уязвимости: " + vuln.getTitle();
+        return proofBuilder.length() > 0 ? proofBuilder.toString() :
+                "Доказательство не доступно для уязвимости: " + vuln.getTitle();
     }
 
     private static String extractRecommendationFromVulnerability(Vulnerability vuln) {
-        // Базовые рекомендации по категориям OWASP
         switch (vuln.getCategory().toString()) {
-            case "OWASP_API1_BOLA":
-                return "Реализуйте проверки авторизации на уровне объектов. Убедитесь, что пользователи могут access только свои данные.";
-            case "OWASP_API2_BROKEN_AUTH":
-                return "Усильте механизмы аутентификации. Внедрите ограничение попыток входа и многофакторную аутентификацию.";
-            case "OWASP_API3_BOPLA":
-                return "Валидируйте и фильтруйте свойства объектов на основе привилегий пользователя.";
-            case "OWASP_API4_URC":
-                return "Внедрите лимиты на потребление ресурсов и мониторинг.";
-            case "OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH":
-                return "Реализуйте проверки авторизации на уровне функций.";
-            case "OWASP_API6_BUSINESS_FLOW":
-                return "Защитите чувствительные бизнес-процессы дополнительными контролями.";
-            case "OWASP_API7_SSRF":
-                return "Валидируйте и санируйте все URL, предоставленные пользователем.";
-            case "OWASP_API8_SM":
-                return "Усильте конфигурацию безопасности и устраните раскрытие информации.";
-            case "OWASP_API9_INVENTORY":
-                return "Ведите правильную инвентаризацию API и документацию.";
-            case "OWASP_API10_UNSAFE_CONSUMPTION":
-                return "Валидируйте все данные от сторонних API.";
-            default:
-                return "Проверьте и исправьте выявленную уязвимость безопасности.";
+            case "OWASP_API1_BOLA": return "Реализуйте проверки авторизации на уровне объектов.";
+            case "OWASP_API2_BROKEN_AUTH": return "Усильте механизмы аутентификации.";
+            case "OWASP_API3_BOPLA": return "Валидируйте и фильтруйте свойства объектов.";
+            case "OWASP_API4_URC": return "Внедрите лимиты на потребление ресурсов.";
+            case "OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH": return "Реализуйте проверки авторизации на уровне функций.";
+            case "OWASP_API6_BUSINESS_FLOW": return "Защитите чувствительные бизнес-процессы.";
+            case "OWASP_API7_SSRF": return "Валидируйте и санируйте все URL.";
+            case "OWASP_API8_SM": return "Усильте конфигурацию безопасности.";
+            case "OWASP_API9_INVENTORY": return "Ведите правильную инвентаризацию API.";
+            case "OWASP_API10_UNSAFE_CONSUMPTION": return "Валидируйте все данные от сторонних API.";
+            default: return "Проверьте и исправьте выявленную уязвимость безопасности.";
         }
     }
 
-    // Метод для логирования в консоль и файл
+    // Метод для логирования
     private static void log(String message) {
-        System.out.println(message);
-        if (logWriter != null) {
-            logWriter.println(message);
-            logWriter.flush(); // Сбрасываем буфер после каждой записи
-        }
-    }
+        String timestamp = new SimpleDateFormat("HH:mm:ss").format(new Date());
+        String logMessage = "[" + timestamp + "] " + message;
 
-    // Перегруженный метод для логирования без перевода строки
-    private static void logNoNewline(String message) {
-        System.out.print(message);
+        System.out.println(logMessage);
         if (logWriter != null) {
-            logWriter.print(message);
+            logWriter.println(logMessage);
             logWriter.flush();
-        }
-    }
-
-    private static void printScannerStats(Map<String, Integer> stats, String category, String name) {
-        int count = stats.getOrDefault(category, 0);
-        if (count > 0) {
-            log("      • " + name + ": " + count + " уязвимостей");
-        }
-    }
-
-
-    private static void printAllScannerStats(Map<String, Integer> stats) {
-        // Создаем маппинг категорий к читаемым названиям
-        Map<String, String> categoryNames = new HashMap<>();
-        categoryNames.put("OWASP_API1_BOLA", "API1 - BOLA");
-        categoryNames.put("OWASP_API2_BROKEN_AUTH", "API2 - Broken Auth");
-        categoryNames.put("OWASP_API3_BOPLA", "API3 - BOPLA");
-        categoryNames.put("OWASP_API4_URC", "API4 - URC");
-        categoryNames.put("OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH", "API5 - Broken Function Level Auth");
-        categoryNames.put("OWASP_API6_BUSINESS_FLOW", "API6 - Business Flow");
-        categoryNames.put("OWASP_API7_SSRF", "API7 - SSRF");
-        categoryNames.put("OWASP_API8_SM", "API8 - Security Misconfiguration");
-        categoryNames.put("OWASP_API9_INVENTORY", "API9 - Inventory");
-        categoryNames.put("OWASP_API10_UNSAFE_CONSUMPTION", "API10 - Unsafe Consumption");
-        categoryNames.put("CONTRACT_VALIDATION", "Contract Validation");
-
-        // Дополнительные категории, которые могут использоваться в сканерах
-        categoryNames.put("API1_BOLA", "API1 - BOLA");
-        categoryNames.put("API2_BROKEN_AUTH", "API2 - Broken Auth");
-        categoryNames.put("API3_BOPLA", "API3 - BOPLA");
-        categoryNames.put("API4_URC", "API4 - URC");
-        categoryNames.put("API5_BROKEN_FUNCTION_LEVEL_AUTH", "API5 - Broken Function Level Auth");
-        categoryNames.put("API6_BUSINESS_FLOW", "API6 - Business Flow");
-        categoryNames.put("API7_SSRF", "API7 - SSRF");
-        categoryNames.put("API8_SM", "API8 - Security Misconfiguration");
-        categoryNames.put("API9_INVENTORY", "API9 - Inventory");
-        categoryNames.put("API10_UNSAFE_CONSUMPTION", "API10 - Unsafe Consumption");
-
-        // Выводим все категории, где есть уязвимости
-        boolean hasResults = false;
-
-        // Сначала выводим известные категории в правильном порядке
-        String[] orderedCategories = {
-                "OWASP_API1_BOLA", "API1_BOLA",
-                "OWASP_API2_BROKEN_AUTH", "API2_BROKEN_AUTH",
-                "OWASP_API3_BOPLA", "API3_BOPLA",
-                "OWASP_API4_URC", "API4_URC",
-                "OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH", "API5_BROKEN_FUNCTION_LEVEL_AUTH",
-                "OWASP_API6_BUSINESS_FLOW", "API6_BUSINESS_FLOW",
-                "OWASP_API7_SSRF", "API7_SSRF",
-                "OWASP_API8_SM", "API8_SM",
-                "OWASP_API9_INVENTORY", "API9_INVENTORY",
-                "OWASP_API10_UNSAFE_CONSUMPTION", "API10_UNSAFE_CONSUMPTION",
-                "CONTRACT_VALIDATION"
-        };
-
-        // Используем Set для отслеживания уже выведенных категорий
-        Set<String> displayedCategories = new HashSet<>();
-
-        for (String category : orderedCategories) {
-            if (stats.containsKey(category)) {
-                int count = stats.get(category);
-                if (count > 0) {
-                    String displayName = categoryNames.getOrDefault(category, category);
-                    // Проверяем, не выводили ли мы уже эту категорию
-                    if (!displayedCategories.contains(displayName)) {
-                        log("      • " + displayName + ": " + count + " уязвимостей");
-                        displayedCategories.add(displayName);
-                        hasResults = true;
-                    }
-                }
-            }
-        }
-
-        // Затем выводим любые другие категории, которые не были обработаны
-        for (Map.Entry<String, Integer> entry : stats.entrySet()) {
-            String category = entry.getKey();
-            int count = entry.getValue();
-            if (count > 0 && !displayedCategories.contains(categoryNames.getOrDefault(category, category))) {
-                String displayName = categoryNames.getOrDefault(category, category);
-                log("      • " + displayName + ": " + count + " уязвимостей");
-                hasResults = true;
-            }
-        }
-
-        // Если нет результатов, выводим сообщение
-        if (!hasResults) {
-            log("      • Уязвимостей не обнаружено");
         }
     }
 }
