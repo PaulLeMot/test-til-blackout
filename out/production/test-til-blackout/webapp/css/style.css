@@ -122,6 +122,107 @@ body {
     color: #f59e0b;
 }
 
+/* Config Section */
+.config-section {
+    margin-bottom: 2rem;
+    padding: 0 2rem;
+    max-width: 1400px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.config-panel {
+    background: #1e293b;
+    border-radius: 12px;
+    padding: 1.5rem;
+    border: 1px solid #334155;
+    margin-top: 1rem;
+}
+
+.config-panel h3 {
+    margin-bottom: 1.5rem;
+    color: #f8fafc;
+    font-size: 1.25rem;
+}
+
+.config-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.bank-config {
+    background: #0f172a;
+    padding: 1rem;
+    border-radius: 8px;
+    border: 1px solid #334155;
+}
+
+.bank-config h4 {
+    margin-bottom: 1rem;
+    color: #cbd5e1;
+    font-size: 1rem;
+}
+
+.input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.input-group label {
+    font-size: 0.875rem;
+    color: #94a3b8;
+    font-weight: 500;
+}
+
+.config-input {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 0.75rem;
+    color: #f8fafc;
+    font-size: 0.875rem;
+}
+
+.config-input:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+.credentials-config {
+    background: #0f172a;
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    margin-bottom: 1.5rem;
+}
+
+.credentials-config h4 {
+    margin-bottom: 1rem;
+    color: #cbd5e1;
+}
+
+.credential-pairs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+}
+
+.credential-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.config-actions {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
 /* Main Dashboard */
 .dashboard {
     flex: 1;
@@ -621,5 +722,21 @@ body {
 
     .stats-grid {
         grid-template-columns: 1fr;
+    }
+
+    .config-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .credential-pairs {
+        grid-template-columns: 1fr;
+    }
+
+    .config-actions {
+        flex-direction: column;
+    }
+
+    .config-section {
+        padding: 0 1rem;
     }
 }

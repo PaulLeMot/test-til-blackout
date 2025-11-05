@@ -1,5 +1,5 @@
 package core;
 
 public interface ScanLauncher {
-    void startScan();
+    void startScan(String configJson);
 }

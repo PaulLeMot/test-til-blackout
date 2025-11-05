@@ -16,10 +16,9 @@ class SecurityDashboard {
 
     init() {
         this.setupEventListeners();
+        this.setupConfigListeners();
         this.connectWebSocket();
         this.loadInitialData();
-
-        // Восстанавливаем состояние из localStorage при загрузке
         this.restoreState();
     }
 
@@ -62,6 +61,151 @@ class SecurityDashboard {
         window.addEventListener('beforeunload', () => {
             this.saveState();
         });
+    }
+
+    setupConfigListeners() {
+        document.getElementById('saveConfig').addEventListener('click', () => {
+            this.saveConfiguration();
+        });
+
+        document.getElementById('loadDefaults').addEventListener('click', () => {
+            this.loadDefaultConfiguration();
+        });
+
+        // Загружаем сохраненные настройки при инициализации
+        this.loadSavedConfiguration();
+    }
+
+    saveConfiguration() {
+        const config = {
+            banks: [
+                {
+                    baseUrl: document.getElementById('bank1Url').value.trim(),
+                    specUrl: document.getElementById('bank1Spec').value.trim()
+                },
+                {
+                    baseUrl: document.getElementById('bank2Url').value.trim(),
+                    specUrl: document.getElementById('bank2Spec').value.trim()
+                },
+                {
+                    baseUrl: document.getElementById('bank3Url').value.trim(),
+                    specUrl: document.getElementById('bank3Spec').value.trim()
+                }
+            ],
+            credentials: [
+                {
+                    username: document.getElementById('user1').value.trim(),
+                    password: document.getElementById('password1').value
+                },
+                {
+                    username: document.getElementById('user2').value.trim(),
+                    password: document.getElementById('password2').value
+                }
+            ]
+        };
+
+        // Валидация
+        if (!this.validateConfiguration(config)) {
+            return;
+        }
+
+        // Сохраняем в localStorage
+        localStorage.setItem('scanConfig', JSON.stringify(config));
+        this.showNotification('Настройки сохранены', 'success');
+    }
+
+    loadSavedConfiguration() {
+        try {
+            const saved = localStorage.getItem('scanConfig');
+            if (saved) {
+                const config = JSON.parse(saved);
+                this.applyConfiguration(config);
+            }
+        } catch (e) {
+            console.warn('Failed to load saved configuration:', e);
+        }
+    }
+
+    loadDefaultConfiguration() {
+        const defaultConfig = {
+            banks: [
+                {
+                    baseUrl: "https://vbank.open.bankingapi.ru",
+                    specUrl: "https://vbank.open.bankingapi.ru/openapi.json"
+                },
+                {
+                    baseUrl: "https://abank.open.bankingapi.ru",
+                    specUrl: "https://abank.open.bankingapi.ru/openapi.json"
+                },
+                {
+                    baseUrl: "https://sbank.open.bankingapi.ru",
+                    specUrl: "https://sbank.open.bankingapi.ru/openapi.json"
+                }
+            ],
+            credentials: [
+                {
+                    username: "team172-8",
+                    password: "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY"
+                },
+                {
+                    username: "team172-9",
+                    password: "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY"
+                }
+            ]
+        };
+
+        this.applyConfiguration(defaultConfig);
+        this.showNotification('Настройки по умолчанию загружены', 'info');
+    }
+
+    applyConfiguration(config) {
+        // Применяем настройки к форме
+        config.banks.forEach((bank, index) => {
+            document.getElementById(`bank${index + 1}Url`).value = bank.baseUrl;
+            document.getElementById(`bank${index + 1}Spec`).value = bank.specUrl;
+        });
+
+        config.credentials.forEach((cred, index) => {
+            document.getElementById(`user${index + 1}`).value = cred.username;
+            document.getElementById(`password${index + 1}`).value = cred.password;
+        });
+    }
+
+    validateConfiguration(config) {
+        // Проверяем URL банков
+        for (let bank of config.banks) {
+            if (!bank.baseUrl || !bank.specUrl) {
+                this.showNotification('Заполните все URL банков', 'error');
+                return false;
+            }
+
+            try {
+                new URL(bank.baseUrl);
+                new URL(bank.specUrl);
+            } catch (e) {
+                this.showNotification('Некорректный URL', 'error');
+                return false;
+            }
+        }
+
+        // Проверяем учетные данные
+        for (let cred of config.credentials) {
+            if (!cred.username || !cred.password) {
+                this.showNotification('Заполните все учетные данные', 'error');
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    getCurrentConfiguration() {
+        try {
+            const saved = localStorage.getItem('scanConfig');
+            return saved ? JSON.parse(saved) : null;
+        } catch (e) {
+            return null;
+        }
     }
 
     connectWebSocket() {
@@ -158,6 +302,12 @@ class SecurityDashboard {
             return;
         }
 
+        const config = this.getCurrentConfiguration();
+        if (!config) {
+            this.showNotification('Сначала сохраните настройки сканирования', 'error');
+            return;
+        }
+
         try {
             this.isScanning = true;
             this.updateScanButton(true);
@@ -168,7 +318,8 @@ class SecurityDashboard {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
-                }
+                },
+                body: JSON.stringify(config) // Отправляем конфигурацию на сервер
             });
 
             if (!response.ok) {

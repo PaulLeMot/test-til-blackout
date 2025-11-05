@@ -5,6 +5,212 @@ import java.util.*;
 import java.io.*;
 import java.text.SimpleDateFormat;
 
+// Исправленный JSON парсер для конфигурации
+class ConfigParser {
+    public static ScanConfig parseConfig(String json) {
+        ScanConfig config = new ScanConfig();
+
+        try {
+            log("Исходный JSON: " + json);
+
+            // Удаляем пробелы и переносы строк для упрощения парсинга
+            json = json.trim().replaceAll("\\s+", " ");
+
+            if (json.startsWith("{") && json.endsWith("}")) {
+                json = json.substring(1, json.length() - 1).trim();
+
+                List<ScanConfig.BankConfig> banks = new ArrayList<>();
+                List<ScanConfig.UserCredentials> credentials = new ArrayList<>();
+
+                // Парсим банки
+                String banksPart = extractPart(json, "banks");
+                if (banksPart != null && banksPart.startsWith("[") && banksPart.endsWith("]")) {
+                    banksPart = banksPart.substring(1, banksPart.length() - 1).trim();
+                    log("Banks part: " + banksPart);
+
+                    if (!banksPart.isEmpty()) {
+                        String[] bankObjects = splitObjects(banksPart);
+                        log("Found " + bankObjects.length + " bank objects");
+
+                        for (String bankObj : bankObjects) {
+                            bankObj = bankObj.trim();
+                            if (bankObj.startsWith("{") && bankObj.endsWith("}")) {
+                                String baseUrl = extractValueFromObject(bankObj, "baseUrl");
+                                String specUrl = extractValueFromObject(bankObj, "specUrl");
+                                log("Parsed bank - baseUrl: " + baseUrl + ", specUrl: " + specUrl);
+                                if (baseUrl != null && specUrl != null) {
+                                    banks.add(new ScanConfig.BankConfig(baseUrl, specUrl));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Парсим учетные данные
+                String credsPart = extractPart(json, "credentials");
+                if (credsPart != null && credsPart.startsWith("[") && credsPart.endsWith("]")) {
+                    credsPart = credsPart.substring(1, credsPart.length() - 1).trim();
+                    log("Credentials part: " + credsPart);
+
+                    if (!credsPart.isEmpty()) {
+                        String[] credObjects = splitObjects(credsPart);
+                        log("Found " + credObjects.length + " credential objects");
+
+                        for (String credObj : credObjects) {
+                            credObj = credObj.trim();
+                            if (credObj.startsWith("{") && credObj.endsWith("}")) {
+                                String username = extractValueFromObject(credObj, "username");
+                                String password = extractValueFromObject(credObj, "password");
+                                log("Parsed credential - username: " + username + ", password: " + (password != null ? "***" : "null"));
+                                if (username != null && password != null) {
+                                    credentials.add(new ScanConfig.UserCredentials(username, password));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                config.setBanks(banks);
+                config.setCredentials(credentials);
+            }
+        } catch (Exception e) {
+            System.err.println("Error parsing config: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        return config;
+    }
+
+    private static String extractPart(String json, String key) {
+        String searchKey = "\"" + key + "\":";
+        int start = json.indexOf(searchKey);
+        if (start == -1) {
+            log("Key '" + key + "' not found in JSON");
+            return null;
+        }
+
+        start += searchKey.length();
+        int braceCount = 0;
+        boolean inQuotes = false;
+        char quoteChar = '"';
+        int contentStart = -1;
+
+        for (int i = start; i < json.length(); i++) {
+            char c = json.charAt(i);
+
+            if (c == '"' && (i == 0 || json.charAt(i-1) != '\\')) {
+                if (!inQuotes) {
+                    inQuotes = true;
+                    quoteChar = c;
+                } else if (c == quoteChar) {
+                    inQuotes = false;
+                }
+            }
+
+            if (!inQuotes) {
+                if (c == '[' || c == '{') {
+                    if (braceCount == 0) {
+                        contentStart = i;
+                    }
+                    braceCount++;
+                } else if (c == ']' || c == '}') {
+                    braceCount--;
+                    if (braceCount == 0 && contentStart != -1) {
+                        return json.substring(contentStart, i + 1);
+                    }
+                } else if (braceCount == 0 && c == ',') {
+                    // Достигли конца текущего элемента
+                    break;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static String[] splitObjects(String arrayContent) {
+        List<String> objects = new ArrayList<>();
+        int braceCount = 0;
+        boolean inQuotes = false;
+        char quoteChar = '"';
+        int start = -1;
+
+        for (int i = 0; i < arrayContent.length(); i++) {
+            char c = arrayContent.charAt(i);
+
+            if (c == '"' && (i == 0 || arrayContent.charAt(i-1) != '\\')) {
+                if (!inQuotes) {
+                    inQuotes = true;
+                    quoteChar = c;
+                } else if (c == quoteChar) {
+                    inQuotes = false;
+                }
+            }
+
+            if (!inQuotes) {
+                if (c == '{') {
+                    if (braceCount == 0) {
+                        start = i;
+                    }
+                    braceCount++;
+                } else if (c == '}') {
+                    braceCount--;
+                    if (braceCount == 0 && start != -1) {
+                        objects.add(arrayContent.substring(start, i + 1));
+                        start = -1;
+                    }
+                }
+            }
+        }
+
+        return objects.toArray(new String[0]);
+    }
+
+    private static String extractValueFromObject(String obj, String key) {
+        // Ищем ключ в кавычках
+        String search = "\"" + key + "\":";
+        int keyStart = obj.indexOf(search);
+        if (keyStart == -1) return null;
+
+        int valueStart = keyStart + search.length();
+
+        // Пропускаем пробелы
+        while (valueStart < obj.length() && Character.isWhitespace(obj.charAt(valueStart))) {
+            valueStart++;
+        }
+
+        if (valueStart >= obj.length()) return null;
+
+        char firstChar = obj.charAt(valueStart);
+        if (firstChar == '"') {
+            // Строковое значение в кавычках
+            int stringStart = valueStart + 1;
+            int stringEnd = stringStart;
+            boolean inEscape = false;
+
+            while (stringEnd < obj.length()) {
+                char c = obj.charAt(stringEnd);
+                if (inEscape) {
+                    inEscape = false;
+                } else if (c == '\\') {
+                    inEscape = true;
+                } else if (c == '"') {
+                    return obj.substring(stringStart, stringEnd);
+                }
+                stringEnd++;
+            }
+        }
+
+        return null;
+    }
+
+    private static void log(String message) {
+        String timestamp = new SimpleDateFormat("HH:mm:ss").format(new Date());
+        String logMessage = "[CONFIG_PARSER][" + timestamp + "] " + message;
+        System.out.println(logMessage);
+    }
+}
+
 // Реализуем интерфейс ScanLauncher
 public class Main implements core.ScanLauncher {
     private static PrintWriter logWriter;
@@ -66,11 +272,11 @@ public class Main implements core.ScanLauncher {
 
     // Реализуем метод из интерфейса ScanLauncher
     @Override
-    public void startScan() {
-        startScanFromWeb();
+    public void startScan(String configJson) {
+        startScanFromWeb(configJson);
     }
 
-    public static void startScanFromWeb() {
+    public static void startScanFromWeb(String configJson) {
         if (isScanning) {
             log("Сканирование уже выполняется");
             return;
@@ -80,7 +286,7 @@ public class Main implements core.ScanLauncher {
         new Thread(() -> {
             try {
                 log("🚀 Запуск сканирования по запросу из веб-интерфейса");
-                runSecurityScan();
+                runSecurityScan(configJson);
                 log("✅ Сканирование завершено");
             } catch (Exception e) {
                 log("❌ Ошибка сканирования: " + e.getMessage());
@@ -91,15 +297,33 @@ public class Main implements core.ScanLauncher {
         }).start();
     }
 
-    // Остальные методы остаются без изменений...
-    private static void runSecurityScan() {
+    private static void runSecurityScan(String configJson) {
         try {
-            final String PASSWORD = "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
-            final List<String> BANKS = Arrays.asList(
-                    "https://vbank.open.bankingapi.ru",
-                    "https://abank.open.bankingapi.ru",
-                    "https://sbank.open.bankingapi.ru"
-            );
+            log("Полученный JSON конфигурации:");
+            log(configJson);
+
+            // Парсим конфигурацию из JSON
+            ScanConfig config = ConfigParser.parseConfig(configJson);
+
+            log("Результаты парсинга:");
+            log("  Банки: " + config.getBanks().size());
+            for (ScanConfig.BankConfig bank : config.getBanks()) {
+                log("    - " + bank.getBaseUrl() + " -> " + bank.getSpecUrl());
+            }
+            log("  Учетные данные: " + config.getCredentials().size());
+            for (ScanConfig.UserCredentials cred : config.getCredentials()) {
+                log("    - " + cred.getUsername() + " : " + (cred.getPassword() != null ? "***" : "null"));
+            }
+
+            if (config.getBanks().isEmpty() || config.getCredentials().isEmpty()) {
+                log("❌ Неверная конфигурация: отсутствуют банки или учетные данные");
+                webServer.broadcastMessage("scan_error", "Неверная конфигурация: отсутствуют банки или учетные данные");
+                return;
+            }
+
+            log("Загружена конфигурация:");
+            log("  Банков: " + config.getBanks().size());
+            log("  Учетных записей: " + config.getCredentials().size());
 
             // Создаём сканеры
             List<SecurityScanner> securityScanners = Arrays.asList(
@@ -122,9 +346,13 @@ public class Main implements core.ScanLauncher {
             List<String> failedBanks = new ArrayList<>();
             Map<String, Integer> bankVulnerabilities = new HashMap<>();
 
-            for (String baseUrl : BANKS) {
+            for (ScanConfig.BankConfig bankConfig : config.getBanks()) {
+                String baseUrl = bankConfig.getBaseUrl();
+                String specUrl = bankConfig.getSpecUrl();
+
                 log("\n" + "=".repeat(50));
                 log("Сканирование: " + baseUrl);
+                log("Спецификация: " + specUrl);
                 log("=".repeat(50));
 
                 String cleanBaseUrl = baseUrl.trim();
@@ -134,17 +362,28 @@ public class Main implements core.ScanLauncher {
 
                 int currentBankVulnerabilities = 0;
                 try {
-                    ScanConfig config = new ScanConfig();
-                    config.setTargetBaseUrl(cleanBaseUrl);
-                    config.setPassword(PASSWORD);
-                    config.setBankBaseUrl(cleanBaseUrl);
-                    config.setClientId("team172-8");
-                    config.setClientSecret(PASSWORD);
+                    ScanConfig scanConfig = new ScanConfig();
+                    scanConfig.setTargetBaseUrl(cleanBaseUrl);
+                    scanConfig.setOpenApiSpecUrl(specUrl);
+                    scanConfig.setBankBaseUrl(cleanBaseUrl);
 
                     // Получение токенов
                     log("Получение токенов для пользователей...");
-                    Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(cleanBaseUrl, PASSWORD);
-                    config.setUserTokens(tokens);
+                    Map<String, String> tokens = new HashMap<>();
+
+                    for (ScanConfig.UserCredentials cred : config.getCredentials()) {
+                        log("Аутентификация пользователя: " + cred.getUsername());
+                        String token = AuthManager.getBankAccessToken(cleanBaseUrl, cred.getUsername(), cred.getPassword());
+                        if (token != null) {
+                            tokens.put(cred.getUsername(), token);
+                            log("✅ Токен получен для " + cred.getUsername());
+                        } else {
+                            log("❌ Не удалось получить токен для " + cred.getUsername());
+                        }
+                        Thread.sleep(1000);
+                    }
+
+                    scanConfig.setUserTokens(tokens);
 
                     log("Получено токенов: " + tokens.size());
 
@@ -162,7 +401,7 @@ public class Main implements core.ScanLauncher {
                         webServer.broadcastMessage("scanner_start", "Запуск: " + scanner.getName());
 
                         try {
-                            List<Vulnerability> scannerResults = scanner.scan(null, config, new HttpApiClient());
+                            List<Vulnerability> scannerResults = scanner.scan(null, scanConfig, new HttpApiClient());
                             allVulnerabilities.addAll(scannerResults);
 
                             // Сохранение результатов в реальном времени
@@ -220,7 +459,7 @@ public class Main implements core.ScanLauncher {
             log("\n" + "=".repeat(50));
             log("СКАНИРОВАНИЕ ЗАВЕРШЕНО");
             log("=".repeat(50));
-            log("   Просканировано банков: " + totalScannedBanks + "/" + BANKS.size());
+            log("   Просканировано банков: " + totalScannedBanks + "/" + config.getBanks().size());
             log("   Всего уязвимостей: " + totalVulnerabilities);
 
             // Отправка финальных результатов

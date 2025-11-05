@@ -27,6 +27,92 @@
         </div>
     </header>
 
+    <!-- Configuration Section -->
+    <section class="config-section">
+        <div class="config-panel">
+            <h3>⚙️ Настройки сканирования</h3>
+
+            <div class="config-grid">
+                <!-- Банк 1 -->
+                <div class="bank-config">
+                    <h4>Банк 1</h4>
+                    <div class="input-group">
+                        <label>Base URL:</label>
+                        <input type="text" id="bank1Url" class="config-input"
+                               value="https://vbank.open.bankingapi.ru" placeholder="https://vbank.open.bankingapi.ru">
+                    </div>
+                    <div class="input-group">
+                        <label>OpenAPI Spec URL:</label>
+                        <input type="text" id="bank1Spec" class="config-input"
+                               value="https://vbank.open.bankingapi.ru/openapi.json" placeholder="URL к спецификации">
+                    </div>
+                </div>
+
+                <!-- Банк 2 -->
+                <div class="bank-config">
+                    <h4>Банк 2</h4>
+                    <div class="input-group">
+                        <label>Base URL:</label>
+                        <input type="text" id="bank2Url" class="config-input"
+                               value="https://abank.open.bankingapi.ru" placeholder="https://abank.open.bankingapi.ru">
+                    </div>
+                    <div class="input-group">
+                        <label>OpenAPI Spec URL:</label>
+                        <input type="text" id="bank2Spec" class="config-input"
+                               value="https://abank.open.bankingapi.ru/openapi.json" placeholder="URL к спецификации">
+                    </div>
+                </div>
+
+                <!-- Банк 3 -->
+                <div class="bank-config">
+                    <h4>Банк 3</h4>
+                    <div class="input-group">
+                        <label>Base URL:</label>
+                        <input type="text" id="bank3Url" class="config-input"
+                               value="https://sbank.open.bankingapi.ru" placeholder="https://sbank.open.bankingapi.ru">
+                    </div>
+                    <div class="input-group">
+                        <label>OpenAPI Spec URL:</label>
+                        <input type="text" id="bank3Spec" class="config-input"
+                               value="https://sbank.open.bankingapi.ru/openapi.json" placeholder="URL к спецификации">
+                    </div>
+                </div>
+            </div>
+
+            <div class="credentials-config">
+                <h4>🔐 Учетные данные</h4>
+                <div class="credential-pairs">
+                    <div class="credential-group">
+                        <div class="input-group">
+                            <label>Пользователь 1:</label>
+                            <input type="text" id="user1" class="config-input" value="team172-8" placeholder="Логин">
+                        </div>
+                        <div class="input-group">
+                            <label>Пароль 1:</label>
+                            <input type="password" id="password1" class="config-input" value="FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY" placeholder="Пароль">
+                        </div>
+                    </div>
+
+                    <div class="credential-group">
+                        <div class="input-group">
+                            <label>Пользователь 2:</label>
+                            <input type="text" id="user2" class="config-input" value="team172-9" placeholder="Логин">
+                        </div>
+                        <div class="input-group">
+                            <label>Пароль 2:</label>
+                            <input type="password" id="password2" class="config-input" value="FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY" placeholder="Пароль">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="config-actions">
+                <button id="saveConfig" class="btn btn-secondary">💾 Сохранить настройки</button>
+                <button id="loadDefaults" class="btn btn-outline">🔄 Загрузить по умолчанию</button>
+            </div>
+        </div>
+    </section>
+
     <!-- Dashboard -->
     <main class="dashboard">
         <!-- Statistics Cards -->
