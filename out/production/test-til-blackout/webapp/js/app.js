@@ -5,7 +5,7 @@ class SecurityDashboard {
         this.currentPage = 1;
         this.pageSize = 20;
         this.filters = {};
-        this.socket = null;
+        this.isScanning = false;
         this.init();
     }
 
@@ -16,12 +16,10 @@ class SecurityDashboard {
     }
 
     setupEventListeners() {
-        // Кнопка запуска сканирования
         document.getElementById('startScanBtn').addEventListener('click', () => {
             this.startScan();
         });
 
-        // Фильтры
         document.getElementById('applyFilters').addEventListener('click', () => {
             this.applyFilters();
         });
@@ -30,7 +28,6 @@ class SecurityDashboard {
             this.clearFilters();
         });
 
-        // Пагинация
         document.getElementById('prevPage').addEventListener('click', () => {
             this.previousPage();
         });
@@ -39,12 +36,10 @@ class SecurityDashboard {
             this.nextPage();
         });
 
-        // Экспорт
         document.getElementById('exportCsv').addEventListener('click', () => {
             this.exportToCsv();
         });
 
-        // Модальное окно
         document.querySelector('.close').addEventListener('click', () => {
             this.closeModal();
         });
@@ -57,77 +52,15 @@ class SecurityDashboard {
     }
 
     connectWebSocket() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/scanner`;
-
-        try {
-            this.socket = new WebSocket(wsUrl);
-
-            this.socket.onopen = () => {
-                console.log('WebSocket connected');
-                this.updateConnectionStatus('online');
-                this.showNotification('Соединение установлено', 'success');
-            };
-
-            this.socket.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    this.handleWebSocketMessage(data);
-                } catch (e) {
-                    console.error('Error parsing WebSocket message:', e);
-                }
-            };
-
-            this.socket.onclose = () => {
-                console.log('WebSocket disconnected');
-                this.updateConnectionStatus('offline');
-                // Попытка переподключения через 5 секунд
-                setTimeout(() => this.connectWebSocket(), 5000);
-            };
-
-            this.socket.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                this.updateConnectionStatus('error');
-            };
-        } catch (error) {
-            console.error('WebSocket connection failed:', error);
-            this.updateConnectionStatus('error');
-        }
+        // Используем HTTP polling вместо WebSocket (для простоты)
+        this.startPolling();
     }
 
-    handleWebSocketMessage(message) {
-        switch (message.type) {
-            case 'NEW_VULNERABILITY':
-                this.addNewVulnerability(message.data);
-                break;
-            case 'SCAN_STARTED':
-                this.showNotification('Сканирование запущено', 'info');
-                break;
-            case 'SCAN_COMPLETED':
-                this.showNotification('Сканирование завершено', 'success');
-                this.loadInitialData(); // Перезагружаем все данные
-                break;
-            default:
-                console.log('Unknown message type:', message.type);
-        }
-    }
-
-    updateConnectionStatus(status) {
-        const statusElement = document.getElementById('connectionStatus');
-        if (statusElement) {
-            statusElement.className = `status-${status}`;
-            statusElement.textContent = `● ${this.getStatusText(status)}`;
-        }
-    }
-
-    getStatusText(status) {
-        const statusMap = {
-            online: 'Online',
-            offline: 'Offline',
-            error: 'Error',
-            connecting: 'Connecting...'
-        };
-        return statusMap[status] || 'Unknown';
+    startPolling() {
+        // Опрашиваем сервер каждые 2 секунды
+        setInterval(() => {
+            this.loadInitialData();
+        }, 2000);
     }
 
     async loadInitialData() {
@@ -139,33 +72,69 @@ class SecurityDashboard {
                 this.renderTable();
                 this.updateStats();
                 this.populateFilters();
-            } else {
-                throw new Error('Failed to load data');
             }
         } catch (error) {
-            console.error('Error loading initial data:', error);
-            this.showNotification('Ошибка загрузки данных', 'error');
+            console.error('Error loading data:', error);
         }
     }
 
-    async updateStats() {
-        try {
-            // Простая статистика на основе текущих данных
-            const stats = {
-                total: this.currentData.length,
-                critical: this.currentData.filter(item => item.severity === 'CRITICAL').length,
-                high: this.currentData.filter(item => item.severity === 'HIGH').length,
-                medium: this.currentData.filter(item => item.severity === 'MEDIUM').length,
-                low: this.currentData.filter(item => item.severity === 'LOW').length,
-                byCategory: this.getCategoryStats(),
-                byBank: this.getBankStats()
-            };
-
-            this.updateStatsDisplay(stats);
-            this.updateCharts(stats);
-        } catch (error) {
-            console.error('Error updating stats:', error);
+    async startScan() {
+        if (this.isScanning) {
+            this.showNotification('Сканирование уже выполняется', 'warning');
+            return;
         }
+
+        try {
+            const response = await fetch('/api/scan/start', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (response.ok) {
+                this.isScanning = true;
+                this.updateScanButton(true);
+                this.showNotification('Сканирование запущено', 'success');
+
+                // Очищаем предыдущие результаты
+                this.currentData = [];
+                this.filteredData = [];
+                this.renderTable();
+                this.updateStats();
+            } else {
+                throw new Error('Server error');
+            }
+        } catch (error) {
+            console.error('Error starting scan:', error);
+            this.showNotification('Ошибка запуска сканирования', 'error');
+        }
+    }
+
+    updateScanButton(scanning) {
+        const btn = document.getElementById('startScanBtn');
+        if (scanning) {
+            btn.innerHTML = '⏳ Сканирование...';
+            btn.disabled = true;
+        } else {
+            btn.innerHTML = '🚀 Запустить сканирование';
+            btn.disabled = false;
+        }
+    }
+
+    updateStats() {
+        const stats = {
+            total: this.currentData.length,
+            critical: this.currentData.filter(item => item.severity === 'CRITICAL').length,
+            high: this.currentData.filter(item => item.severity === 'HIGH').length,
+            medium: this.currentData.filter(item => item.severity === 'MEDIUM').length,
+            low: this.currentData.filter(item => item.severity === 'LOW').length,
+            byCategory: this.getCategoryStats(),
+            byBank: this.getBankStats()
+        };
+
+        this.updateStatsDisplay(stats);
+        this.updateCharts(stats);
     }
 
     getCategoryStats() {
@@ -212,7 +181,6 @@ class SecurityDashboard {
         if (!chart) return;
 
         const total = stats.total || 1;
-
         const data = [
             { label: 'Критические', value: stats.critical, color: '#ef4444', percent: (stats.critical / total * 100) },
             { label: 'Высокие', value: stats.high, color: '#f59e0b', percent: (stats.high / total * 100) },
@@ -221,7 +189,7 @@ class SecurityDashboard {
         ].filter(item => item.value > 0);
 
         if (data.length === 0) {
-            chart.innerHTML = '<div class="chart-placeholder">Нет данных для отображения</div>';
+            chart.innerHTML = '<div class="chart-placeholder">Нет данных</div>';
             return;
         }
 
@@ -249,7 +217,6 @@ class SecurityDashboard {
         if (!chart) return;
 
         const total = Object.values(categoryData).reduce((sum, val) => sum + val, 0) || 1;
-
         const data = Object.entries(categoryData)
             .map(([label, value]) => ({
                 label: this.shortenCategoryName(label),
@@ -257,10 +224,10 @@ class SecurityDashboard {
                 percent: (value / total * 100)
             }))
             .sort((a, b) => b.value - a.value)
-            .slice(0, 8); // Топ-8 категорий
+            .slice(0, 8);
 
         if (data.length === 0) {
-            chart.innerHTML = '<div class="chart-placeholder">Нет данных для отображения</div>';
+            chart.innerHTML = '<div class="chart-placeholder">Нет данных</div>';
             return;
         }
 
@@ -305,15 +272,11 @@ class SecurityDashboard {
 
         if (!categoryFilter || !bankFilter) return;
 
-        // Очищаем существующие опции (кроме первой)
-        while (categoryFilter.children.length > 1) {
-            categoryFilter.removeChild(categoryFilter.lastChild);
-        }
-        while (bankFilter.children.length > 1) {
-            bankFilter.removeChild(bankFilter.lastChild);
-        }
+        // Очищаем существующие опции
+        while (categoryFilter.children.length > 1) categoryFilter.removeChild(categoryFilter.lastChild);
+        while (bankFilter.children.length > 1) bankFilter.removeChild(bankFilter.lastChild);
 
-        // Получаем уникальные категории и банки
+        // Добавляем новые опции
         const categories = [...new Set(this.currentData.map(item => item.category))].sort();
         const banks = [...new Set(this.currentData.map(item => item.bankName))].sort();
 
@@ -343,11 +306,9 @@ class SecurityDashboard {
         if (bank) this.filters.bank = bank;
 
         this.filteredData = this.currentData.filter(item => {
-            return (
-                (!this.filters.severity || item.severity === this.filters.severity) &&
-                (!this.filters.category || item.category === this.filters.category) &&
-                (!this.filters.bank || item.bankName === this.filters.bank)
-            );
+            return (!this.filters.severity || item.severity === this.filters.severity) &&
+                   (!this.filters.category || item.category === this.filters.category) &&
+                   (!this.filters.bank || item.bankName === this.filters.bank);
         });
 
         this.currentPage = 1;
@@ -404,7 +365,6 @@ class SecurityDashboard {
             </td>
         `;
 
-        // Добавляем обработчик для кнопки подробнее
         row.querySelector('.view-details').addEventListener('click', () => {
             this.showVulnerabilityDetails(item);
         });
@@ -420,7 +380,6 @@ class SecurityDashboard {
         if (!modal || !modalTitle || !modalContent) return;
 
         modalTitle.textContent = item.vulnerabilityTitle;
-
         modalContent.innerHTML = `
             <div class="vulnerability-details">
                 <div class="detail-group">
@@ -449,9 +408,7 @@ class SecurityDashboard {
                 </div>
                 <div class="detail-group">
                     <label>Доказательство:</label>
-                    <div class="proof">
-                        ${this.formatProof(item.proof || 'Нет информации')}
-                    </div>
+                    <div class="proof">${this.formatProof(item.proof || 'Нет информации')}</div>
                 </div>
                 <div class="detail-group">
                     <label>Рекомендации:</label>
@@ -465,9 +422,7 @@ class SecurityDashboard {
 
     closeModal() {
         const modal = document.getElementById('vulnerabilityModal');
-        if (modal) {
-            modal.style.display = 'none';
-        }
+        if (modal) modal.style.display = 'none';
     }
 
     updatePagination() {
@@ -476,17 +431,9 @@ class SecurityDashboard {
         const prevButton = document.getElementById('prevPage');
         const nextButton = document.getElementById('nextPage');
 
-        if (pageInfo) {
-            pageInfo.textContent = `Страница ${this.currentPage} из ${totalPages}`;
-        }
-
-        if (prevButton) {
-            prevButton.disabled = this.currentPage === 1;
-        }
-
-        if (nextButton) {
-            nextButton.disabled = this.currentPage === totalPages || totalPages === 0;
-        }
+        if (pageInfo) pageInfo.textContent = `Страница ${this.currentPage} из ${totalPages}`;
+        if (prevButton) prevButton.disabled = this.currentPage === 1;
+        if (nextButton) nextButton.disabled = this.currentPage === totalPages || totalPages === 0;
     }
 
     previousPage() {
@@ -504,53 +451,6 @@ class SecurityDashboard {
         }
     }
 
-    addNewVulnerability(vulnerability) {
-        // Добавляем новую уязвимость в начало списка
-        this.currentData.unshift(vulnerability);
-
-        // Применяем текущие фильтры
-        if (this.passesFilters(vulnerability)) {
-            this.filteredData.unshift(vulnerability);
-            // Если мы на первой странице, обновляем таблицу
-            if (this.currentPage === 1) {
-                this.renderTable();
-            }
-        }
-
-        this.updateStats();
-        this.showNewVulnerabilityNotification(vulnerability);
-    }
-
-    passesFilters(vulnerability) {
-        return (
-            (!this.filters.severity || vulnerability.severity === this.filters.severity) &&
-            (!this.filters.category || vulnerability.category === this.filters.category) &&
-            (!this.filters.bank || vulnerability.bankName === this.filters.bank)
-        );
-    }
-
-    showNewVulnerabilityNotification(vulnerability) {
-        const notifications = document.getElementById('notifications');
-        if (!notifications) return;
-
-        const notification = document.createElement('div');
-        notification.className = `notification ${vulnerability.severity.toLowerCase()}`;
-        notification.innerHTML = `
-            <strong>Новая уязвимость</strong>
-            <div>${this.escapeHtml(vulnerability.vulnerabilityTitle)}</div>
-            <small>Банк: ${this.escapeHtml(vulnerability.bankName)} | Уровень: ${vulnerability.severity}</small>
-        `;
-
-        notifications.appendChild(notification);
-
-        // Автоматическое удаление через 5 секунд
-        setTimeout(() => {
-            if (notification.parentNode) {
-                notification.parentNode.removeChild(notification);
-            }
-        }, 5000);
-    }
-
     showNotification(message, type = 'info') {
         const notifications = document.getElementById('notifications');
         if (!notifications) return;
@@ -565,39 +465,7 @@ class SecurityDashboard {
             if (notification.parentNode) {
                 notification.parentNode.removeChild(notification);
             }
-        }, 3000);
-    }
-
-    async startScan() {
-        try {
-            const banks = [
-                'https://vbank.open.bankingapi.ru',
-                'https://abank.open.bankingapi.ru',
-                'https://sbank.open.bankingapi.ru'
-            ];
-
-            const response = await fetch('/api/scan/start', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ banks })
-            });
-
-            if (response.ok) {
-                this.showNotification('Сканирование запущено', 'success');
-                // Очищаем текущие данные
-                this.currentData = [];
-                this.filteredData = [];
-                this.renderTable();
-                this.updateStats();
-            } else {
-                throw new Error('Server responded with error');
-            }
-        } catch (error) {
-            console.error('Error starting scan:', error);
-            this.showNotification('Ошибка запуска сканирования', 'error');
-        }
+        }, 5000);
     }
 
     exportToCsv() {
@@ -618,10 +486,7 @@ class SecurityDashboard {
             `"${(item.recommendation || '').replace(/"/g, '""')}"`
         ]);
 
-        const csvContent = [headers, ...csvData]
-            .map(row => row.join(','))
-            .join('\n');
-
+        const csvContent = [headers, ...csvData].map(row => row.join(',')).join('\n');
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);
@@ -639,38 +504,29 @@ class SecurityDashboard {
 
     formatProof(text) {
         try {
-            // Пытаемся распарсить JSON для красивого форматирования
             const obj = JSON.parse(text);
             return this.syntaxHighlight(JSON.stringify(obj, null, 2));
         } catch (e) {
-            // Если это не JSON, просто возвращаем текст с экранированием
             return this.escapeHtml(text);
         }
     }
 
     syntaxHighlight(json) {
-        json = json.replace(/&/g, '&amp;').replace(/</g, '<').replace(/>/g, '>');
+        json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
             let cls = 'number';
             if (/^"/.test(match)) {
-                if (/:$/.test(match)) {
-                    cls = 'key';
-                } else {
-                    cls = 'string';
-                }
-            } else if (/true|false/.test(match)) {
-                cls = 'boolean';
-            } else if (/null/.test(match)) {
-                cls = 'null';
-            }
+                if (/:$/.test(match)) cls = 'key';
+                else cls = 'string';
+            } else if (/true|false/.test(match)) cls = 'boolean';
+            else if (/null/.test(match)) cls = 'null';
             return '<span class="' + cls + '">' + match + '</span>';
         });
     }
 
     escapeHtml(unsafe) {
         if (unsafe === null || unsafe === undefined) return '';
-        return unsafe
-            .toString()
+        return unsafe.toString()
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
