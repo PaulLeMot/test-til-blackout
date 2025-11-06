@@ -13,25 +13,6 @@ import java.util.HashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.Set;
 
-// Добавляем простой JSON парсер
-class SimpleJsonParser {
-    public static Map<String, Object> parseJson(String json) {
-        Map<String, Object> result = new HashMap<>();
-        json = json.trim().substring(1, json.length() - 1); // Remove {}
-        String[] pairs = json.split(",");
-
-        for (String pair : pairs) {
-            String[] keyValue = pair.split(":", 2);
-            if (keyValue.length == 2) {
-                String key = keyValue[0].trim().replace("\"", "");
-                String value = keyValue[1].trim().replace("\"", "");
-                result.put(key, value);
-            }
-        }
-        return result;
-    }
-}
-
 public class WebServer {
     private HttpServer server;
     private int port;
