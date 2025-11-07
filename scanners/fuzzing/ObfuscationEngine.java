@@ -9,6 +9,91 @@ public class ObfuscationEngine {
     private static final String BASE32_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
     private static final String BASE58_CHARS = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
+    // 🔥 ДОБАВЛЕН НОВЫЙ МЕТОД
+    public List<String> advancedObfuscate(String payload) {
+        List<String> obfuscated = new ArrayList<>();
+
+        if (payload == null || payload.isEmpty()) {
+            return obfuscated;
+        }
+
+        // 🔥 Многоуровневое кодирование
+        obfuscated.add(urlEncode(payload));
+        obfuscated.add(doubleUrlEncode(payload));
+        obfuscated.add(htmlEntityEncode(payload));
+        obfuscated.add(unicodeEncode(payload));
+        obfuscated.add(hexEncode(payload));
+        obfuscated.add(base64Encode(payload));
+
+        // 🔥 Разделение пейлоадов
+        obfuscated.addAll(splitPayload(payload));
+
+        // 🔥 Использование нестандартных символов
+        obfuscated.addAll(nonStandardChars(payload));
+
+        // 🔥 Case-манипуляции
+        obfuscated.add(mixedCase(payload));
+        obfuscated.add(randomCase(payload));
+
+        // 🔥 Комбинированные методы
+        obfuscated.add(urlEncode(base64Encode(payload)));
+        obfuscated.add(htmlEntityEncode(urlEncode(payload)));
+        obfuscated.add(unicodeEncode(base64Encode(payload)));
+
+        return obfuscated;
+    }
+
+    // 🔥 ДОБАВЛЕНЫ НОВЫЕ МЕТОДЫ ДЛЯ advancedObfuscate
+    private List<String> splitPayload(String payload) {
+        List<String> splits = new ArrayList<>();
+
+        if (payload.length() > 10) {
+            // Разделяем пейлоад на части
+            int mid = payload.length() / 2;
+            String part1 = payload.substring(0, mid);
+            String part2 = payload.substring(mid);
+
+            splits.add(part1 + " " + part2);
+            splits.add(part1 + "\t" + part2);
+            splits.add(part1 + "/* */" + part2);
+            splits.add(part1 + "%00" + part2);
+        }
+
+        return splits;
+    }
+
+    private List<String> nonStandardChars(String payload) {
+        List<String> variants = new ArrayList<>();
+
+        // Добавляем невидимые символы
+        variants.add(payload.replace("<", "\u0009<"));
+        variants.add(payload.replace(" ", "\u200B"));
+        variants.add(payload.replace(";", "\u202F;"));
+
+        // Null byte injection
+        variants.add(payload + "\u0000");
+        variants.add("\u0000" + payload);
+
+        return variants;
+    }
+
+    private String randomCase(String payload) {
+        StringBuilder sb = new StringBuilder();
+        for (char c : payload.toCharArray()) {
+            if (Character.isLetter(c)) {
+                if (random.nextBoolean()) {
+                    sb.append(Character.toUpperCase(c));
+                } else {
+                    sb.append(Character.toLowerCase(c));
+                }
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    // СУЩЕСТВУЮЩИЕ МЕТОДЫ (остаются без изменений)
     public List<String> obfuscatePayload(String payload) {
         List<String> obfuscated = new ArrayList<>();
 
