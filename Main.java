@@ -374,7 +374,8 @@ public class Main implements core.ScanLauncher {
 
                     for (ScanConfig.UserCredentials cred : config.getCredentials()) {
                         log("Аутентификация пользователя: " + cred.getUsername());
-                        String token = AuthManager.getBankAccessToken(cleanBaseUrl, cred.getUsername(), cred.getPassword());
+                        // Исправление: Используем getTeamToken вместо getBankAccessToken
+                        String token = AuthManager.getTeamToken(cleanBaseUrl, cred.getUsername(), cred.getPassword());
                         if (token != null) {
                             tokens.put(cred.getUsername(), token);
                             log("✅ Токен получен для " + cred.getUsername());
