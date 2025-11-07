@@ -311,7 +311,7 @@ class SecurityDashboard {
         try {
             this.isScanning = true;
             this.updateScanButton(true);
-            this.showNotification('Сканирование запущено', 'success');
+            this.showNotification('🔄 Запущено расширенное сканирование с новыми типами атак', 'success');
             this.lastDataCount = this.currentData.length;
 
             const response = await fetch('/api/scan/start', {
@@ -319,14 +319,14 @@ class SecurityDashboard {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(config) // Отправляем конфигурацию на сервер
+                body: JSON.stringify(config)
             });
 
             if (!response.ok) {
                 throw new Error('Server error');
             }
 
-            this.showNotification('Ожидайте первые результаты сканирования...', 'info');
+            this.showNotification('🔍 Сканирование запущено. Ожидайте первые результаты...', 'info');
 
         } catch (error) {
             console.error('Error starting scan:', error);
@@ -339,10 +339,10 @@ class SecurityDashboard {
     updateScanButton(scanning) {
         const btn = document.getElementById('startScanBtn');
         if (scanning) {
-            btn.innerHTML = '<span class="scanning-indicator"><span class="pulse">⏳</span> Сканирование...</span>';
+            btn.innerHTML = '<span class="scanning-indicator"><span class="pulse">⏳</span> Расширенное сканирование...</span>';
             btn.disabled = true;
         } else {
-            btn.innerHTML = '🚀 Запустить сканирование';
+            btn.innerHTML = '🚀 Запустить расширенное сканирование';
             btn.disabled = false;
         }
         this.updateConnectionStatus();
@@ -353,7 +353,7 @@ class SecurityDashboard {
         if (statusElement) {
             if (this.isScanning) {
                 statusElement.className = 'status-connecting';
-                statusElement.textContent = '● Сканирование...';
+                statusElement.textContent = '● Расширенное сканирование...';
             } else {
                 statusElement.className = 'status-online';
                 statusElement.textContent = '● Online';
@@ -500,7 +500,16 @@ class SecurityDashboard {
             'OWASP_API7_SSRF': 'API7 - SSRF',
             'OWASP_API8_SM': 'API8 - Security Misconfig',
             'OWASP_API9_INVENTORY': 'API9 - Inventory',
-            'OWASP_API10_UNSAFE_CONSUMPTION': 'API10 - Unsafe Consumption'
+            'OWASP_API10_UNSAFE_CONSUMPTION': 'API10 - Unsafe Consumption',
+            'SQL_INJECTION': 'SQL Injection',
+            'XSS': 'XSS',
+            'PATH_TRAVERSAL': 'Path Traversal',
+            'COMMAND_INJECTION': 'Command Injection',
+            'NOSQL_INJECTION': 'NoSQL Injection',
+            'BUSINESS_LOGIC_BYPASS': 'Business Logic Bypass',
+            'SSTI': 'Server-Side Template Injection',
+            'LDAP_INJECTION': 'LDAP Injection',
+            'SSRF': 'SSRF'
         };
         return shortNames[name] || name.substring(0, 20) + (name.length > 20 ? '...' : '');
     }

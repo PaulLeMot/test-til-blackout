@@ -13,18 +13,22 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
 
     private static final Logger logger = Logger.getLogger(AdvancedFuzzingScanner.class.getName());
     private FuzzingEngine fuzzingEngine;
+    private EnhancedFuzzingEngine enhancedFuzzingEngine;
     private VulnerabilityDetector vulnerabilityDetector;
+    private EnhancedVulnerabilityDetector enhancedDetector;
     private FuzzingApiClient fuzzingApiClient;
 
     public AdvancedFuzzingScanner() {
         this.fuzzingEngine = new FuzzingEngine();
+        this.enhancedFuzzingEngine = new EnhancedFuzzingEngine();
         this.vulnerabilityDetector = new VulnerabilityDetector();
+        this.enhancedDetector = new EnhancedVulnerabilityDetector();
         this.fuzzingApiClient = new HttpFuzzingApiClient();
     }
 
     @Override
     public String getName() {
-        return "Advanced Fuzzing Scanner";
+        return "Advanced Fuzzing Scanner v2.0";
     }
 
     @Override
@@ -32,7 +36,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
 
         try {
-            logger.info("🚀 Starting advanced fuzzing scan...");
+            logger.info("🚀 Starting enhanced fuzzing scan...");
 
             // Используем готовые эндпоинты из конфигурации или создаем тестовые
             List<ApiEndpoint> endpoints = createTestEndpoints();
@@ -43,7 +47,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             endpoints.sort((e1, e2) -> Integer.compare(getEndpointPriority(e2), getEndpointPriority(e1)));
 
             int totalRequests = 0;
-            int maxRequests = 200; // Лимит запросов для демо
+            int maxRequests = 300; // Увеличили лимит для расширенного фаззинга
 
             // Фаззинг каждого эндпоинта
             for (ApiEndpoint endpoint : endpoints) {
@@ -70,10 +74,10 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 }
             }
 
-            logger.info("✅ Fuzzing completed. Found " + vulnerabilities.size() + " potential vulnerabilities");
+            logger.info("✅ Enhanced fuzzing completed. Found " + vulnerabilities.size() + " potential vulnerabilities");
 
         } catch (Exception e) {
-            logger.severe("❌ Error during fuzzing scan: " + e.getMessage());
+            logger.severe("❌ Error during enhanced fuzzing scan: " + e.getMessage());
             e.printStackTrace();
         }
 
@@ -97,18 +101,29 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         for (ApiParameter parameter : endpoint.getParameters()) {
             logger.info("🔍 Testing parameter: " + parameter.getName() + " (" + parameter.getLocation() + ")");
 
-            // Генерируем приоритетные payloads для быстрого тестирования
-            List<String> payloads = fuzzingEngine.generatePriorityPayloads(parameter);
+            // 🔥 Используем улучшенные пейлоады для банковского API
+            List<String> payloads = enhancedFuzzingEngine.generateAdvancedPayloads(parameter);
+
+            logger.info("📦 Generated " + payloads.size() + " payloads for parameter " + parameter.getName());
 
             for (String payload : payloads) {
                 try {
+                    // Пробуем стандартный детектор
                     Vulnerability vulnerability = testParameter(
                             endpoint, parameter, payload, token, config
                     );
 
+                    // 🔥 Пробуем улучшенный детектор
+                    if (vulnerability == null) {
+                        vulnerability = testParameterWithEnhancedDetector(
+                                endpoint, parameter, payload, token, config
+                        );
+                    }
+
                     if (vulnerability != null) {
                         vulnerabilities.add(vulnerability);
-                        logger.info("🎉 Vulnerability found: " + vulnerability.getTitle());
+                        logger.info("🎉 Vulnerability found: " + vulnerability.getTitle() +
+                                " [" + vulnerability.getCategory() + "]");
                     }
 
                     // Rate limiting между запросами
@@ -130,7 +145,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             Map<String, String> headers = new HashMap<>();
             headers.put("Authorization", "Bearer " + token);
             headers.put("Content-Type", getContentType(endpoint));
-            headers.put("User-Agent", "SecurityScanner/1.0");
+            headers.put("User-Agent", "SecurityScanner/2.0");
 
             Map<String, String> params = new HashMap<>();
             Map<String, String> bodyParams = new HashMap<>();
@@ -146,8 +161,8 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     headers.put(parameter.getName(), payload);
                     break;
                 case PATH:
-                    // Заменяем в пути {param} на payload
-                    targetUrl = targetUrl.replace("{" + parameter.getName() + "}", payload);
+                    String encodedValue = encodePathParameter(payload);
+                    targetUrl = targetUrl.replace("{" + parameter.getName() + "}", encodedValue);
                     break;
                 case BODY:
                     bodyParams.put(parameter.getName(), payload);
@@ -181,13 +196,90 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         }
     }
 
+    private Vulnerability testParameterWithEnhancedDetector(ApiEndpoint endpoint, ApiParameter parameter,
+                                                            String payload, String token, ScanConfig config) {
+        try {
+            // Подготовка запроса (аналогично testParameter)
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Authorization", "Bearer " + token);
+            headers.put("Content-Type", getContentType(endpoint));
+            headers.put("User-Agent", "SecurityScanner/2.0-Enhanced");
+
+            Map<String, String> params = new HashMap<>();
+            Map<String, String> bodyParams = new HashMap<>();
+
+            String targetUrl = config.getBankBaseUrl() + endpoint.getPath();
+
+            // В зависимости от типа параметра
+            switch (parameter.getLocation()) {
+                case QUERY:
+                    params.put(parameter.getName(), payload);
+                    break;
+                case HEADER:
+                    headers.put(parameter.getName(), payload);
+                    break;
+                case PATH:
+                    String encodedValue = encodePathParameter(payload);
+                    targetUrl = targetUrl.replace("{" + parameter.getName() + "}", encodedValue);
+                    break;
+                case BODY:
+                    bodyParams.put(parameter.getName(), payload);
+                    break;
+            }
+
+            // Отправка запроса
+            HttpResponse response;
+            if (endpoint.getMethod() == HttpMethod.GET) {
+                response = fuzzingApiClient.sendRequest("GET", targetUrl, params, headers, null);
+            } else if (endpoint.getMethod() == HttpMethod.POST) {
+                response = fuzzingApiClient.sendRequest("POST", targetUrl, params, headers, bodyParams);
+            } else {
+                return null;
+            }
+
+            // 🔥 Используем улучшенный детектор
+            return enhancedDetector.analyzeEnhancedResponse(
+                    endpoint, parameter, payload, response
+            );
+
+        } catch (Exception e) {
+            logger.warning("❌ Enhanced detection failed for " + parameter.getName() + ": " + e.getMessage());
+            return null;
+        }
+    }
+
+    // НОВЫЙ МЕТОД: Кодирование параметров пути для избежания ошибок URL
+    private String encodePathParameter(String value) {
+        try {
+            // Кодируем специальные символы для пути URL, но сохраняем /
+            return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8)
+                    .replace("+", "%20")
+                    .replace("%2F", "/");
+        } catch (Exception e) {
+            return value;
+        }
+    }
+
     private List<ApiEndpoint> createTestEndpoints() {
         List<ApiEndpoint> endpoints = new ArrayList<>();
 
-        // Критичные банковские эндпоинты для тестирования
-        endpoints.add(new ApiEndpoint("/accounts", HttpMethod.GET, Arrays.asList(
+        // 🔥 Критичные банковские эндпоинты для тестирования с улучшенными параметрами
+        endpoints.add(new ApiEndpoint("/account-consents/request", HttpMethod.POST, Arrays.asList(
                 new ApiParameter("client_id", "string", ParameterLocation.QUERY, false),
+                new ApiParameter("reason", "string", ParameterLocation.BODY, true),
                 new ApiParameter("x-consent-id", "string", ParameterLocation.HEADER, false)
+        )));
+
+        endpoints.add(new ApiEndpoint("/payment-consents/request", HttpMethod.POST, Arrays.asList(
+                new ApiParameter("client_id", "string", ParameterLocation.QUERY, false),
+                new ApiParameter("reference", "string", ParameterLocation.BODY, true),
+                new ApiParameter("creditor_name", "string", ParameterLocation.BODY, false),
+                new ApiParameter("amount", "number", ParameterLocation.BODY, true)
+        )));
+
+        endpoints.add(new ApiEndpoint("/accounts", HttpMethod.POST, Arrays.asList(
+                new ApiParameter("nickname", "string", ParameterLocation.BODY, false),
+                new ApiParameter("client_id", "string", ParameterLocation.QUERY, false)
         )));
 
         endpoints.add(new ApiEndpoint("/accounts/{account_id}", HttpMethod.GET, Arrays.asList(
@@ -233,7 +325,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         if (path.contains("/delete") || path.contains("/update") || path.contains("/transfer")) {
             priority += 8;
         }
-        if (path.contains("/payment") || path.contains("/transfer")) {
+        if (path.contains("/payment") || path.contains("/transfer") || path.contains("/consent")) {
             priority += 7;
         }
         if (path.contains("/auth") || path.contains("/token")) {
@@ -258,6 +350,6 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
 
     private int estimateRequests(ApiEndpoint endpoint) {
         // Оценка количества запросов для этого эндпоинта
-        return endpoint.getParameters().size() * 5; // 5 payloads на параметр для демо
+        return endpoint.getParameters().size() * 8; // Увеличили для расширенного фаззинга
     }
 }
