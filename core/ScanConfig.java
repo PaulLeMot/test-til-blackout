@@ -14,6 +14,7 @@ public class ScanConfig {
     private String clientSecret;
     private String targetUrl;
     private String openApiSpecUrl;
+    private String consentId; // Новое поле для хранения ID согласия
 
     // Добавляем поля для хранения токенов пользователей
     private Map<String, String> userTokens = new HashMap<>();
@@ -52,6 +53,15 @@ public class ScanConfig {
     public String getOpenApiSpecUrl() { return openApiSpecUrl; }
     public void setOpenApiSpecUrl(String specUrl) { this.openApiSpecUrl = specUrl; }
 
+    // Геттер и сеттер для consentId
+    public String getConsentId() {
+        return consentId;
+    }
+
+    public void setConsentId(String consentId) {
+        this.consentId = consentId;
+    }
+
     // Новые методы для работы с токенами пользователей
     public Map<String, String> getUserTokens() { return userTokens; }
     public void setUserTokens(Map<String, String> userTokens) { this.userTokens = userTokens; }
@@ -75,10 +85,16 @@ public class ScanConfig {
     // Новое поле для хранения bankId
     private String bankId;
 
-    // Метод для получения bankId
+    /**
+     * Получает ID банка. Для sandbox среды использует team172
+     */
     public String getBankId() {
         if (bankId == null || bankId.isEmpty()) {
-            // Если bankId не задан, пытаемся извлечь из clientId
+            // Для sandbox среды используем только префикс team172
+            if (clientId != null && clientId.startsWith("team172")) {
+                return "team172"; // Фиксированный bankId для sandbox
+            }
+            // Для других случаев - стандартная логика
             if (clientId != null && clientId.contains("-")) {
                 return clientId.split("-")[0]; // Например, team172-8 -> team172
             }
@@ -90,6 +106,27 @@ public class ScanConfig {
     // Метод для установки bankId
     public void setBankId(String bankId) {
         this.bankId = bankId;
+    }
+
+    /**
+     * Получение токена банка для межбанковских запросов
+     * @return bank token для текущей конфигурации
+     */
+    public String getBankToken() {
+        // Для sandbox среды используем токен для team172
+        String bankToken = getUserToken("team172");
+
+        // Если не нашли, пробуем получить токен по умолчанию
+        if (bankToken == null || bankToken.isEmpty()) {
+            bankToken = getUserToken("default");
+        }
+
+        // Если все еще нет токена, используем основной токен доступа
+        if (bankToken == null || bankToken.isEmpty()) {
+            bankToken = getAccessToken();
+        }
+
+        return bankToken;
     }
 
     // Getters and Setters для новой конфигурации

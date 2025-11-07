@@ -1,4 +1,3 @@
-// scanners/fuzzing/HttpResponse.java
 package scanners.fuzzing;
 
 import java.util.Map;
@@ -17,7 +16,7 @@ public class HttpResponse {
         this.responseTime = responseTime;
     }
 
-    // Getters
+    // Геттеры
     public int getStatusCode() { return statusCode; }
     public String getBody() { return body; }
     public Map<String, String> getHeaders() { return headers; }

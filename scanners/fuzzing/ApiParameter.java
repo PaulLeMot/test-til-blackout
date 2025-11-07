@@ -13,7 +13,7 @@ public class ApiParameter {
         this.required = required;
     }
 
-    // Getters
+    // Геттеры
     public String getName() { return name; }
     public String getType() { return type; }
     public ParameterLocation getLocation() { return location; }
