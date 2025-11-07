@@ -14,7 +14,6 @@ public class ScannerService {
             "https://sbank.open.bankingapi.ru    "
     );
     private static final String PASSWORD = "***REMOVED***";
-
     private final WebServer webServer;
     private final ExecutorService executor;
     private boolean isScanning = false;
@@ -33,10 +32,8 @@ public class ScannerService {
         if (isScanning) {
             return false;
         }
-
         isScanning = true;
         notifyMessage("scan_started", "Сканирование запущено. Ожидайте результатов...");
-
         executor.submit(() -> {
             try {
                 runScan();
@@ -48,7 +45,6 @@ public class ScannerService {
                 isScanning = false;
             }
         });
-
         return true;
     }
 
@@ -62,7 +58,7 @@ public class ScannerService {
                 new API3_BOScanner(),
                 new API4_URCScanner(),
                 new API5_BrokenFunctionLevelAuthScanner(),
-                new API6_BusinessFlowScanner(),
+                new API6_BusinessFlowScanner(), // Уже исправлен
                 new API7_SSRFScanner(),
                 new API8_SecurityConfigScanner(),
                 new API9_InventoryScanner(),
@@ -70,7 +66,6 @@ public class ScannerService {
         );
 
         int totalVulnerabilities = 0;
-
         for (String baseUrl : BANKS) {
             notifyMessage("info", "=".repeat(50));
             notifyMessage("info", "Сканирование: " + baseUrl);
@@ -78,7 +73,6 @@ public class ScannerService {
 
             String cleanBaseUrl = baseUrl.trim();
             String specUrl = cleanBaseUrl + "/openapi.json";
-
             notifyMessage("info", "Загрузка OpenAPI-спецификации: " + specUrl);
 
             // Инициализация конфигурации
@@ -88,30 +82,35 @@ public class ScannerService {
             config.setBankBaseUrl(cleanBaseUrl);
             config.setClientId("team172-8");
             config.setClientSecret(PASSWORD);
+            config.setBankId("team172");
 
-            // Получение токенов
+            // ИСПРАВЛЕНО: Используем правильный метод для получения токенов
             notifyMessage("info", "Получение токенов для пользователей...");
-            Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(cleanBaseUrl, PASSWORD);
-            config.setUserTokens(tokens);
 
+            // Настраиваем конфиг для получения токенов
+            ScanConfig tokenConfig = new ScanConfig();
+            tokenConfig.setBankBaseUrl(cleanBaseUrl);
+            tokenConfig.setClientSecret(PASSWORD);
+            tokenConfig.setClientId("team172-8");
+            tokenConfig.setBankId("team172");
+
+            Map<String, String> tokens = AuthManager.getTokensForScanning(tokenConfig);
+
+            config.setUserTokens(tokens);
             notifyMessage("info", "Получено токенов: " + tokens.size());
 
             // Запуск сканеров
             List<Vulnerability> allVulnerabilities = new ArrayList<>();
-
             for (SecurityScanner scanner : securityScanners) {
                 notifyMessage("info", "-".repeat(40));
                 notifyMessage("info", "Запуск сканера: " + scanner.getName());
-
                 try {
                     List<Vulnerability> scannerResults = scanner.scan(null, config, new HttpApiClient());
                     allVulnerabilities.addAll(scannerResults);
-
                     // Сохранение результатов в реальном времени
                     for (Vulnerability vuln : scannerResults) {
                         String proof = extractProofFromVulnerability(vuln);
                         String recommendation = extractRecommendationFromVulnerability(vuln);
-
                         webServer.saveScanResult(
                                 cleanBaseUrl,
                                 vuln.getTitle(),
@@ -122,25 +121,20 @@ public class ScannerService {
                                 recommendation,
                                 scanner.getName()
                         );
-
                         // Отправка уведомления о новой уязвимости
                         notifyNewVulnerability(vuln, cleanBaseUrl, scanner.getName());
                     }
-
                     notifyMessage("info", "Сканер " + scanner.getName() +
                             " завершен. Найдено уязвимостей: " + scannerResults.size());
-
                 } catch (Exception e) {
                     notifyMessage("error", "Ошибка в сканере " + scanner.getName() + ": " + e.getMessage());
                 }
-
                 // Задержка между сканерами
                 Thread.sleep(2000);
             }
 
             totalVulnerabilities += allVulnerabilities.size();
             notifyMessage("info", "Банк " + cleanBaseUrl + " завершен. Найдено уязвимостей: " + allVulnerabilities.size());
-
             // Задержка между банками
             Thread.sleep(3000);
         }
@@ -154,29 +148,22 @@ public class ScannerService {
         if (vuln.getEvidence() != null && !vuln.getEvidence().isEmpty()) {
             return vuln.getEvidence();
         }
-
         StringBuilder proofBuilder = new StringBuilder();
-
         if (vuln.getEndpoint() != null) {
             proofBuilder.append("Эндпоинт: ").append(vuln.getEndpoint()).append("\n");
         }
-
         if (vuln.getMethod() != null) {
             proofBuilder.append("Метод: ").append(vuln.getMethod()).append("\n");
         }
-
         if (vuln.getParameter() != null) {
             proofBuilder.append("Параметр: ").append(vuln.getParameter()).append("\n");
         }
-
         if (vuln.getStatusCode() != -1) {
             proofBuilder.append("Статус код: ").append(vuln.getStatusCode()).append("\n");
         }
-
         if (proofBuilder.length() > 0) {
             return proofBuilder.toString();
         }
-
         return "Доказательство не доступно для уязвимости: " + vuln.getTitle();
     }
 
@@ -219,7 +206,6 @@ public class ScannerService {
         data.put("proof", extractProofFromVulnerability(vuln));
         data.put("recommendation", extractRecommendationFromVulnerability(vuln));
         data.put("scannerName", scannerName);
-
         notifyMessage("new_vulnerability", data);
     }
 

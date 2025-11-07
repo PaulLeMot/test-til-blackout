@@ -13,15 +13,8 @@ public class ApiParameter {
         this.required = required;
     }
 
-    // Геттеры
     public String getName() { return name; }
     public String getType() { return type; }
     public ParameterLocation getLocation() { return location; }
     public boolean isRequired() { return required; }
-
-    @Override
-    public String toString() {
-        return String.format("ApiParameter{name='%s', type='%s', location=%s, required=%s}",
-                name, type, location, required);
-    }
 }

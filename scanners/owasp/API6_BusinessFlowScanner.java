@@ -62,9 +62,17 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         }
 
         try {
-            // Получаем токены через AuthManager
+            // ИСПРАВЛЕНО: Используем правильный метод для получения токенов
             System.out.println("(API-6) Получение токенов для команды через AuthManager...");
-            Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(baseUrl, password);
+
+            // Настраиваем конфиг для получения токенов
+            ScanConfig tokenConfig = new ScanConfig();
+            tokenConfig.setBankBaseUrl(baseUrl);
+            tokenConfig.setClientSecret(password);
+            tokenConfig.setClientId(config.getClientId() != null ? config.getClientId() :"***REMOVED***");
+            tokenConfig.setBankId("team172");
+
+            Map<String, String> tokens = AuthManager.getTokensForScanning(tokenConfig);
 
             if (tokens.isEmpty()) {
                 System.err.println("(API-6) Не удалось получить токены для Business Flow теста.");
@@ -73,8 +81,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             // Ищем банковский токен или берем первый доступный
             String token = null;
-            if (tokens.containsKey("bank_token")) {
-                token = tokens.get("bank_token");
+            if (tokens.containsKey("bank")) {
+                token = tokens.get("bank");
                 System.out.println("(API-6) Используется банковский токен для тестирования бизнес-процессов");
             } else {
                 token = tokens.values().iterator().next();
@@ -124,6 +132,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             System.err.println("(API-6) В OpenAPI спецификации не найдены пути");
             return businessEndpoints;
         }
+
         for (Map.Entry<String, PathItem> pathEntry : paths.entrySet()) {
             String path = pathEntry.getKey();
             PathItem pathItem = pathEntry.getValue();
@@ -131,6 +140,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             if (isTechnicalEndpoint(path)) {
                 continue;
             }
+
             Map<PathItem.HttpMethod, Operation> operations = pathItem.readOperationsMap();
             for (Map.Entry<PathItem.HttpMethod, Operation> opEntry : operations.entrySet()) {
                 PathItem.HttpMethod httpMethod = opEntry.getKey();
@@ -162,10 +172,12 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         if ("GET".equals(method) && !isCriticalGetOperation(path, operation)) {
             return false;
         }
+
         // Критические операции всегда считаем чувствительными
         if (CRITICAL_OPERATIONS.contains(method)) {
             return true;
         }
+
         // Проверяем теги операции
         if (operation.getTags() != null) {
             for (String tag : operation.getTags()) {
@@ -174,6 +186,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 }
             }
         }
+
         return false;
     }
 
@@ -191,6 +204,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         endpoint.setMethod(method);
         endpoint.setOperation(operation);
         endpoint.setRequiresParameters(path.contains("{"));
+
         // Определяем критичность на основе пути, метода и тегов
         if (path.contains("/payments") && "POST".equals(method)) {
             endpoint.setCriticality(BusinessFlowEndpoint.Criticality.HIGH);
@@ -216,6 +230,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             endpoint.setDescription("Бизнес-процесс: " +
                     (operation.getSummary() != null ? operation.getSummary() : path));
         }
+
         return endpoint;
     }
 
@@ -229,7 +244,9 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         e.getCriticality() == BusinessFlowEndpoint.Criticality.MEDIUM)
                 .filter(e -> CRITICAL_OPERATIONS.contains(e.getMethod()))
                 .collect(Collectors.toList());
+
         System.out.println("(API-6) Тестирование автоматизации для " + testableEndpoints.size() + " эндпоинтов");
+
         for (BusinessFlowEndpoint endpoint : testableEndpoints) {
             testEndpointAutomation(baseUrl, token, apiClient, endpoint, vulnerabilities);
         }
@@ -241,8 +258,10 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             Map<String, String> headers = createAuthHeaders(token, "team172");
             String testPayload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
+
             int successfulCalls = 0;
             int totalCalls = 3;
+
             for (int i = 0; i < totalCalls; i++) {
                 System.out.println("(API-6) Автоматизация тест " + (i+1) + "/" + totalCalls + ": " + endpoint.getMethod() + " " + url);
                 Object response = apiClient.executeRequest(endpoint.getMethod(), url, testPayload, headers);
@@ -258,6 +277,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         }
                     }
                 }
+
                 try {
                     Thread.sleep(500);
                 } catch (InterruptedException ie) {
@@ -265,6 +285,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                     break;
                 }
             }
+
             // Если все запросы успешны - возможна автоматизация
             if (successfulCalls == totalCalls) {
                 Vulnerability vuln = createBusinessFlowVulnerability(
@@ -294,7 +315,9 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 .filter(e -> CRITICAL_OPERATIONS.contains(e.getMethod()))
                 .limit(3) // Ограничиваем количество тестируемых эндпоинтов
                 .collect(Collectors.toList());
+
         System.out.println("(API-6) Rate limiting тест для " + testableEndpoints.size() + " эндпоинтов");
+
         for (BusinessFlowEndpoint endpoint : testableEndpoints) {
             testEndpointRateLimiting(baseUrl, token, apiClient, endpoint, vulnerabilities);
         }
@@ -306,9 +329,12 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             Map<String, String> headers = createAuthHeaders(token, "team172");
             String testPayload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
+
             List<Integer> responseCodes = new ArrayList<>();
             int rapidRequests = 5;
+
             System.out.println("(API-6) Rate limiting тест для: " + endpoint.getMethod() + " " + url);
+
             for (int i = 0; i < rapidRequests; i++) {
                 Object response = apiClient.executeRequest(endpoint.getMethod(), url, testPayload, headers);
                 if (response instanceof core.HttpApiClient.ApiResponse) {
@@ -316,6 +342,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                     responseCodes.add(apiResponse.getStatusCode());
                     System.out.println("(API-6) Rate limiting тест " + (i+1) + "/" + rapidRequests + ": " + apiResponse.getStatusCode());
                 }
+
                 try {
                     Thread.sleep(100); // Минимальная пауза для имитации быстрых запросов
                 } catch (InterruptedException ie) {
@@ -323,10 +350,12 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                     break;
                 }
             }
+
             boolean hasRateLimiting = responseCodes.stream().anyMatch(code -> code == 429);
             int successCount = (int) responseCodes.stream()
                     .filter(code -> code >= 200 && code < 300)
                     .count();
+
             // Если нет rate limiting и есть успешные запросы - уязвимость
             if (!hasRateLimiting && successCount > 0) {
                 Vulnerability vuln = createBusinessFlowVulnerability(
@@ -371,12 +400,14 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         description.contains("validation") ||
                         description.contains("approval") ||
                         description.contains("confirm");
+
         List<Parameter> parameters = operation.getParameters();
         boolean hasSecurityParameters = parameters != null && parameters.stream()
                 .anyMatch(p -> p.getName().toLowerCase().contains("consent") ||
                         p.getName().toLowerCase().contains("auth") ||
                         p.getName().toLowerCase().contains("token") ||
                         p.getName().toLowerCase().contains("signature"));
+
         if (!hasProtectionIndicators && !hasSecurityParameters) {
             Vulnerability vuln = createBusinessFlowVulnerability(
                     endpoint.getPath(),
@@ -398,12 +429,15 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             Map<String, String> headers = createAuthHeaders(token, "team172");
             String testPayload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
+
             // Первый запрос
             Object response1 = apiClient.executeRequest(endpoint.getMethod(), url, testPayload, headers);
             // Немедленный второй идентичный запрос
             Object response2 = apiClient.executeRequest(endpoint.getMethod(), url, testPayload, headers);
+
             boolean firstSuccess = isSuccessfulResponse(response1);
             boolean secondSuccess = isSuccessfulResponse(response2);
+
             // Если оба запроса успешны - возможна проблема с идемпотентностью
             if (firstSuccess && secondSuccess) {
                 Vulnerability vuln = createBusinessFlowVulnerability(
@@ -431,6 +465,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 .filter(e -> e.getCriticality() == BusinessFlowEndpoint.Criticality.HIGH)
                 .filter(e -> CRITICAL_OPERATIONS.contains(e.getMethod()))
                 .collect(Collectors.toList());
+
         for (BusinessFlowEndpoint endpoint : testableEndpoints) {
             testBusinessLogicValidation(baseUrl, token, apiClient, endpoint, vulnerabilities);
         }
@@ -451,6 +486,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             Map<String, String> headers = createAuthHeaders(token, "team172");
             String negativePayload = createNegativeValuePayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
+
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, negativePayload, headers);
             if (isSuccessfulResponse(response)) {
                 Vulnerability vuln = createBusinessFlowVulnerability(
@@ -475,6 +511,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             Map<String, String> headers = createAuthHeaders(token, "team172");
             String boundaryPayload = createBoundaryValuePayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
+
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, boundaryPayload, headers);
             if (isSuccessfulResponse(response)) {
                 Vulnerability vuln = createBusinessFlowVulnerability(
@@ -499,6 +536,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             Map<String, String> headers = createAuthHeaders(token, "team172");
             String invalidTypePayload = createInvalidDataTypePayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
+
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, invalidTypePayload, headers);
             if (isSuccessfulResponse(response)) {
                 Vulnerability vuln = createBusinessFlowVulnerability(
@@ -523,6 +561,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             Map<String, String> headers = createAuthHeaders(token, "team172");
             String minimalPayload = createMinimalPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
+
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, minimalPayload, headers);
             if (isSuccessfulResponse(response)) {
                 Vulnerability vuln = createBusinessFlowVulnerability(
@@ -557,6 +596,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 .anyMatch(e -> e.getPath().contains("/payments") && "POST".equals(e.getMethod()));
         boolean hasPaymentConsentEndpoint = endpoints.values().stream()
                 .anyMatch(e -> e.getPath().contains("/payment-consents/request") && "POST".equals(e.getMethod()));
+
         // Если есть платежи, но нет явного требования согласий - возможна проблема
         if (hasPaymentEndpoint && !hasPaymentConsentEndpoint) {
             Vulnerability vuln = createBusinessFlowVulnerability(
@@ -579,6 +619,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         List<BusinessFlowEndpoint> paymentEndpoints = endpoints.values().stream()
                 .filter(e -> e.getPath().contains("/payments") && "POST".equals(e.getMethod()))
                 .collect(Collectors.toList());
+
         for (BusinessFlowEndpoint endpoint : paymentEndpoints) {
             testPaymentWithoutConsent(baseUrl, token, apiClient, endpoint, vulnerabilities);
         }
@@ -592,6 +633,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             // Специально не добавляем consent headers
             String paymentPayload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
+
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, paymentPayload, headers);
             if (isSuccessfulResponse(response)) {
                 Vulnerability vuln = createBusinessFlowVulnerability(
@@ -618,6 +660,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 .filter(e -> e.getCriticality() == BusinessFlowEndpoint.Criticality.HIGH)
                 .filter(e -> CRITICAL_OPERATIONS.contains(e.getMethod()))
                 .collect(Collectors.toList());
+
         for (BusinessFlowEndpoint endpoint : criticalEndpoints) {
             testDirectEndpointAccess(baseUrl, token, apiClient, endpoint, vulnerabilities);
         }
@@ -630,6 +673,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             Map<String, String> headers = createAuthHeaders(token, "team172");
             String payload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
+
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, payload, headers);
             if (isSuccessfulResponse(response)) {
                 // Если операция выполняется без дополнительных проверок - возможна проблема
@@ -686,7 +730,6 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
     private String createSpecificTestPayload(BusinessFlowEndpoint endpoint) {
         String path = endpoint.getPath();
         String method = endpoint.getMethod();
-
         // Реальные payload из спецификации API
         if (path.contains("/payment-consents/request") && "POST".equals(method)) {
             return "{\"requesting_bank\":\"team172\",\"client_id\":\"team172-1\",\"debtor_account\":\"acc-1010\",\"amount\":100.00,\"currency\":\"RUB\",\"consent_type\":\"single_use\"}";
@@ -772,12 +815,14 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
     // Внутренний класс для представления бизнес-эндпоинта
     private static class BusinessFlowEndpoint {
         enum Criticality { LOW, MEDIUM, HIGH }
+
         private String path;
         private String method;
         private Operation operation;
         private Criticality criticality;
         private String description;
         private boolean requiresParameters;
+
         // Getters and setters
         public String getPath() { return path; }
         public void setPath(String path) { this.path = path; }

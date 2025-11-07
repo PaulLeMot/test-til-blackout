@@ -1,4 +1,3 @@
-// scanners/fuzzing/ParameterLocation.java
 package scanners.fuzzing;
 
 public enum ParameterLocation {
