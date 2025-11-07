@@ -327,6 +327,7 @@ public class Main implements core.ScanLauncher {
 
             // Создаём сканеры
             List<SecurityScanner> securityScanners = Arrays.asList(
+                    new scanners.fuzzing.AdvancedFuzzingScanner(),
                     new API1_BOLAScanner(),
                     new API2_BrokenAuthScanner(),
                     new API3_BOScanner(),
