@@ -288,10 +288,13 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
     /**
      * Получение реальных accountId из API
      */
+    /**
+     * Получение реальных accountId из API
+     */
     private List<String> getRealAccountIds(ScanConfig config, String bankToken, String consentId) {
         List<String> accountIds = new ArrayList<>();
         try {
-            String url = config.getBankBaseUrl() + "/accounts?client_id=team172-1";
+            String url = config.getBankBaseUrl() + "/accounts?client_id=team172";
 
             Map<String, String> headers = new HashMap<>();
             headers.put("Authorization", "Bearer " + bankToken);
@@ -299,7 +302,10 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             headers.put("X-Consent-Id", consentId);
             headers.put("Accept", "application/json");
 
-            HttpResponse response = httpClient.sendRequest("GET", url, new HashMap<>(), headers, null);
+            // Создаем пустой Map для query параметров
+            Map<String, String> queryParams = new HashMap<>();
+
+            HttpResponse response = httpClient.sendRequest("GET", url, queryParams, headers, null);
 
             if (response.getStatusCode() == 200) {
                 JSONObject json = new JSONObject(response.getBody());
@@ -632,12 +638,12 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         }
 
         public HttpResponse sendRequest(String method, String url,
-                                        Map<String, String> params,
+                                        Map<String, String> queryParams, // переименовано для ясности
                                         Map<String, String> headers,
                                         JSONObject jsonBody) throws Exception {
             long startTime = System.currentTimeMillis();
             // Строим полный URL с параметрами
-            String fullUrl = buildUrlWithParams(url, params);
+            String fullUrl = buildUrlWithParams(url, queryParams);
             java.net.http.HttpRequest.Builder requestBuilder = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(fullUrl))
                     .timeout(java.time.Duration.ofSeconds(10));
@@ -679,8 +685,8 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             );
         }
 
-        private String buildUrlWithParams(String baseUrl, Map<String, String> params) {
-            if (params == null || params.isEmpty()) {
+        private String buildUrlWithParams(String baseUrl, Map<String, String> queryParams) {
+            if (queryParams == null || queryParams.isEmpty()) {
                 return baseUrl;
             }
             StringBuilder urlBuilder = new StringBuilder(baseUrl);
@@ -690,7 +696,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 urlBuilder.append("&");
             }
             boolean first = true;
-            for (Map.Entry<String, String> entry : params.entrySet()) {
+            for (Map.Entry<String, String> entry : queryParams.entrySet()) {
                 if (!first) {
                     urlBuilder.append("&");
                 }
@@ -702,7 +708,6 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             return urlBuilder.toString();
         }
     }
-
     class BaselineRequestGenerator {
         private static final Map<String, String> SAMPLE_DATA = new HashMap<>();
         private Random random = new Random();
@@ -710,7 +715,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         private String consentId;
 
         static {
-            SAMPLE_DATA.put("client_id", "team172-1");
+            SAMPLE_DATA.put("client_id", "team172");
             SAMPLE_DATA.put("permissions", "[\"ReadAccountsDetail\",\"ReadBalances\"]");
             SAMPLE_DATA.put("reason", "Security testing");
             SAMPLE_DATA.put("requesting_bank", "team172");
@@ -840,7 +845,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 HttpClientWrapper client = new HttpClientWrapper();
                 // Формируем правильный запрос для создания согласия
                 JSONObject consentBody = new JSONObject();
-                consentBody.put("client_id", "team172-1");
+                consentBody.put("client_id", "team172"); // исправлено
                 consentBody.put("permissions", new JSONArray(Arrays.asList("ReadAccountsDetail", "ReadBalances")));
                 consentBody.put("reason", "Automated security testing");
                 consentBody.put("requesting_bank", "team172");
@@ -851,10 +856,13 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 headers.put("Content-Type", "application/json");
                 headers.put("X-Requesting-Bank", "team172");
 
+                // Создаем пустой Map для query параметров
+                Map<String, String> queryParams = new HashMap<>();
+
                 HttpResponse response = client.sendRequest(
                         "POST",
                         config.getBankBaseUrl() + "/account-consents/request",
-                        new HashMap<>(),
+                        queryParams,
                         headers,
                         consentBody
                 );

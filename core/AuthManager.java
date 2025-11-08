@@ -62,29 +62,28 @@ public class AuthManager {
     }
 
     /**
-     * Получение bank token для межбанковских запросов
+     * Получение bank token для межбанковских запросов (обновленная версия)
      */
     public static String getBankToken(String baseUrl, String teamToken, String bankId, String clientSecret) {
         try {
-            // Формируем URL с query параметрами
-            String authUrl = baseUrl + "/auth/bank-token?client_id=" + bankId + "&client_secret=" + clientSecret;
-            logger.info("🔐 Получение bank token для: " + bankId);
+            // Формируем URL с query параметрами как в curl
+            String authUrl = baseUrl + "/auth/bank-token?client_id=" + bankId +
+                    "&client_secret=" + clientSecret +
+                    "&grant_type=client_credentials";
 
-            // Тело запроса с target_bank
-            Map<String, String> requestBody = new HashMap<>();
-            requestBody.put("target_bank", bankId);
+            logger.info("🔐 Получение bank token для: " + bankId);
+            logger.info("📤 URL: " + authUrl);
 
             HttpClient client = HttpClient.newBuilder()
                     .version(HttpClient.Version.HTTP_1_1)
                     .connectTimeout(Duration.ofSeconds(10))
                     .build();
 
-            String jsonBody = new org.json.JSONObject(requestBody).toString();
-
+            // Используем BodyPublishers.noBody() как в curl
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(authUrl))
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.noBody()) // Важно: без тела как в curl
+                    .header("Content-Type", "application/x-www-form-urlencoded")
                     .header("Accept", "application/json")
                     .header("Authorization", "Bearer " + teamToken)
                     .timeout(Duration.ofSeconds(10))
@@ -98,12 +97,63 @@ public class AuthManager {
                 if (bankToken != null && isTokenValid(bankToken)) {
                     logger.info("✅ Bank token успешно получен");
                     return bankToken;
+                } else {
+                    logger.warning("⚠️ Bank token получен, но невалиден");
                 }
             } else {
-                logger.warning("❌ Ошибка получения bank token: " + response.body());
+                logger.warning("❌ Ошибка получения bank token. Status: " + response.statusCode());
+                logger.warning("❌ Response body: " + response.body());
             }
         } catch (Exception e) {
             logger.severe("❌ Ошибка получения bank token: " + e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Альтернативный метод получения bank token без team token (как в curl)
+     */
+    public static String getBankTokenDirect(String baseUrl, String bankId, String clientSecret) {
+        try {
+            // Формируем URL с query параметрами как в curl
+            String authUrl = baseUrl + "/auth/bank-token?client_id=" + bankId +
+                    "&client_secret=" + clientSecret +
+                    "&grant_type=client_credentials";
+
+            logger.info("🔐 Прямое получение bank token для: " + bankId);
+            logger.info("📤 URL: " + authUrl);
+
+            HttpClient client = HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
+
+            // Используем BodyPublishers.noBody() как в curl
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(authUrl))
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .header("Accept", "application/json")
+                    .timeout(Duration.ofSeconds(10))
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            logger.info("📡 Ответ bank token: " + response.statusCode());
+
+            if (response.statusCode() == 200) {
+                String bankToken = extractAccessTokenFromJson(response.body());
+                if (bankToken != null && isTokenValid(bankToken)) {
+                    logger.info("✅ Bank token успешно получен напрямую");
+                    return bankToken;
+                } else {
+                    logger.warning("⚠️ Bank token получен, но невалиден");
+                }
+            } else {
+                logger.warning("❌ Ошибка получения bank token. Status: " + response.statusCode());
+                logger.warning("❌ Response body: " + response.body());
+            }
+        } catch (Exception e) {
+            logger.severe("❌ Ошибка получения bank token напрямую: " + e.getMessage());
         }
         return null;
     }
@@ -201,9 +251,16 @@ public class AuthManager {
             return tokens;
         }
 
-        // 2. Получаем bank token для межбанковских запросов
+        // 2. Получаем bank token для межбанковских запросов (обновленный метод)
         logger.info("\n--- Шаг 2: Получение bank token ---");
         String bankToken = getBankToken(baseUrl, teamToken, bankId, password);
+
+        // Если не удалось получить bank token с team token, пробуем напрямую
+        if (bankToken == null) {
+            logger.info("🔄 Попытка прямого получения bank token...");
+            bankToken = getBankTokenDirect(baseUrl, bankId, password);
+        }
+
         if (bankToken != null) {
             tokens.put("bank", bankToken);
             tokens.put(bankId, bankToken);
