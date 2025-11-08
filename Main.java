@@ -333,12 +333,12 @@ public class Main implements core.ScanLauncher {
 //                    new scanners.fuzzing.AdvancedFuzzingScanner(),
 //                    new API1_BOLAScanner(),
 //                    new API2_BrokenAuthScanner(),
-                    new API3_BOScanner(),
+//                    new API3_BOScanner(),
 //                    new API4_URCScanner(),
 //                    new API5_BrokenFunctionLevelAuthScanner(),
-                    new API6_BusinessFlowScanner(),
-                    new API7_SSRFScanner(),
-                    new API8_SecurityConfigScanner(),
+//                    new API6_BusinessFlowScanner(),
+//                    new API7_SSRFScanner(),
+//                    new API8_SecurityConfigScanner(),
                     new API9_InventoryScanner(),
                     new API10_UnsafeConsumptionScanner()
             );
