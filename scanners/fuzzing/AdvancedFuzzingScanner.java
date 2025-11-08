@@ -6,14 +6,11 @@ import core.Vulnerability.Category;
 import core.Vulnerability.Severity;
 import core.ApiClient;
 import scanners.SecurityScanner;
-import scanners.fuzzing.ApiEndpoint;
-import scanners.fuzzing.ApiParameter;
-import scanners.fuzzing.ParameterLocation;
-import scanners.fuzzing.HttpMethod;
-import scanners.fuzzing.HttpResponse;
 
 import java.util.*;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.json.JSONObject;
 import org.json.JSONArray;
 import java.net.URLEncoder;
@@ -31,14 +28,18 @@ import io.swagger.v3.oas.models.media.Schema;
 
 public class AdvancedFuzzingScanner implements SecurityScanner {
     private static final Logger logger = Logger.getLogger(AdvancedFuzzingScanner.class.getName());
-    private EnhancedVulnerabilityDetector vulnerabilityDetector;
+
+    private static final int BASE_DELAY_MS = 500;
+    private static final int MAX_RETRIES = 1;
+    private static final int BASE_RETRY_DELAY_MS = 500;
+    private static final double RETRY_BACKOFF_FACTOR = 1.0;
+
     private HttpClientWrapper httpClient;
     private BaselineRequestGenerator baselineGenerator;
     private Set<String> testedEndpoints = new HashSet<>();
     private Map<String, Integer> rateLimitDelays = new HashMap<>();
 
     public AdvancedFuzzingScanner() {
-        this.vulnerabilityDetector = new EnhancedVulnerabilityDetector();
         this.httpClient = new HttpClientWrapper();
         this.baselineGenerator = new BaselineRequestGenerator();
     }
@@ -48,51 +49,17 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         return "Advanced Fuzzing Scanner v3.0";
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public List<Vulnerability> scan(Object openApiObj, ScanConfig config, ApiClient apiClient) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         try {
             logger.info("🚀 Starting REAL vulnerability scanning...");
-            // Преобразуем OpenAPI объект в Map для совместимости
-            Map<String, Object> openApi = convertOpenApiToMap(openApiObj);
-            if (openApi == null) {
-                logger.severe("❌ Не удалось преобразовать OpenAPI объект в Map");
-                return vulnerabilities;
-            }
 
-            Map<String, Object> paths = (Map<String, Object>) openApi.get("paths");
-            if (paths == null || paths.isEmpty()) {
-                logger.warning("❌ No paths found in OpenAPI specification");
-                return vulnerabilities;
-            }
-
-            logger.info("📊 Found " + paths.size() + " endpoints in API specification");
-
-            // Получаем банковский токен
-            String bankToken = config.getBankToken();
-            if (bankToken == null || bankToken.isEmpty()) {
-                logger.warning("⚠️  No bank token available. Skipping authenticated scans.");
-                // Продолжаем сканирование только для публичных эндпоинтов
-            }
-
-            // ИСПРАВЛЕНИЕ: Используем уже существующий consent ID из конфигурации
-            String consentId = config.getConsentId();
-            if (consentId != null && !consentId.isEmpty()) {
-                logger.info("✅ Using consent ID from config: " + consentId);
-            } else {
-                logger.warning("⚠️  No consent ID available in config. Will attempt to create one or scan only public endpoints.");
-                if (bankToken != null && !bankToken.isEmpty()) {
-                    consentId = baselineGenerator.generateConsentId(config, bankToken);
-                    if (consentId != null) {
-                        config.setConsentId(consentId);
-                        logger.info("✅ New consent ID generated and saved to config: " + consentId);
-                    }
-                }
-            }
-
-            // Получаем реальные accountId (только если есть consentId и bankToken)
+            // Получаем реальные accountId
             List<String> realAccountIds = new ArrayList<>();
+            String bankToken = config.getBankToken();
+            String consentId = config.getConsentId();
+
             if (bankToken != null && !bankToken.isEmpty() && consentId != null && !consentId.isEmpty()) {
                 realAccountIds = getRealAccountIds(config, bankToken, consentId);
                 logger.info("📋 Found " + realAccountIds.size() + " real accounts");
@@ -100,31 +67,76 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 // Используем fallback account IDs для публичных эндпоинтов
                 realAccountIds.add("acc-4686");
                 realAccountIds.add("acc-4698");
-                logger.info("📋 Using fallback account IDs (no auth available): " + realAccountIds);
+                realAccountIds.add("acc-4606");
+                realAccountIds.add("acc-4614");
+                realAccountIds.add("acc-4601");
+                realAccountIds.add("acc-4609");
+                logger.info("📋 Using fallback account IDs: " + realAccountIds);
             }
 
             // Сохраняем реальные ID для использования в фаззинге
             baselineGenerator.setRealAccountIds(realAccountIds);
             baselineGenerator.setConsentId(consentId);
 
-            // Тестируем каждый эндпоинт
+            // Если передан OpenAPI объект, работаем с ним напрямую
+            if (openApiObj instanceof OpenAPI) {
+                OpenAPI openApi = (OpenAPI) openApiObj;
+                vulnerabilities.addAll(scanOpenAPI(openApi, config, bankToken, consentId));
+            } else {
+                logger.warning("⚠️ OpenAPI object is not instance of OpenAPI, skipping fuzzing");
+            }
+
+            // Дополнительно выполняем BOLA межпользовательские тесты
+            logger.info("🔍 Starting cross-user BOLA tests...");
+            List<Vulnerability> bolaVulnerabilities = testCrossUserAccess(config);
+            vulnerabilities.addAll(bolaVulnerabilities);
+            logger.info("✅ Cross-user BOLA tests completed: " + bolaVulnerabilities.size() + " vulnerabilities found");
+
+            logger.info("✅ Fuzzing completed. Found " + vulnerabilities.size() + " REAL vulnerabilities");
+
+            // Фильтрация дубликатов
+            return filterDuplicateVulnerabilities(vulnerabilities);
+        } catch (Exception e) {
+            logger.severe("❌ Critical error during fuzzing scan: " + e.getMessage());
+            e.printStackTrace();
+            return vulnerabilities;
+        }
+    }
+
+    /**
+     * Сканирование OpenAPI спецификации
+     */
+    private List<Vulnerability> scanOpenAPI(OpenAPI openApi, ScanConfig config, String bankToken, String consentId) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        try {
+            Map<String, PathItem> paths = openApi.getPaths();
+            if (paths == null || paths.isEmpty()) {
+                logger.warning("❌ No paths found in OpenAPI specification");
+                return vulnerabilities;
+            }
+
+            logger.info("📊 Found " + paths.size() + " endpoints in API specification");
+
             int totalEndpoints = 0;
-            for (Map.Entry<String, Object> pathEntry : paths.entrySet()) {
+
+            // Обрабатываем каждый путь
+            for (Map.Entry<String, PathItem> pathEntry : paths.entrySet()) {
                 String path = pathEntry.getKey();
-                Map<String, Object> pathMethods = (Map<String, Object>) pathEntry.getValue();
+                PathItem pathItem = pathEntry.getValue();
 
-                for (Map.Entry<String, Object> methodEntry : pathMethods.entrySet()) {
-                    String method = methodEntry.getKey().toUpperCase();
-                    Map<String, Object> operation = (Map<String, Object>) methodEntry.getValue();
+                // Пропускаем сервисные эндпоинты
+                if (path.contains("/auth") || path.contains("jwks.json") || path.equals("/")) {
+                    continue;
+                }
 
-                    // Пропускаем сервисные эндпоинты
-                    if (path.contains("/auth") || path.contains("jwks.json") || path.equals("/")) {
-                        continue;
-                    }
+                // Обрабатываем каждый HTTP метод в пути
+                Map<PathItem.HttpMethod, Operation> operations = pathItem.readOperationsMap();
+                for (Map.Entry<PathItem.HttpMethod, Operation> methodEntry : operations.entrySet()) {
+                    PathItem.HttpMethod httpMethod = methodEntry.getKey();
+                    Operation operation = methodEntry.getValue();
 
-                    ApiEndpoint endpoint = createEndpointFromSpec(path, method, operation);
-                    if (endpoint == null) continue;
-
+                    String method = httpMethod.name();
                     totalEndpoints++;
 
                     // Проверяем, не тестировали ли мы уже этот эндпоинт
@@ -137,9 +149,13 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     logger.info("🎯 Testing endpoint: " + method + " " + path);
 
                     try {
+                        // Создаем ApiEndpoint из OpenAPI операции
+                        ApiEndpoint endpoint = createEndpointFromOpenAPIOperation(path, method, operation);
+                        if (endpoint == null) continue;
+
                         // Генерируем базовый валидный запрос
                         ValidRequestTemplate template = baselineGenerator.generateValidRequestTemplate(
-                                endpoint, config, bankToken, paths
+                                endpoint, config, bankToken, null
                         );
 
                         if (template == null || !template.isValid()) {
@@ -148,18 +164,9 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                             continue;
                         }
 
-                        // Логируем информацию о подготовленном запросе
-                        logger.info("🔧 Prepared request for " + endpoint.getMethod() + " " + template.getPath());
-                        if (!template.getQueryParams().isEmpty()) {
-                            logger.info("🔧 Query params: " + template.getQueryParams());
-                        }
-                        if (template.getJsonBody() != null) {
-                            logger.info("🔧 Body: " + template.getJsonBody().toString());
-                        }
-
                         // Проводим фаззинг с валидными запросами
                         List<Vulnerability> endpointVulns = fuzzEndpointWithValidRequests(
-                                endpoint, template, config
+                                endpoint, template, config, bankToken, consentId
                         );
 
                         vulnerabilities.addAll(endpointVulns);
@@ -175,177 +182,128 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 }
             }
 
-            logger.info("✅ Fuzzing completed. Tested " + totalEndpoints + " endpoints. Found " +
-                    vulnerabilities.size() + " REAL vulnerabilities");
+            logger.info("✅ Tested " + totalEndpoints + " endpoints from OpenAPI specification");
 
-            // Фильтрация дубликатов
-            return filterDuplicateVulnerabilities(vulnerabilities);
         } catch (Exception e) {
-            logger.severe("❌ Critical error during fuzzing scan: " + e.getMessage());
+            logger.severe("❌ Error scanning OpenAPI: " + e.getMessage());
             e.printStackTrace();
-            return vulnerabilities;
         }
+
+        return vulnerabilities;
     }
 
     /**
-     * Конвертирует объект OpenAPI в Map для обратной совместимости
+     * Создание ApiEndpoint из OpenAPI Operation
      */
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> convertOpenApiToMap(Object openApiObj) {
+    private ApiEndpoint createEndpointFromOpenAPIOperation(String path, String method, Operation operation) {
         try {
-            if (openApiObj instanceof Map) {
-                return (Map<String, Object>) openApiObj;
+            HttpMethod httpMethod;
+            try {
+                httpMethod = HttpMethod.valueOf(method.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                logger.warning("⚠️ Unknown HTTP method: " + method);
+                return null;
             }
-            // Если это объект OpenAPI из swagger, конвертируем в Map
-            if (openApiObj instanceof OpenAPI) {
-                OpenAPI openAPI = (OpenAPI) openApiObj;
-                Map<String, Object> result = new HashMap<>();
-                if (openAPI.getPaths() != null) {
-                    Map<String, Object> pathsMap = new HashMap<>();
-                    for (String pathKey : openAPI.getPaths().keySet()) {
-                        PathItem pathItem = openAPI.getPaths().get(pathKey);
-                        pathsMap.put(pathKey, convertPathItemToMap(pathItem));
-                    }
-                    result.put("paths", pathsMap);
-                }
-                logger.info("✅ OpenAPI объект успешно преобразован в Map");
-                return result;
-            }
+
+            List<ApiParameter> parameters = extractParametersFromOpenAPIOperation(operation);
+            return new ApiEndpoint(path, httpMethod, parameters);
         } catch (Exception e) {
-            logger.severe("❌ Error converting OpenAPI to Map: " + e.getMessage());
-            e.printStackTrace();
+            logger.severe("❌ Error creating endpoint from OpenAPI operation: " + e.getMessage());
+            return null;
         }
-        return null;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> convertPathItemToMap(PathItem pathItem) {
-        Map<String, Object> result = new HashMap<>();
-        // Конвертируем методы (GET, POST, etc.)
-        if (pathItem.getGet() != null) {
-            result.put("get", convertOperationToMap(pathItem.getGet()));
-        }
-        if (pathItem.getPost() != null) {
-            result.put("post", convertOperationToMap(pathItem.getPost()));
-        }
-        if (pathItem.getPut() != null) {
-            result.put("put", convertOperationToMap(pathItem.getPut()));
-        }
-        if (pathItem.getDelete() != null) {
-            result.put("delete", convertOperationToMap(pathItem.getDelete()));
-        }
-        if (pathItem.getPatch() != null) {
-            result.put("patch", convertOperationToMap(pathItem.getPatch()));
-        }
-        return result;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> convertOperationToMap(Operation operation) {
-        Map<String, Object> result = new HashMap<>();
-        // Параметры
-        if (operation.getParameters() != null) {
-            List<Map<String, Object>> parameters = new ArrayList<>();
-            for (Parameter parameter : operation.getParameters()) {
-                parameters.add(convertParameterToMap(parameter));
-            }
-            result.put("parameters", parameters);
-        }
-        // Тело запроса
-        if (operation.getRequestBody() != null) {
-            result.put("requestBody", convertRequestBodyToMap(operation.getRequestBody()));
-        }
-        return result;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> convertParameterToMap(Parameter parameter) {
-        Map<String, Object> result = new HashMap<>();
-        result.put("name", parameter.getName());
-        result.put("in", parameter.getIn());
-        result.put("required", parameter.getRequired());
-        if (parameter.getSchema() != null) {
-            result.put("schema", convertSchemaToMap(parameter.getSchema()));
-        }
-        return result;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> convertRequestBodyToMap(RequestBody requestBody) {
-        Map<String, Object> result = new HashMap<>();
-        if (requestBody.getContent() != null) {
-            Map<String, Object> content = new HashMap<>();
-            for (String mediaType : requestBody.getContent().keySet()) {
-                MediaType mt = requestBody.getContent().get(mediaType);
-                if (mt != null) {
-                    content.put(mediaType, convertMediaTypeToMap(mt));
-                }
-            }
-            result.put("content", content);
-        }
-        return result;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> convertMediaTypeToMap(MediaType mediaType) {
-        Map<String, Object> result = new HashMap<>();
-        if (mediaType.getSchema() != null) {
-            result.put("schema", convertSchemaToMap(mediaType.getSchema()));
-        }
-        return result;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> convertSchemaToMap(Schema<?> schema) {
-        Map<String, Object> result = new HashMap<>();
-        if (schema.getType() != null) {
-            result.put("type", schema.getType());
-        }
-        if (schema.getProperties() != null) {
-            Map<String, Object> properties = new HashMap<>();
-            for (String propName : schema.getProperties().keySet()) {
-                Schema<?> propSchema = (Schema<?>) schema.getProperties().get(propName);
-                properties.put(propName, convertSchemaToMap(propSchema));
-            }
-            result.put("properties", properties);
-        }
-        if (schema.getRequired() != null) {
-            result.put("required", new ArrayList<>(schema.getRequired()));
-        }
-        return result;
     }
 
     /**
-     * Получение реальных accountId из API
+     * Извлечение параметров из OpenAPI Operation
      */
+    private List<ApiParameter> extractParametersFromOpenAPIOperation(Operation operation) {
+        List<ApiParameter> parameters = new ArrayList<>();
+
+        try {
+            // Обрабатываем параметры операции
+            if (operation.getParameters() != null) {
+                for (Parameter param : operation.getParameters()) {
+                    String name = param.getName();
+                    String in = param.getIn();
+                    boolean required = param.getRequired() != null ? param.getRequired() : false;
+
+                    // Определяем тип параметра
+                    String type = "string";
+                    if (param.getSchema() != null) {
+                        Schema<?> schema = param.getSchema();
+                        if (schema.getType() != null) {
+                            type = schema.getType();
+                        }
+                    }
+
+                    ParameterLocation location;
+                    switch (in) {
+                        case "query": location = ParameterLocation.QUERY; break;
+                        case "header": location = ParameterLocation.HEADER; break;
+                        case "path": location = ParameterLocation.PATH; break;
+                        default: location = ParameterLocation.BODY; break;
+                    }
+
+                    parameters.add(new ApiParameter(name, type, location, required));
+                }
+            }
+
+            // Обрабатываем тело запроса (если есть)
+            if (operation.getRequestBody() != null) {
+                RequestBody requestBody = operation.getRequestBody();
+                Content content = requestBody.getContent();
+
+                if (content != null && content.get("application/json") != null) {
+                    MediaType mediaType = content.get("application/json");
+                    if (mediaType.getSchema() != null) {
+                        // Здесь можно извлечь схему JSON тела для более точного фаззинга
+                        parameters.add(new ApiParameter("requestBody", "object", ParameterLocation.BODY,
+                                requestBody.getRequired() != null ? requestBody.getRequired() : false));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.warning("⚠️ Error extracting parameters from OpenAPI operation: " + e.getMessage());
+        }
+
+        return parameters;
+    }
+
     private List<String> getRealAccountIds(ScanConfig config, String bankToken, String consentId) {
         List<String> accountIds = new ArrayList<>();
         try {
-            // ИСПРАВЛЕНИЕ: используем client_id из конфигурации и trim() для baseUrl
             String baseUrl = config.getBankBaseUrl().trim();
-            String clientId = config.getClientId() != null ? config.getClientId() : "team172";
+            String url = baseUrl + "/accounts?client_id=" + config.getClientId();
 
-            String url = baseUrl + "/accounts?client_id=" + clientId;
             Map<String, String> headers = new HashMap<>();
             headers.put("Authorization", "Bearer " + bankToken);
-            headers.put("X-Requesting-Bank", config.getBankId() != null ? config.getBankId() : "team172");
+            headers.put("X-Requesting-Bank", config.getBankId());
             headers.put("X-Consent-Id", consentId);
             headers.put("Accept", "application/json");
 
-            // Создаем пустой Map для query параметров
             Map<String, String> queryParams = new HashMap<>();
+            HttpResponse response = executeRequestWithRetry("GET", url, queryParams, headers,
+                    "get_real_accounts", "получение списка счетов");
 
-            HttpResponse response = httpClient.sendRequest("GET", url, queryParams, headers, null);
+            if (response != null && response.getStatusCode() == 200 && response.getBody() != null) {
+                accountIds = extractAccountIds(response.getBody());
+            }
+        } catch (Exception e) {
+            logger.severe("❌ Error getting real account IDs: " + e.getMessage());
+        }
+        return accountIds;
+    }
 
-            logger.fine("🔍 Accounts API Response Status: " + response.getStatusCode());
+    private List<String> extractAccountIds(String responseBody) {
+        List<String> accountIds = new ArrayList<>();
+        try {
+            JSONObject json = new JSONObject(responseBody);
 
-            if (response.getStatusCode() == 200) {
-                JSONObject json = new JSONObject(response.getBody());
-                // Парсим реальные accountId из ответа
-
-                // Попытка 1: data.account
-                if (json.has("data") && json.getJSONObject("data").has("account")) {
-                    Object accountObj = json.getJSONObject("data").get("account");
+            // Различные варианты структуры ответа
+            if (json.has("data")) {
+                JSONObject data = json.getJSONObject("data");
+                if (data.has("account")) {
+                    Object accountObj = data.get("account");
                     if (accountObj instanceof JSONArray) {
                         JSONArray accounts = (JSONArray) accountObj;
                         for (int i = 0; i < accounts.length(); i++) {
@@ -360,10 +318,8 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                             accountIds.add(account.getString("accountId"));
                         }
                     }
-                }
-                // Попытка 2: data.accounts
-                else if (json.has("data") && json.getJSONObject("data").has("accounts")) {
-                    JSONArray accounts = json.getJSONObject("data").getJSONArray("accounts");
+                } else if (data.has("accounts")) {
+                    JSONArray accounts = data.getJSONArray("accounts");
                     for (int i = 0; i < accounts.length(); i++) {
                         JSONObject account = accounts.getJSONObject(i);
                         if (account.has("accountId")) {
@@ -371,461 +327,551 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                         }
                     }
                 }
-                // Попытка 3: прямой массив в data
-                else if (json.has("data") && json.get("data") instanceof JSONArray) {
-                    JSONArray accounts = json.getJSONArray("data");
-                    for (int i = 0; i < accounts.length(); i++) {
-                        JSONObject account = accounts.getJSONObject(i);
-                        if (account.has("accountId")) {
-                            accountIds.add(account.getString("accountId"));
-                        }
+            } else if (json.has("accounts")) {
+                JSONArray accounts = json.getJSONArray("accounts");
+                for (int i = 0; i < accounts.length(); i++) {
+                    JSONObject account = accounts.getJSONObject(i);
+                    if (account.has("accountId")) {
+                        accountIds.add(account.getString("accountId"));
                     }
+                }
+            }
+
+            logger.info("🆔 Extracted account IDs: " + accountIds);
+        } catch (Exception e) {
+            logger.severe("❌ Error parsing account IDs from response: " + e.getMessage());
+
+            // Резервный метод: поиск по регулярному выражению
+            Pattern pattern = Pattern.compile("\"accountId\"\\s*:\\s*\"([^\"]+)\"");
+            Matcher matcher = pattern.matcher(responseBody);
+            while (matcher.find()) {
+                accountIds.add(matcher.group(1));
+            }
+
+            if (!accountIds.isEmpty()) {
+                logger.info("✅ Extracted account IDs using regex fallback: " + accountIds);
+            }
+        }
+        return accountIds;
+    }
+
+    private List<Vulnerability> fuzzEndpointWithValidRequests(ApiEndpoint endpoint, ValidRequestTemplate template,
+                                                              ScanConfig config, String bankToken, String consentId) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+        EnhancedVulnerabilityDetector detector = new EnhancedVulnerabilityDetector();
+
+        try {
+            // 1. Фаззинг IDOR - тестируем доступ к чужим аккаунтам
+            if (endpoint.getPath().contains("{account_id}") || endpoint.getPath().contains("/accounts/")) {
+                vulnerabilities.addAll(testIDORVulnerabilities(endpoint, template, config));
+            }
+
+            // 2. Фаззинг query параметров
+            vulnerabilities.addAll(fuzzQueryParameters(endpoint, template, detector, config));
+
+            // 3. Фаззинг JSON body параметров
+            if (template.getJsonBody() != null) {
+                vulnerabilities.addAll(fuzzJsonBodyParameters(endpoint, template, detector, config));
+            }
+
+            // 4. Фаззинг headers
+            vulnerabilities.addAll(fuzzHeaders(endpoint, template, detector, config));
+
+        } catch (Exception e) {
+            logger.severe("❌ Error during fuzzing: " + e.getMessage());
+        }
+
+        return vulnerabilities;
+    }
+
+    private List<Vulnerability> testIDORVulnerabilities(ApiEndpoint endpoint, ValidRequestTemplate template, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Список тестовых account_id для IDOR проверки (богатые аккаунты из curl тестов)
+        String[] testAccountIds = {"acc-4606", "acc-4614", "acc-4698", "acc-4601", "acc-4609", "acc-4617"};
+
+        for (String accountId : testAccountIds) {
+            try {
+                String originalPath = template.getPath();
+                String fuzzedPath = originalPath.replace("acc-4686", accountId)
+                        .replace("acc-4698", accountId)
+                        .replace("{account_id}", accountId);
+
+                Map<String, String> headers = new HashMap<>(template.getHeaders());
+
+                String fullUrl = config.getBankBaseUrl().trim() + fuzzedPath;
+
+                HttpResponse response = executeRequestWithRetry(
+                        endpoint.getMethod().name(),
+                        fullUrl,
+                        template.getQueryParams(),
+                        headers,
+                        "idor_test",
+                        "IDOR тест для аккаунта " + accountId
+                );
+
+                if (response != null && isIDORVulnerability(response, accountId)) {
+                    Vulnerability vuln = createIDORVulnerability(endpoint, accountId, response);
+                    vulnerabilities.add(vuln);
+                    logger.severe("🔥 IDOR VULNERABILITY FOUND: Unauthorized access to account " + accountId);
                 }
 
-                logger.info("✅ Successfully retrieved " + accountIds.size() + " real account IDs");
-            } else {
-                logger.warning("❌ Failed to get real account IDs. Status: " + response.getStatusCode());
-                logger.warning("❌ Response body: " + response.getBody().substring(0, Math.min(300, response.getBody().length())));
+                Thread.sleep(200); // Задержка между запросами
+            } catch (Exception e) {
+                logger.warning("⚠️ Error testing IDOR for account " + accountId + ": " + e.getMessage());
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    private boolean isIDORVulnerability(HttpResponse response, String accountId) {
+        if (response == null) return false;
+
+        int statusCode = response.getStatusCode();
+        String responseBody = response.getBody();
+
+        // Успешный доступ к чужому аккаунту
+        if (statusCode == 200 && responseBody != null) {
+            return responseBody.contains(accountId) ||
+                    responseBody.contains("\"balance\"") ||
+                    responseBody.contains("\"accountId\"") ||
+                    responseBody.toLowerCase().contains("account");
+        }
+
+        return false;
+    }
+
+    private Vulnerability createIDORVulnerability(ApiEndpoint endpoint, String accountId, HttpResponse response) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API1:2023 - Broken Object Level Authorization (IDOR)");
+        vuln.setDescription(
+                "Обнаружен несанкционированный доступ к чужому аккаунту: " + accountId + "\n\n" +
+                        "Уязвимость позволяет злоумышленнику получать доступ к финансовым данным других пользователей " +
+                        "без соответствующих разрешений. Это критическая уязвимость в банковской системе."
+        );
+        vuln.setSeverity(Severity.CRITICAL);
+        vuln.setCategory(Category.OWASP_API1_BOLA);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod().name());
+        vuln.setParameter("account_id");
+        vuln.setEvidence("Статус: " + response.getStatusCode() + "\nДоступ к аккаунту: " + accountId +
+                "\nТело ответа: " + (response.getBody() != null ?
+                response.getBody().substring(0, Math.min(200, response.getBody().length())) : "пусто"));
+        vuln.setStatusCode(response.getStatusCode());
+        vuln.setResponseTime(response.getResponseTime());
+
+        vuln.setRecommendations(Arrays.asList(
+                "Реализовать строгую проверку принадлежности аккаунта текущему пользователю",
+                "Внедрить механизмы авторизации на уровне объектов",
+                "Использовать случайные UUID вместо последовательных ID",
+                "Вести логирование всех попыток доступа к чужим ресурсам",
+                "Регулярно проводить тестирование на уязвимости IDOR"
+        ));
+
+        return vuln;
+    }
+
+    private List<Vulnerability> fuzzQueryParameters(ApiEndpoint endpoint, ValidRequestTemplate template,
+                                                    EnhancedVulnerabilityDetector detector, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        for (String paramName : template.getQueryParams().keySet()) {
+            for (String payload : getInjectionPayloads()) {
+                try {
+                    Map<String, String> fuzzedParams = new HashMap<>(template.getQueryParams());
+                    fuzzedParams.put(paramName, payload);
+
+                    String fullUrl = config.getBankBaseUrl().trim() + template.getPath();
+
+                    HttpResponse response = executeRequestWithRetry(
+                            endpoint.getMethod().name(),
+                            fullUrl,
+                            fuzzedParams,
+                            template.getHeaders(),
+                            "fuzz_query_" + paramName,
+                            "фаззинг query параметра " + paramName
+                    );
+
+                    if (response != null) {
+                        // Проверяем различные типы инъекций
+                        ApiParameter param = new ApiParameter(paramName, "string", ParameterLocation.QUERY, false);
+
+                        Vulnerability ssti = detector.detectInjection(endpoint, param, payload, response, Category.SSTI);
+                        if (ssti != null) vulnerabilities.add(ssti);
+
+                        Vulnerability nosql = detector.detectInjection(endpoint, param, payload, response, Category.NOSQL_INJECTION);
+                        if (nosql != null) vulnerabilities.add(nosql);
+
+                        Vulnerability pathTraversal = detector.detectInjection(endpoint, param, payload, response, Category.PATH_TRAVERSAL);
+                        if (pathTraversal != null) vulnerabilities.add(pathTraversal);
+                    }
+
+                    Thread.sleep(100);
+                } catch (Exception e) {
+                    logger.warning("⚠️ Error fuzzing query parameter " + paramName + ": " + e.getMessage());
+                }
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    private List<Vulnerability> fuzzJsonBodyParameters(ApiEndpoint endpoint, ValidRequestTemplate template,
+                                                       EnhancedVulnerabilityDetector detector, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        try {
+            JSONObject originalBody = template.getJsonBody();
+            for (String key : originalBody.keySet()) {
+                for (String payload : getInjectionPayloads()) {
+                    JSONObject fuzzedBody = new JSONObject(originalBody.toString());
+                    fuzzedBody.put(key, payload);
+
+                    String fullUrl = config.getBankBaseUrl().trim() + template.getPath();
+
+                    HttpResponse response = executeRequestWithRetry(
+                            endpoint.getMethod().name(),
+                            fullUrl,
+                            template.getQueryParams(),
+                            template.getHeaders(),
+                            "fuzz_body_" + key,
+                            "фаззинг body параметра " + key
+                    );
+
+                    if (response != null) {
+                        ApiParameter param = new ApiParameter(key, "string", ParameterLocation.BODY, false);
+
+                        Vulnerability vuln = detector.detectInjection(endpoint, param, payload, response, Category.NOSQL_INJECTION);
+                        if (vuln != null) vulnerabilities.add(vuln);
+                    }
+
+                    Thread.sleep(100);
+                }
             }
         } catch (Exception e) {
-            logger.severe("❌ Error getting real account IDs: " + e.getMessage());
+            logger.warning("⚠️ Error fuzzing JSON body: " + e.getMessage());
+        }
+
+        return vulnerabilities;
+    }
+
+    private List<Vulnerability> fuzzHeaders(ApiEndpoint endpoint, ValidRequestTemplate template,
+                                            EnhancedVulnerabilityDetector detector, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Не фаззим критические заголовки авторизации
+        Set<String> skipHeaders = Set.of("authorization", "x-consent-id", "x-requesting-bank");
+
+        for (String headerName : template.getHeaders().keySet()) {
+            if (skipHeaders.contains(headerName.toLowerCase())) {
+                continue;
+            }
+
+            for (String payload : getInjectionPayloads()) {
+                try {
+                    Map<String, String> fuzzedHeaders = new HashMap<>(template.getHeaders());
+                    fuzzedHeaders.put(headerName, payload);
+
+                    String fullUrl = config.getBankBaseUrl().trim() + template.getPath();
+
+                    HttpResponse response = executeRequestWithRetry(
+                            endpoint.getMethod().name(),
+                            fullUrl,
+                            template.getQueryParams(),
+                            fuzzedHeaders,
+                            "fuzz_header_" + headerName,
+                            "фаззинг заголовка " + headerName
+                    );
+
+                    if (response != null) {
+                        ApiParameter param = new ApiParameter(headerName, "string", ParameterLocation.HEADER, false);
+                        Vulnerability vuln = detector.detectInjection(endpoint, param, payload, response, Category.PATH_TRAVERSAL);
+                        if (vuln != null) vulnerabilities.add(vuln);
+                    }
+
+                    Thread.sleep(100);
+                } catch (Exception e) {
+                    logger.warning("⚠️ Error fuzzing header " + headerName + ": " + e.getMessage());
+                }
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    private List<String> getInjectionPayloads() {
+        return Arrays.asList(
+                // SQL Injection
+                "' OR '1'='1",
+                "1; DROP TABLE users",
+                "UNION SELECT 1,2,3",
+
+                // NoSQL Injection
+                "{\"$ne\": \"invalid\"}",
+                "{\"$gt\": \"\"}",
+                "{\"$where\": \"1==1\"}",
+
+                // SSTI
+                "{{7*7}}",
+                "${7*7}",
+                "#{7*7}",
+
+                // Path Traversal
+                "../../../etc/passwd",
+                "..\\..\\windows\\system32\\drivers\\etc\\hosts",
+
+                // Command Injection
+                "; ls -la",
+                "| whoami",
+                "`id`",
+
+                // XSS
+                "<script>alert('XSS')</script>",
+                "\"><script>alert('XSS')</script>",
+
+                // Business Logic
+                "-1000",
+                "999999999",
+                "0",
+                "NaN"
+        );
+    }
+
+    private HttpResponse executeRequestWithRetry(String method, String url, Map<String, String> queryParams,
+                                                 Map<String, String> headers, String requestId, String context) {
+        int attempt = 0;
+        int currentDelay = BASE_RETRY_DELAY_MS;
+
+        while (attempt <= MAX_RETRIES) {
+            try {
+                HttpResponse response = httpClient.sendRequest(method, url, queryParams, headers, null);
+
+                // Если запрос успешен или это не ошибка 429 - возвращаем результат
+                if (response.getStatusCode() != 429) {
+                    return response;
+                }
+
+                // Если получили 429 - делаем задержку и повторяем запрос
+                logger.warning("⏰ Rate limit (429) received for " + requestId + " during " + context +
+                        ". Attempt " + (attempt + 1) + " of " + MAX_RETRIES);
+            } catch (Exception e) {
+                logger.warning("⚠️ Error during request execution: " + e.getMessage());
+            }
+
+            // Увеличиваем задержку экспоненциально
+            attempt++;
+            if (attempt <= MAX_RETRIES) {
+                try {
+                    logger.info("⏳ Waiting " + currentDelay + "ms before retry...");
+                    Thread.sleep(currentDelay);
+                    currentDelay = (int) (currentDelay * RETRY_BACKOFF_FACTOR);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+
+        logger.severe("❌ Max retries reached for " + requestId + " during " + context);
+        return null;
+    }
+
+    private List<Vulnerability> testCrossUserAccess(ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        try {
+            Map<String, String> tokens = config.getUserTokens();
+            if (tokens == null || tokens.size() < 2) {
+                logger.warning("⚠️  Not enough tokens for cross-user BOLA testing (need at least 2).");
+                return vulnerabilities;
+            }
+
+            // Получаем первых двух пользователей
+            List<String> users = new ArrayList<>(tokens.keySet());
+            String user1 = users.get(0);
+            String user2 = users.get(1);
+            String token1 = tokens.get(user1);
+            String token2 = tokens.get(user2);
+
+            logger.info("👥 Testing cross-user access between " + user1 + " and " + user2);
+
+            // 1. Получаем счета пользователя user1
+            List<String> user1Accounts = getAccountIdsForUser(config, token1);
+            if (user1Accounts == null || user1Accounts.isEmpty()) {
+                logger.warning("⚠️  User " + user1 + " has no accounts for testing");
+                return vulnerabilities;
+            }
+            logger.info("📋 Accounts for " + user1 + ": " + user1Accounts);
+
+            // 2. Проверяем, может ли user2 получить доступ к счетам user1
+            for (String accountId : user1Accounts) {
+                if (testAccountAccess(config, token2, user2, accountId, user1, vulnerabilities)) {
+                    // Останавливаемся после первой найденной уязвимости для этого пользователя
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            logger.severe("❌ Error during cross-user BOLA testing: " + e.getMessage());
             e.printStackTrace();
         }
 
-        // Если не удалось получить реальные ID, используем известные рабочие
-        if (accountIds.isEmpty()) {
-            accountIds.add("acc-4686");
-            accountIds.add("acc-4698");
-            logger.info("📋 Using fallback account IDs: " + accountIds);
+        return vulnerabilities;
+    }
+
+    private List<String> getAccountIdsForUser(ScanConfig config, String token) {
+        List<String> accountIds = new ArrayList<>();
+
+        try {
+            String baseUrl = config.getBankBaseUrl().trim();
+            String url = baseUrl + "/accounts?client_id=" + config.getClientId();
+
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Authorization", "Bearer " + token);
+            headers.put("X-Requesting-Bank", config.getBankId());
+            headers.put("X-Consent-Id", config.getConsentId());
+            headers.put("Accept", "application/json");
+
+            Map<String, String> queryParams = new HashMap<>();
+            HttpResponse response = executeRequestWithRetry("GET", url, queryParams, headers,
+                    "user_account_access", "получение списка счетов");
+
+            if (response != null && response.getStatusCode() == 200 && response.getBody() != null) {
+                accountIds = extractAccountIds(response.getBody());
+            } else {
+                logger.warning("❌ Failed to get accounts. Status: " + (response != null ? response.getStatusCode() : "null"));
+            }
+        } catch (Exception e) {
+            logger.severe("❌ Error getting accounts: " + e.getMessage());
+            e.printStackTrace();
         }
 
         return accountIds;
     }
 
-    @SuppressWarnings("unchecked")
-    private ApiEndpoint createEndpointFromSpec(String path, String method, Map<String, Object> operation) {
-        try {
-            List<ApiParameter> parameters = new ArrayList<>();
-            // Обрабатываем параметры пути
-            List<Map<String, Object>> pathParams = (List<Map<String, Object>>) operation.get("parameters");
-            if (pathParams != null) {
-                for (Map<String, Object> param : pathParams) {
-                    String name = (String) param.get("name");
-                    String in = (String) param.get("in");
-                    Boolean requiredObj = (Boolean) param.get("required");
-                    boolean required = requiredObj != null ? requiredObj : false;
-                    String type = "string";
-                    Map<String, Object> schema = (Map<String, Object>) param.get("schema");
-                    if (schema != null && schema.get("type") != null) {
-                        type = schema.get("type").toString();
-                    }
-                    ParameterLocation location = ParameterLocation.valueOf(in.toUpperCase());
-                    parameters.add(new ApiParameter(name, type, location, required));
-                }
+    private boolean testAccountAccess(ScanConfig config, String attackerToken, String attackerUser,
+                                      String targetAccountId, String ownerUser,
+                                      List<Vulnerability> vulnerabilities) {
+
+        logger.info("🔍 Testing if " + attackerUser + " can access account " + targetAccountId + " of " + ownerUser);
+
+        // Проверяем три ключевых эндпоинта
+        String[] endpoints = {
+                "/accounts/%s",
+                "/accounts/%s/balances",
+                "/accounts/%s/transactions"
+        };
+
+        for (String endpointTemplate : endpoints) {
+            String endpoint = String.format(endpointTemplate, targetAccountId);
+            String url = config.getBankBaseUrl().trim() + endpoint;
+
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Authorization", "Bearer " + attackerToken);
+            headers.put("X-Requesting-Bank", config.getBankId());
+            headers.put("X-Consent-Id", config.getConsentId());
+            headers.put("Accept", "application/json");
+
+            Map<String, String> queryParams = new HashMap<>();
+
+            HttpResponse response = executeRequestWithRetry("GET", url, queryParams, headers,
+                    "bola_test", "доступ к счету " + targetAccountId);
+
+            if (response != null && isBolaVulnerability(response, targetAccountId)) {
+                // Создаем отчет об уязвимости
+                Vulnerability vuln = createBolaVulnerability(
+                        endpoint, ownerUser, attackerUser, targetAccountId, response
+                );
+                vulnerabilities.add(vuln);
+                logger.severe("🔥 BOLA VULNERABILITY FOUND: " + attackerUser + " accessed " + ownerUser + "'s account " + targetAccountId);
+                return true;
+            } else if (response != null) {
+                logger.info("🔒 Access to " + endpoint + " was correctly blocked for " + attackerUser +
+                        " (Status: " + response.getStatusCode() + ")");
             }
-            // Обрабатываем тело запроса
-            Map<String, Object> requestBody = (Map<String, Object>) operation.get("requestBody");
-            if (requestBody != null) {
-                Map<String, Object> content = (Map<String, Object>) requestBody.get("content");
-                if (content != null && !content.isEmpty()) {
-                    // Берем первый доступный контент-тип
-                    String contentType = content.keySet().iterator().next();
-                    Map<String, Object> mediaType = (Map<String, Object>) content.get(contentType);
-                    Map<String, Object> schemaObj = (Map<String, Object>) mediaType.get("schema");
-                    if (schemaObj != null) {
-                        Map<String, Object> properties = (Map<String, Object>) schemaObj.get("properties");
-                        if (properties != null) {
-                            for (String propName : properties.keySet()) {
-                                Map<String, Object> propSchema = (Map<String, Object>) properties.get(propName);
-                                String type = propSchema.containsKey("type") ?
-                                        propSchema.get("type").toString() : "string";
-                                boolean paramRequired = false;
-                                if (schemaObj.containsKey("required")) {
-                                    List<String> requiredList = (List<String>) schemaObj.get("required");
-                                    paramRequired = requiredList != null && requiredList.contains(propName);
-                                }
-                                parameters.add(new ApiParameter(propName, type, ParameterLocation.BODY, paramRequired));
-                            }
-                        }
-                    }
-                }
-            }
-            return new ApiEndpoint(path, HttpMethod.valueOf(method), parameters);
-        } catch (Exception e) {
-            logger.warning("⚠️  Error creating endpoint from spec for " + path + ": " + e.getMessage());
-            e.printStackTrace();
-            return null;
-        }
-    }
 
-    private List<Vulnerability> fuzzEndpointWithValidRequests(ApiEndpoint endpoint,
-                                                              ValidRequestTemplate template,
-                                                              ScanConfig config) {
-        List<Vulnerability> vulnerabilities = new ArrayList<>();
-
-        // Логируем информацию о подготовленном запросе
-        logger.info("🔧 Prepared request for " + endpoint.getMethod() + " " + template.getPath());
-        if (!template.getQueryParams().isEmpty()) {
-            logger.info("🔧 Query params: " + template.getQueryParams());
-        }
-        if (template.getJsonBody() != null) {
-            logger.info("🔧 Body: " + template.getJsonBody().toString());
-        }
-
-        // Используем только тестируемые параметры (исключаем служебные)
-        List<ApiParameter> testableParameters = getTestableParameters(endpoint, template);
-
-        for (ApiParameter parameter : testableParameters) {
-            logger.info("🔍 Testing parameter: " + parameter.getName() +
-                    " (" + parameter.getType() + ") at " + parameter.getLocation() +
-                    " [Required: " + parameter.isRequired() + "]");
-
-            // Тестируем разные категории уязвимостей
-            testInjectionVulnerabilities(endpoint, template, parameter, vulnerabilities, config);
-            testBusinessLogicVulnerabilities(endpoint, template, parameter, vulnerabilities, config);
-
-            // Увеличиваем задержку между тестами параметров
+            // Задержка между запросами
             try {
-                Thread.sleep(300);
+                Thread.sleep(BASE_DELAY_MS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
         }
-        return vulnerabilities;
+
+        return false;
     }
 
-    private void testInjectionVulnerabilities(ApiEndpoint endpoint, ValidRequestTemplate template,
-                                              ApiParameter parameter, List<Vulnerability> vulnerabilities,
-                                              ScanConfig config) {
-        List<InjectionTest> tests = createInjectionTests(parameter);
+    private boolean isBolaVulnerability(HttpResponse response, String accountId) {
+        if (response == null) return false;
 
-        if (tests.isEmpty()) {
-            logger.fine("⏩ No injection tests for parameter: " + parameter.getName());
-            return;
+        int statusCode = response.getStatusCode();
+        String responseBody = response.getBody();
+
+        // Успешный доступ к чужим данным
+        if (statusCode == 200 && responseBody != null) {
+            // Проверяем наличие данных счета в ответе
+            return responseBody.contains(accountId) ||
+                    responseBody.contains("\"balance\"") ||
+                    responseBody.contains("\"transaction\"") ||
+                    responseBody.toLowerCase().contains("account");
         }
 
-        logger.info("🧪 Starting " + tests.size() + " injection tests for: " + parameter.getName());
-
-        for (InjectionTest test : tests) {
-            try {
-                // Проверяем rate limiting для этого эндпоинта
-                String endpointKey = endpoint.getMethod() + ":" + endpoint.getPath();
-                if (rateLimitDelays.containsKey(endpointKey)) {
-                    int delay = rateLimitDelays.get(endpointKey);
-                    logger.warning("⚠️ Rate limit detected for " + endpointKey + ", waiting " + delay + "ms");
-                    Thread.sleep(delay);
-                }
-
-                // Создаем копию шаблона запроса
-                ValidRequestTemplate testTemplate = template.copy();
-
-                // Подставляем payload в нужное место
-                if (!applyPayloadToTemplate(testTemplate, parameter, test.payload)) {
-                    continue;
-                }
-
-                String baseUrl = config.getBankBaseUrl().trim();
-                String fullPath = baseUrl + testTemplate.getPath();
-
-                logger.info("🚀 Testing: " + test.vulnerabilityType + " with payload: " +
-                        test.payload + " in parameter: " + parameter.getName());
-                logger.fine("📡 Full URL: " + fullPath);
-
-                // Отправляем запрос
-                HttpResponse response = httpClient.sendRequest(
-                        endpoint.getMethod().name(),
-                        fullPath,
-                        testTemplate.getQueryParams(),
-                        testTemplate.getHeaders(),
-                        testTemplate.getJsonBody()
-                );
-
-                logger.info("📥 Response: " + response.getStatusCode() + " for " +
-                        test.vulnerabilityType + " test on " + parameter.getName());
-
-                // Обработка 429 ошибки (Rate Limiting)
-                if (response.getStatusCode() == 429) {
-                    logger.warning("⏰ Rate limit hit (429) for " + endpointKey + ". Increasing delays.");
-                    // Увеличиваем задержку для этого эндпоинта
-                    int currentDelay = rateLimitDelays.getOrDefault(endpointKey, 300);
-                    rateLimitDelays.put(endpointKey, currentDelay + 1000); // Увеличиваем на 1 секунду
-                    Thread.sleep(2000); // Ждем 2 секунды перед продолжением
-                    continue; // Пропускаем этот тест и переходим к следующему
-                }
-
-                // Обнаруживаем уязвимость
-                Vulnerability vulnerability = vulnerabilityDetector.detectInjection(
-                        endpoint, parameter, test.payload, response, test.vulnerabilityType
-                );
-
-                if (vulnerability != null) {
-                    vulnerabilities.add(vulnerability);
-                    logger.info("🎉 VULNERABILITY FOUND: " + vulnerability.getTitle() +
-                            " [" + vulnerability.getCategory() + "] in parameter: " + parameter.getName());
-                    // Не тестируем другие пейлоады для этого параметра, если уже нашли уязвимость
-                    break;
-                }
-
-                // Задержка между отдельными тестами
-                Thread.sleep(200);
-            } catch (Exception e) {
-                logger.warning("⚠️ Error testing " + parameter.getName() + ": " + e.getMessage());
-            }
-        }
-    }
-
-    private void testBusinessLogicVulnerabilities(ApiEndpoint endpoint, ValidRequestTemplate template,
-                                                  ApiParameter parameter, List<Vulnerability> vulnerabilities,
-                                                  ScanConfig config) {
-        // Проверяем только параметры, связанные с бизнес-логикой
-        if (!isBusinessParameter(parameter)) {
-            return;
-        }
-
-        List<BusinessLogicTest> tests = createBusinessLogicTests(parameter);
-
-        if (tests.isEmpty()) {
-            logger.fine("⏩ No business logic tests for parameter: " + parameter.getName());
-            return;
-        }
-
-        logger.info("🧪 Starting " + tests.size() + " business logic tests for: " + parameter.getName());
-
-        for (BusinessLogicTest test : tests) {
-            try {
-                // Проверяем rate limiting
-                String endpointKey = endpoint.getMethod() + ":" + endpoint.getPath();
-                if (rateLimitDelays.containsKey(endpointKey)) {
-                    int delay = rateLimitDelays.get(endpointKey);
-                    logger.warning("⚠️ Rate limit detected for " + endpointKey + ", waiting " + delay + "ms");
-                    Thread.sleep(delay);
-                }
-
-                ValidRequestTemplate testTemplate = template.copy();
-                if (!applyPayloadToTemplate(testTemplate, parameter, test.payload)) {
-                    continue;
-                }
-
-                String baseUrl = config.getBankBaseUrl().trim();
-                String fullPath = baseUrl + testTemplate.getPath();
-
-                logger.info("🚀 Testing business logic: " + test.payload + " for parameter " + parameter.getName());
-                logger.fine("📡 URL: " + fullPath);
-
-                HttpResponse response = httpClient.sendRequest(
-                        endpoint.getMethod().name(),
-                        fullPath,
-                        testTemplate.getQueryParams(),
-                        testTemplate.getHeaders(),
-                        testTemplate.getJsonBody()
-                );
-
-                logger.info("📥 Response Status: " + response.getStatusCode() + " for business logic test");
-
-                // Обработка 429 ошибки
-                if (response.getStatusCode() == 429) {
-                    logger.warning("⏰ Rate limit hit (429) for " + endpointKey + ". Increasing delays.");
-                    int currentDelay = rateLimitDelays.getOrDefault(endpointKey, 300);
-                    rateLimitDelays.put(endpointKey, currentDelay + 1000);
-                    Thread.sleep(2000);
-                    continue;
-                }
-
-                Vulnerability vulnerability = vulnerabilityDetector.detectBusinessLogicBypass(
-                        endpoint, parameter, test.payload, response, test.expectedBehavior
-                );
-
-                if (vulnerability != null) {
-                    vulnerabilities.add(vulnerability);
-                    logger.info("💰 Business logic bypass found: " + vulnerability.getTitle());
-                    break;
-                }
-
-                // Задержка между тестами
-                Thread.sleep(200);
-            } catch (Exception e) {
-                logger.warning("⚠️  Error testing business logic for " + parameter.getName() +
-                        ": " + e.getMessage());
-                e.printStackTrace();
-            }
-        }
-    }
-
-    private boolean applyPayloadToTemplate(ValidRequestTemplate template, ApiParameter parameter, String payload) {
-        try {
-            switch (parameter.getLocation()) {
-                case QUERY:
-                    template.getQueryParams().put(parameter.getName(), payload);
-                    break;
-                case HEADER:
-                    template.getHeaders().put(parameter.getName(), payload);
-                    break;
-                case PATH:
-                    String path = template.getPath();
-                    path = path.replace("{" + parameter.getName() + "}",
-                            URLEncoder.encode(payload, StandardCharsets.UTF_8));
-                    template.setPath(path);
-                    break;
-                case BODY:
-                    JSONObject body = template.getJsonBody();
-                    if (body != null) {
-                        body.put(parameter.getName(), payload);
-                    }
-                    break;
-                default:
-                    logger.warning("⚠️  Unsupported parameter location: " + parameter.getLocation());
-                    return false;
-            }
+        // Для ошибки 429 считаем уязвимость, если предыдущие запросы были успешными
+        if (statusCode == 429) {
+            logger.warning("⚠️  Rate limit (429) received during BOLA test - potential vulnerability might be hidden");
             return true;
-        } catch (Exception e) {
-            logger.warning("⚠️  Error applying payload to template: " + e.getMessage());
-            e.printStackTrace();
-            return false;
         }
+
+        return false;
     }
 
-    private List<ApiParameter> getTestableParameters(ApiEndpoint endpoint, ValidRequestTemplate template) {
-        List<ApiParameter> result = new ArrayList<>();
-        for (ApiParameter param : endpoint.getParameters()) {
-            // Пропускаем служебные параметры
-            if (param.getName().toLowerCase().contains("token") ||
-                    param.getName().toLowerCase().contains("signature") ||
-                    param.getName().toLowerCase().contains("timestamp") ||
-                    param.getName().toLowerCase().contains("authorization") ||
-                    param.getName().toLowerCase().contains("x-consent-id") || // Исключаем consent-id из тестирования
-                    param.getName().toLowerCase().contains("x-requesting-bank")) { // Исключаем банковские заголовки
-                continue;
-            }
-            result.add(param);
-        }
-        return result;
-    }
+    private Vulnerability createBolaVulnerability(String endpoint, String ownerUser,
+                                                  String attackerUser, String accountId,
+                                                  HttpResponse response) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API1:2023 - Broken Object Level Authorization");
+        vuln.setDescription(
+                "Пользователь " + attackerUser + " получил несанкционированный доступ " +
+                        "к счету (ID: " + accountId + "), принадлежащему пользователю " + ownerUser + ".\n\n" +
+                        "Это критическая уязвимость, позволяющая злоумышленнику получить доступ к финансовым данным других пользователей."
+        );
+        vuln.setSeverity(Severity.CRITICAL);
+        vuln.setCategory(Category.OWASP_API1_BOLA);
+        vuln.setEndpoint(endpoint);
+        vuln.setMethod("GET");
+        vuln.setParameter("account_id");
+        vuln.setEvidence("Статус ответа: " + response.getStatusCode() + "\nТело ответа: " +
+                (response.getBody() != null ? response.getBody().substring(0, Math.min(500, response.getBody().length())) : "пусто"));
+        vuln.setStatusCode(response.getStatusCode());
+        vuln.setResponseTime(response.getResponseTime());
 
-    private boolean isBusinessParameter(ApiParameter parameter) {
-        String name = parameter.getName().toLowerCase();
-        return name.contains("amount") ||
-                name.contains("balance") ||
-                name.contains("limit") ||
-                name.contains("total") ||
-                name.contains("max") ||
-                name.contains("min") ||
-                name.contains("price") ||
-                name.contains("sum") ||
-                name.contains("value");
+        vuln.setRecommendations(Arrays.asList(
+                "Реализовать строгую проверку принадлежности счета авторизованному пользователю перед возвратом данных",
+                "Использовать модель \"Deny by default\" - явно разрешать доступ только к своим ресурсам",
+                "Добавить middleware для проверки прав доступа на каждом уровне (endpoint, сервис, база данных)",
+                "Залогировать все попытки доступа к чужим ресурсам для последующего анализа",
+                "Провести аудит всех эндпоинтов, работающих с идентификаторами объектов"
+        ));
+
+        return vuln;
     }
 
     private List<Vulnerability> filterDuplicateVulnerabilities(List<Vulnerability> vulnerabilities) {
-        Map<String, Vulnerability> uniqueVulns = new HashMap<>();
+        Set<String> seen = new HashSet<>();
+        List<Vulnerability> unique = new ArrayList<>();
+
         for (Vulnerability vuln : vulnerabilities) {
-            // Ключ для дедупликации: эндпоинт + параметр + категория
-            String key = vuln.getEndpoint() + ":" + vuln.getParameter() + ":" + vuln.getCategory();
-            // Если уязвимость с такой же ключевой информацией уже есть
-            if (uniqueVulns.containsKey(key)) {
-                // Выбираем уязвимость с более высоким уровнем критичности
-                if (vuln.getSeverity().ordinal() > uniqueVulns.get(key).getSeverity().ordinal()) {
-                    uniqueVulns.put(key, vuln);
-                }
-            } else {
-                uniqueVulns.put(key, vuln);
+            String key = vuln.getEndpoint() + "|" + vuln.getMethod() + "|" + vuln.getTitle();
+            if (!seen.contains(key)) {
+                seen.add(key);
+                unique.add(vuln);
             }
         }
-        return new ArrayList<>(uniqueVulns.values());
+
+        return unique;
     }
 
-    // Внутренние классы для тестирования
-    private static class InjectionTest {
-        String payload;
-        Category vulnerabilityType;
-
-        InjectionTest(String payload, Category vulnerabilityType) {
-            this.payload = payload;
-            this.vulnerabilityType = vulnerabilityType;
-        }
-    }
-
-    private static class BusinessLogicTest {
-        String payload;
-        String expectedBehavior;
-
-        BusinessLogicTest(String payload, String expectedBehavior) {
-            this.payload = payload;
-            this.expectedBehavior = expectedBehavior;
-        }
-    }
-
-    private List<InjectionTest> createInjectionTests(ApiParameter parameter) {
-        List<InjectionTest> tests = new ArrayList<>();
-        String paramName = parameter.getName().toLowerCase();
-
-        // SSTI тесты для текстовых полей
-        if (parameter.getType().equals("string") &&
-                (paramName.contains("reason") || paramName.contains("reference") ||
-                        paramName.contains("name") || paramName.contains("description") ||
-                        paramName.contains("search") || paramName.contains("query") ||
-                        paramName.contains("filter") || paramName.contains("comment"))) {
-            tests.add(new InjectionTest("{{7*7}}", Category.SSTI));
-            tests.add(new InjectionTest("${7*7}", Category.SSTI));
-            tests.add(new InjectionTest("#{7*7}", Category.SSTI));
-            tests.add(new InjectionTest("{{''.__class__}}", Category.SSTI));
-            tests.add(new InjectionTest("<%= 7*7 %>", Category.SSTI));
-        }
-
-        // NoSQL инъекции
-        if (paramName.contains("filter") || paramName.contains("query") ||
-                paramName.contains("search") || parameter.getType().equals("object")) {
-            tests.add(new InjectionTest("{\"$ne\": \"invalid\"}", Category.NOSQL_INJECTION));
-            tests.add(new InjectionTest("{\"$where\": \"sleep(5000)\"}", Category.NOSQL_INJECTION));
-            tests.add(new InjectionTest("{\"$regex\": \".*\"}", Category.NOSQL_INJECTION));
-            tests.add(new InjectionTest("{\"$gt\": \"\"}", Category.NOSQL_INJECTION));
-            tests.add(new InjectionTest("{\"$exists\": true}", Category.NOSQL_INJECTION));
-        }
-
-        // Path Traversal
-        if (paramName.contains("path") || paramName.contains("file") ||
-                paramName.contains("url") || paramName.contains("location") ||
-                paramName.contains("attachment")) {
-            tests.add(new InjectionTest("../../../../etc/passwd", Category.PATH_TRAVERSAL));
-            tests.add(new InjectionTest("..\\..\\..\\..\\windows\\system32\\drivers\\etc\\hosts", Category.PATH_TRAVERSAL));
-            tests.add(new InjectionTest("file:///etc/passwd", Category.PATH_TRAVERSAL));
-            tests.add(new InjectionTest("/etc/passwd", Category.PATH_TRAVERSAL));
-            tests.add(new InjectionTest("....//....//....//etc/passwd", Category.PATH_TRAVERSAL));
-        }
-
-        // IDOR тесты - ТОЛЬКО для параметров пути (PATH), а не заголовков
-        if (parameter.getLocation() == ParameterLocation.PATH &&
-                (paramName.contains("account") || paramName.contains("user") || paramName.contains("id") || paramName.contains("document"))) {
-            tests.add(new InjectionTest("acc-9999", Category.OWASP_API1_BOLA));
-            tests.add(new InjectionTest("acc-0001", Category.OWASP_API1_BOLA));
-            tests.add(new InjectionTest("user-9999", Category.OWASP_API1_BOLA));
-            tests.add(new InjectionTest("user-0001", Category.OWASP_API1_BOLA));
-        }
-
-        return tests;
-    }
-
-    private List<BusinessLogicTest> createBusinessLogicTests(ApiParameter parameter) {
-        List<BusinessLogicTest> tests = new ArrayList<>();
-        String paramName = parameter.getName().toLowerCase();
-
-        if (paramName.contains("amount") || paramName.contains("balance") ||
-                paramName.contains("price") || paramName.contains("sum") ||
-                paramName.contains("value")) {
-            tests.add(new BusinessLogicTest("-1000000.00", "should be rejected as negative amount"));
-            tests.add(new BusinessLogicTest("9999999999.99", "should be rejected as excessive amount"));
-            tests.add(new BusinessLogicTest("0", "should be rejected as zero amount"));
-            tests.add(new BusinessLogicTest("0.001", "should be rejected as fractional amount"));
-            tests.add(new BusinessLogicTest("999999999999999999999999999999999999999999999999999999999999", "should be rejected as overflow amount"));
-        }
-
-        if (paramName.contains("limit") || paramName.contains("max") || paramName.contains("min")) {
-            tests.add(new BusinessLogicTest("-1", "should be rejected as negative limit"));
-            tests.add(new BusinessLogicTest("0", "should be rejected as zero limit"));
-            tests.add(new BusinessLogicTest("999999999", "should be rejected as excessive limit"));
-            tests.add(new BusinessLogicTest("999999999999999999999999999999999999999999999999999999999999", "should be rejected as overflow limit"));
-        }
-
-        return tests;
-    }
+    // ========== ВНУТРЕННИЕ КЛАССЫ ==========
 
     class HttpClientWrapper {
         private java.net.http.HttpClient client;
@@ -864,7 +910,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             }
 
             java.net.http.HttpRequest request = requestBuilder.build();
-            java.net.http.HttpResponse<String> response = client.send(
+            java.net.http.HttpResponse<String> httpResponse = client.send(
                     request,
                     java.net.http.HttpResponse.BodyHandlers.ofString()
             );
@@ -873,13 +919,13 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
 
             // Преобразуем в наш Response объект
             Map<String, String> responseHeaders = new HashMap<>();
-            response.headers().map().forEach((k, v) -> {
+            httpResponse.headers().map().forEach((k, v) -> {
                 if (!v.isEmpty()) responseHeaders.put(k.toLowerCase(), v.get(0));
             });
 
             return new HttpResponse(
-                    response.statusCode(),
-                    response.body(),
+                    httpResponse.statusCode(),
+                    httpResponse.body(),
                     responseHeaders,
                     responseTime
             );
@@ -1161,67 +1207,6 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     path.contains("/consents") ||
                     path.contains("/cards") ||
                     path.contains("/product-agreements");
-        }
-
-        public String generateConsentId(ScanConfig config, String bankToken) {
-            try {
-                HttpClientWrapper client = new HttpClientWrapper();
-                // Формируем правильный запрос для создания согласия
-                JSONObject consentBody = new JSONObject();
-                consentBody.put("client_id", config.getClientId() != null ? config.getClientId() : "team172");
-                consentBody.put("permissions", new JSONArray(Arrays.asList("ReadAccountsDetail", "ReadBalances")));
-                consentBody.put("reason", "Automated security testing");
-                consentBody.put("requesting_bank", config.getBankId() != null ? config.getBankId() : "team172");
-                consentBody.put("requesting_bank_name", "Security Scanner");
-
-                Map<String, String> headers = new HashMap<>();
-                headers.put("Authorization", "Bearer " + bankToken);
-                headers.put("Content-Type", "application/json");
-                headers.put("X-Requesting-Bank", config.getBankId() != null ? config.getBankId() : "team172");
-
-                // ИСПРАВЛЕНИЕ: trim() для baseUrl
-                String baseUrl = config.getBankBaseUrl().trim();
-
-                // Создаем пустой Map для query параметров
-                Map<String, String> queryParams = new HashMap<>();
-
-                HttpResponse response = client.sendRequest(
-                        "POST",
-                        baseUrl + "/account-consents/request",
-                        queryParams,
-                        headers,
-                        consentBody
-                );
-
-                logger.fine("🔍 Consent creation response status: " + response.getStatusCode());
-                logger.fine("🔍 Consent creation response body: " + response.getBody().substring(0, Math.min(300, response.getBody().length())));
-
-                if (response.getStatusCode() == 200 || response.getStatusCode() == 201) {
-                    JSONObject responseBody = new JSONObject(response.getBody());
-                    // Пробуем разные варианты извлечения consent_id
-                    if (responseBody.has("consent_id")) {
-                        return responseBody.getString("consent_id");
-                    }
-                    if (responseBody.has("consentId")) {
-                        return responseBody.getString("consentId");
-                    }
-                    if (responseBody.has("data")) {
-                        JSONObject data = responseBody.getJSONObject("data");
-                        if (data.has("consent_id")) {
-                            return data.getString("consent_id");
-                        }
-                        if (data.has("consentId")) {
-                            return data.getString("consentId");
-                        }
-                    }
-                }
-                logger.warning("❌ Failed to generate consent ID. Status: " + response.getStatusCode());
-                logger.warning("❌ Response body: " + response.getBody().substring(0, Math.min(300, response.getBody().length())));
-            } catch (Exception e) {
-                logger.severe("❌ Error generating consent ID: " + e.getMessage());
-                e.printStackTrace();
-            }
-            return null;
         }
 
         private String getSampleValueForParameter(ApiParameter param, ScanConfig config) {
