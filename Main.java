@@ -330,7 +330,7 @@ public class Main implements core.ScanLauncher {
 
             // Создаём сканеры
             List<SecurityScanner> securityScanners = Arrays.asList(
-                    new scanners.fuzzing.AdvancedFuzzingScanner(),
+//                    new scanners.fuzzing.AdvancedFuzzingScanner(),
                     new API1_BOLAScanner(),
                     new API2_BrokenAuthScanner(),
                     new API3_BOScanner(),
@@ -512,7 +512,7 @@ public class Main implements core.ScanLauncher {
 
             if (openApi != null) {
                 log("✅ OpenAPI спецификация успешно загружена через OpenApiSpecLoader");
-                return openApi;
+                return openApi; // ВОЗВРАЩАЕМ ОБЪЕКТ OpenAPI, а не null
             } else {
                 log("❌ OpenApiSpecLoader вернул null");
             }
@@ -521,7 +521,6 @@ public class Main implements core.ScanLauncher {
         }
         return null;
     }
-
     // Метод для сохранения уязвимости в PostgreSQL
     private static void saveVulnerabilityToDatabase(Vulnerability vuln, String bankName, String scannerName) {
         if (webServer != null) {
