@@ -113,8 +113,13 @@ public class ScanConfig {
      * @return bank token для текущей конфигурации
      */
     public String getBankToken() {
-        // Для sandbox среды используем токен для team172
-        String bankToken = getUserToken("team172");
+        // Сначала проверяем ключ "bank", который используется в AuthManager.getTokensForScanning()
+        String bankToken = getUserToken("bank");
+
+        // Если не нашли, пробуем получить токен по ключу bankId
+        if (bankToken == null || bankToken.isEmpty()) {
+            bankToken = getUserToken(getBankId());
+        }
 
         // Если не нашли, пробуем получить токен по умолчанию
         if (bankToken == null || bankToken.isEmpty()) {
