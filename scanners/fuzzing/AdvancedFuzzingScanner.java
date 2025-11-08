@@ -6,10 +6,18 @@ import core.Vulnerability.Category;
 import core.Vulnerability.Severity;
 import core.ApiClient;
 import scanners.SecurityScanner;
+import scanners.fuzzing.ApiEndpoint;
+import scanners.fuzzing.ApiParameter;
+import scanners.fuzzing.ParameterLocation;
+import scanners.fuzzing.HttpMethod;
+import scanners.fuzzing.HttpResponse;
+
 import java.util.*;
 import java.util.logging.Logger;
 import org.json.JSONObject;
 import org.json.JSONArray;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 
 // Импорты для OpenAPI
 import io.swagger.v3.oas.models.OpenAPI;
@@ -39,23 +47,20 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         return "Advanced Fuzzing Scanner v3.0";
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public List<Vulnerability> scan(Object openApiObj, ScanConfig config, ApiClient apiClient) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         try {
             logger.info("🚀 Starting REAL vulnerability scanning...");
-
             // Преобразуем OpenAPI объект в Map для совместимости
             Map<String, Object> openApi = convertOpenApiToMap(openApiObj);
-
             if (openApi == null) {
                 logger.severe("❌ Не удалось преобразовать OpenAPI объект в Map");
                 return vulnerabilities;
             }
 
-            @SuppressWarnings("unchecked")
             Map<String, Object> paths = (Map<String, Object>) openApi.get("paths");
-
             if (paths == null || paths.isEmpty()) {
                 logger.warning("❌ No paths found in OpenAPI specification");
                 return vulnerabilities;
@@ -67,26 +72,35 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             String bankToken = config.getBankToken();
             if (bankToken == null || bankToken.isEmpty()) {
                 logger.warning("⚠️  No bank token available. Skipping authenticated scans.");
-                return vulnerabilities;
+                // Продолжаем сканирование только для публичных эндпоинтов
             }
 
-            // Создаем согласие
+            // ИСПРАВЛЕНИЕ: Используем уже существующий consent ID из конфигурации
             String consentId = config.getConsentId();
-            if (consentId == null || consentId.isEmpty()) {
-                // Если consent ID отсутствует, пытаемся создать новый
-                consentId = baselineGenerator.generateConsentId(config, bankToken);
-                if (consentId == null) {
-                    logger.warning("⚠️  Failed to create consent. Skipping authenticated scans.");
-                    return vulnerabilities;
+            if (consentId != null && !consentId.isEmpty()) {
+                logger.info("✅ Using consent ID from config: " + consentId);
+            } else {
+                logger.warning("⚠️  No consent ID available in config. Will attempt to create one or scan only public endpoints.");
+                if (bankToken != null && !bankToken.isEmpty()) {
+                    consentId = baselineGenerator.generateConsentId(config, bankToken);
+                    if (consentId != null) {
+                        config.setConsentId(consentId);
+                        logger.info("✅ New consent ID generated and saved to config: " + consentId);
+                    }
                 }
-                // Сохраняем новый consent ID в конфигурацию
-                config.setConsentId(consentId);
             }
-            logger.info("✅ Using consent ID: " + consentId);
 
-            // Получаем реальные accountId
-            List<String> realAccountIds = getRealAccountIds(config, bankToken, consentId);
-            logger.info("📋 Found " + realAccountIds.size() + " real accounts");
+            // Получаем реальные accountId (только если есть consentId и bankToken)
+            List<String> realAccountIds = new ArrayList<>();
+            if (bankToken != null && !bankToken.isEmpty() && consentId != null && !consentId.isEmpty()) {
+                realAccountIds = getRealAccountIds(config, bankToken, consentId);
+                logger.info("📋 Found " + realAccountIds.size() + " real accounts");
+            } else {
+                // Используем fallback account IDs для публичных эндпоинтов
+                realAccountIds.add("acc-4686");
+                realAccountIds.add("acc-4698");
+                logger.info("📋 Using fallback account IDs (no auth available): " + realAccountIds);
+            }
 
             // Сохраняем реальные ID для использования в фаззинге
             baselineGenerator.setRealAccountIds(realAccountIds);
@@ -96,12 +110,10 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             int totalEndpoints = 0;
             for (Map.Entry<String, Object> pathEntry : paths.entrySet()) {
                 String path = pathEntry.getKey();
-                @SuppressWarnings("unchecked")
                 Map<String, Object> pathMethods = (Map<String, Object>) pathEntry.getValue();
 
                 for (Map.Entry<String, Object> methodEntry : pathMethods.entrySet()) {
                     String method = methodEntry.getKey().toUpperCase();
-                    @SuppressWarnings("unchecked")
                     Map<String, Object> operation = (Map<String, Object>) methodEntry.getValue();
 
                     // Пропускаем сервисные эндпоинты
@@ -119,8 +131,8 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     if (testedEndpoints.contains(endpointKey)) {
                         continue;
                     }
-                    testedEndpoints.add(endpointKey);
 
+                    testedEndpoints.add(endpointKey);
                     logger.info("🎯 Testing endpoint: " + method + " " + path);
 
                     try {
@@ -139,15 +151,16 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                         List<Vulnerability> endpointVulns = fuzzEndpointWithValidRequests(
                                 endpoint, template, config
                         );
-                        vulnerabilities.addAll(endpointVulns);
 
+                        vulnerabilities.addAll(endpointVulns);
                         logger.info("✅ Endpoint " + endpointKey + " completed: " +
                                 endpointVulns.size() + " vulnerabilities found");
 
                         // Не спамим сервер
-                        Thread.sleep(300);
+                        Thread.sleep(200);
                     } catch (Exception e) {
                         logger.severe("❌ Error scanning endpoint " + endpointKey + ": " + e.getMessage());
+                        e.printStackTrace();
                     }
                 }
             }
@@ -157,7 +170,6 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
 
             // Фильтрация дубликатов
             return filterDuplicateVulnerabilities(vulnerabilities);
-
         } catch (Exception e) {
             logger.severe("❌ Critical error during fuzzing scan: " + e.getMessage());
             e.printStackTrace();
@@ -168,17 +180,16 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
     /**
      * Конвертирует объект OpenAPI в Map для обратной совместимости
      */
+    @SuppressWarnings("unchecked")
     private Map<String, Object> convertOpenApiToMap(Object openApiObj) {
         try {
             if (openApiObj instanceof Map) {
                 return (Map<String, Object>) openApiObj;
             }
-
             // Если это объект OpenAPI из swagger, конвертируем в Map
             if (openApiObj instanceof OpenAPI) {
                 OpenAPI openAPI = (OpenAPI) openApiObj;
                 Map<String, Object> result = new HashMap<>();
-
                 if (openAPI.getPaths() != null) {
                     Map<String, Object> pathsMap = new HashMap<>();
                     for (String pathKey : openAPI.getPaths().keySet()) {
@@ -187,17 +198,17 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     }
                     result.put("paths", pathsMap);
                 }
-
                 logger.info("✅ OpenAPI объект успешно преобразован в Map");
                 return result;
             }
-
         } catch (Exception e) {
             logger.severe("❌ Error converting OpenAPI to Map: " + e.getMessage());
+            e.printStackTrace();
         }
         return null;
     }
 
+    @SuppressWarnings("unchecked")
     private Map<String, Object> convertPathItemToMap(PathItem pathItem) {
         Map<String, Object> result = new HashMap<>();
         // Конвертируем методы (GET, POST, etc.)
@@ -219,9 +230,9 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     private Map<String, Object> convertOperationToMap(Operation operation) {
         Map<String, Object> result = new HashMap<>();
-
         // Параметры
         if (operation.getParameters() != null) {
             List<Map<String, Object>> parameters = new ArrayList<>();
@@ -230,15 +241,14 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             }
             result.put("parameters", parameters);
         }
-
         // Тело запроса
         if (operation.getRequestBody() != null) {
             result.put("requestBody", convertRequestBodyToMap(operation.getRequestBody()));
         }
-
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     private Map<String, Object> convertParameterToMap(Parameter parameter) {
         Map<String, Object> result = new HashMap<>();
         result.put("name", parameter.getName());
@@ -250,6 +260,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     private Map<String, Object> convertRequestBodyToMap(RequestBody requestBody) {
         Map<String, Object> result = new HashMap<>();
         if (requestBody.getContent() != null) {
@@ -265,6 +276,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     private Map<String, Object> convertMediaTypeToMap(MediaType mediaType) {
         Map<String, Object> result = new HashMap<>();
         if (mediaType.getSchema() != null) {
@@ -273,6 +285,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         return result;
     }
 
+    @SuppressWarnings("unchecked")
     private Map<String, Object> convertSchemaToMap(Schema<?> schema) {
         Map<String, Object> result = new HashMap<>();
         if (schema.getType() != null) {
@@ -295,17 +308,17 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
     /**
      * Получение реальных accountId из API
      */
-    /**
-     * Получение реальных accountId из API
-     */
     private List<String> getRealAccountIds(ScanConfig config, String bankToken, String consentId) {
         List<String> accountIds = new ArrayList<>();
         try {
-            String url = config.getBankBaseUrl() + "/accounts?client_id=team172";
+            // ИСПРАВЛЕНИЕ: используем client_id из конфигурации и trim() для baseUrl
+            String baseUrl = config.getBankBaseUrl().trim();
+            String clientId = config.getClientId() != null ? config.getClientId() : "team172";
 
+            String url = baseUrl + "/accounts?client_id=" + clientId;
             Map<String, String> headers = new HashMap<>();
             headers.put("Authorization", "Bearer " + bankToken);
-            headers.put("X-Requesting-Bank", "team172");
+            headers.put("X-Requesting-Bank", config.getBankId() != null ? config.getBankId() : "team172");
             headers.put("X-Consent-Id", consentId);
             headers.put("Accept", "application/json");
 
@@ -314,11 +327,33 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
 
             HttpResponse response = httpClient.sendRequest("GET", url, queryParams, headers, null);
 
+            logger.fine("🔍 Accounts API Response Status: " + response.getStatusCode());
+
             if (response.getStatusCode() == 200) {
                 JSONObject json = new JSONObject(response.getBody());
                 // Парсим реальные accountId из ответа
+
+                // Попытка 1: data.account
                 if (json.has("data") && json.getJSONObject("data").has("account")) {
-                    JSONArray accounts = json.getJSONObject("data").getJSONArray("account");
+                    Object accountObj = json.getJSONObject("data").get("account");
+                    if (accountObj instanceof JSONArray) {
+                        JSONArray accounts = (JSONArray) accountObj;
+                        for (int i = 0; i < accounts.length(); i++) {
+                            JSONObject account = accounts.getJSONObject(i);
+                            if (account.has("accountId")) {
+                                accountIds.add(account.getString("accountId"));
+                            }
+                        }
+                    } else if (accountObj instanceof JSONObject) {
+                        JSONObject account = (JSONObject) accountObj;
+                        if (account.has("accountId")) {
+                            accountIds.add(account.getString("accountId"));
+                        }
+                    }
+                }
+                // Попытка 2: data.accounts
+                else if (json.has("data") && json.getJSONObject("data").has("accounts")) {
+                    JSONArray accounts = json.getJSONObject("data").getJSONArray("accounts");
                     for (int i = 0; i < accounts.length(); i++) {
                         JSONObject account = accounts.getJSONObject(i);
                         if (account.has("accountId")) {
@@ -326,11 +361,26 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                         }
                     }
                 }
+                // Попытка 3: прямой массив в data
+                else if (json.has("data") && json.get("data") instanceof JSONArray) {
+                    JSONArray accounts = json.getJSONArray("data");
+                    for (int i = 0; i < accounts.length(); i++) {
+                        JSONObject account = accounts.getJSONObject(i);
+                        if (account.has("accountId")) {
+                            accountIds.add(account.getString("accountId"));
+                        }
+                    }
+                }
+                // Попытка 4: корневой массив - УДАЛЕНО из-за ошибки компиляции
+
+                logger.info("✅ Successfully retrieved " + accountIds.size() + " real account IDs");
             } else {
                 logger.warning("❌ Failed to get real account IDs. Status: " + response.getStatusCode());
+                logger.warning("❌ Response body: " + response.getBody().substring(0, Math.min(300, response.getBody().length())));
             }
         } catch (Exception e) {
             logger.severe("❌ Error getting real account IDs: " + e.getMessage());
+            e.printStackTrace();
         }
 
         // Если не удалось получить реальные ID, используем известные рабочие
@@ -343,11 +393,11 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         return accountIds;
     }
 
+    @SuppressWarnings("unchecked")
     private ApiEndpoint createEndpointFromSpec(String path, String method, Map<String, Object> operation) {
         try {
             List<ApiParameter> parameters = new ArrayList<>();
             // Обрабатываем параметры пути
-            @SuppressWarnings("unchecked")
             List<Map<String, Object>> pathParams = (List<Map<String, Object>>) operation.get("parameters");
             if (pathParams != null) {
                 for (Map<String, Object> param : pathParams) {
@@ -356,8 +406,6 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     Boolean requiredObj = (Boolean) param.get("required");
                     boolean required = requiredObj != null ? requiredObj : false;
                     String type = "string";
-
-                    @SuppressWarnings("unchecked")
                     Map<String, Object> schema = (Map<String, Object>) param.get("schema");
                     if (schema != null && schema.get("type") != null) {
                         type = schema.get("type").toString();
@@ -366,47 +414,37 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     parameters.add(new ApiParameter(name, type, location, required));
                 }
             }
-
             // Обрабатываем тело запроса
-            @SuppressWarnings("unchecked")
             Map<String, Object> requestBody = (Map<String, Object>) operation.get("requestBody");
             if (requestBody != null) {
-                @SuppressWarnings("unchecked")
                 Map<String, Object> content = (Map<String, Object>) requestBody.get("content");
                 if (content != null && !content.isEmpty()) {
                     // Берем первый доступный контент-тип
                     String contentType = content.keySet().iterator().next();
-                    @SuppressWarnings("unchecked")
                     Map<String, Object> mediaType = (Map<String, Object>) content.get(contentType);
-                    @SuppressWarnings("unchecked")
                     Map<String, Object> schemaObj = (Map<String, Object>) mediaType.get("schema");
                     if (schemaObj != null) {
-                        @SuppressWarnings("unchecked")
                         Map<String, Object> properties = (Map<String, Object>) schemaObj.get("properties");
                         if (properties != null) {
                             for (String propName : properties.keySet()) {
-                                @SuppressWarnings("unchecked")
                                 Map<String, Object> propSchema = (Map<String, Object>) properties.get(propName);
                                 String type = propSchema.containsKey("type") ?
                                         propSchema.get("type").toString() : "string";
-
                                 boolean paramRequired = false;
                                 if (schemaObj.containsKey("required")) {
-                                    @SuppressWarnings("unchecked")
                                     List<String> requiredList = (List<String>) schemaObj.get("required");
                                     paramRequired = requiredList != null && requiredList.contains(propName);
                                 }
-
                                 parameters.add(new ApiParameter(propName, type, ParameterLocation.BODY, paramRequired));
                             }
                         }
                     }
                 }
             }
-
             return new ApiEndpoint(path, HttpMethod.valueOf(method), parameters);
         } catch (Exception e) {
             logger.warning("⚠️  Error creating endpoint from spec for " + path + ": " + e.getMessage());
+            e.printStackTrace();
             return null;
         }
     }
@@ -415,9 +453,8 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                                                               ValidRequestTemplate template,
                                                               ScanConfig config) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
-        // Получаем параметры для тестирования
-        List<ApiParameter> testableParams = getTestableParameters(endpoint, template);
-        for (ApiParameter parameter : testableParams) {
+        // ТЕПЕРЬ ТЕСТИРУЕМ И ОБЯЗАТЕЛЬНЫЕ ПАРАМЕТРЫ ТОЖЕ!
+        for (ApiParameter parameter : endpoint.getParameters()) {
             logger.info("🔍 Testing parameter: " + parameter.getName() +
                     " (" + parameter.getType() + ") at " + parameter.getLocation());
             // Тестируем разные категории уязвимостей
@@ -425,7 +462,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             testBusinessLogicVulnerabilities(endpoint, template, parameter, vulnerabilities, config);
             // Не спамим сервер
             try {
-                Thread.sleep(200);
+                Thread.sleep(100);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -445,18 +482,32 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 if (!applyPayloadToTemplate(testTemplate, parameter, test.payload)) {
                     continue;
                 }
+
+                String baseUrl = config.getBankBaseUrl().trim();
+                String fullPath = baseUrl + testTemplate.getPath();
+
+                logger.fine("🧪 Testing injection: " + test.payload + " for parameter " + parameter.getName());
+                logger.fine("📡 URL: " + fullPath);
+                logger.fine("🔧 Method: " + endpoint.getMethod().name());
+
                 // Отправляем запрос
                 HttpResponse response = httpClient.sendRequest(
                         endpoint.getMethod().name(),
-                        config.getBankBaseUrl() + testTemplate.getPath(),
+                        fullPath,
                         testTemplate.getQueryParams(),
                         testTemplate.getHeaders(),
                         testTemplate.getJsonBody()
                 );
+
+                // Логируем ответ для диагностики
+                logger.fine("📥 Response Status: " + response.getStatusCode());
+                logger.fine("📥 Response Body (first 200 chars): " + response.getBody().substring(0, Math.min(200, response.getBody().length())));
+
                 // Обнаруживаем уязвимость
                 Vulnerability vulnerability = vulnerabilityDetector.detectInjection(
                         endpoint, parameter, test.payload, response, test.vulnerabilityType
                 );
+
                 if (vulnerability != null) {
                     vulnerabilities.add(vulnerability);
                     logger.info("🎉 REAL vulnerability found: " + vulnerability.getTitle() +
@@ -467,6 +518,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             } catch (Exception e) {
                 logger.warning("⚠️  Error testing injection for " + parameter.getName() +
                         ": " + e.getMessage());
+                e.printStackTrace();
             }
         }
     }
@@ -478,6 +530,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         if (!isBusinessParameter(parameter)) {
             return;
         }
+
         List<BusinessLogicTest> tests = createBusinessLogicTests(parameter);
         for (BusinessLogicTest test : tests) {
             try {
@@ -485,16 +538,27 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 if (!applyPayloadToTemplate(testTemplate, parameter, test.payload)) {
                     continue;
                 }
+
+                String baseUrl = config.getBankBaseUrl().trim();
+                String fullPath = baseUrl + testTemplate.getPath();
+
+                logger.fine("🧪 Testing business logic: " + test.payload + " for parameter " + parameter.getName());
+                logger.fine("📡 URL: " + fullPath);
+
                 HttpResponse response = httpClient.sendRequest(
                         endpoint.getMethod().name(),
-                        config.getBankBaseUrl() + testTemplate.getPath(),
+                        fullPath,
                         testTemplate.getQueryParams(),
                         testTemplate.getHeaders(),
                         testTemplate.getJsonBody()
                 );
+
+                logger.fine("📥 Response Status: " + response.getStatusCode());
+
                 Vulnerability vulnerability = vulnerabilityDetector.detectBusinessLogicBypass(
                         endpoint, parameter, test.payload, response, test.expectedBehavior
                 );
+
                 if (vulnerability != null) {
                     vulnerabilities.add(vulnerability);
                     logger.info("💰 Business logic bypass found: " + vulnerability.getTitle());
@@ -503,6 +567,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             } catch (Exception e) {
                 logger.warning("⚠️  Error testing business logic for " + parameter.getName() +
                         ": " + e.getMessage());
+                e.printStackTrace();
             }
         }
     }
@@ -519,7 +584,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 case PATH:
                     String path = template.getPath();
                     path = path.replace("{" + parameter.getName() + "}",
-                            java.net.URLEncoder.encode(payload, "UTF-8"));
+                            URLEncoder.encode(payload, StandardCharsets.UTF_8));
                     template.setPath(path);
                     break;
                 case BODY:
@@ -529,11 +594,13 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     }
                     break;
                 default:
+                    logger.warning("⚠️  Unsupported parameter location: " + parameter.getLocation());
                     return false;
             }
             return true;
         } catch (Exception e) {
             logger.warning("⚠️  Error applying payload to template: " + e.getMessage());
+            e.printStackTrace();
             return false;
         }
     }
@@ -541,14 +608,11 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
     private List<ApiParameter> getTestableParameters(ApiEndpoint endpoint, ValidRequestTemplate template) {
         List<ApiParameter> result = new ArrayList<>();
         for (ApiParameter param : endpoint.getParameters()) {
-            // Пропускаем обязательные параметры, которые уже заполнены в шаблоне
-            if (param.isRequired() && template.isParameterPopulated(param.getName(), param.getLocation())) {
-                continue;
-            }
             // Пропускаем служебные параметры
             if (param.getName().toLowerCase().contains("token") ||
                     param.getName().toLowerCase().contains("signature") ||
-                    param.getName().toLowerCase().contains("timestamp")) {
+                    param.getName().toLowerCase().contains("timestamp") ||
+                    param.getName().toLowerCase().contains("authorization")) {
                 continue;
             }
             result.add(param);
@@ -563,7 +627,10 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 name.contains("limit") ||
                 name.contains("total") ||
                 name.contains("max") ||
-                name.contains("min");
+                name.contains("min") ||
+                name.contains("price") ||
+                name.contains("sum") ||
+                name.contains("value");
     }
 
     private List<Vulnerability> filterDuplicateVulnerabilities(List<Vulnerability> vulnerabilities) {
@@ -588,6 +655,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
     private static class InjectionTest {
         String payload;
         Category vulnerabilityType;
+
         InjectionTest(String payload, Category vulnerabilityType) {
             this.payload = payload;
             this.vulnerabilityType = vulnerabilityType;
@@ -597,6 +665,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
     private static class BusinessLogicTest {
         String payload;
         String expectedBehavior;
+
         BusinessLogicTest(String payload, String expectedBehavior) {
             this.payload = payload;
             this.expectedBehavior = expectedBehavior;
@@ -606,32 +675,73 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
     private List<InjectionTest> createInjectionTests(ApiParameter parameter) {
         List<InjectionTest> tests = new ArrayList<>();
         String paramName = parameter.getName().toLowerCase();
+
         // SSTI тесты для текстовых полей
         if (parameter.getType().equals("string") &&
                 (paramName.contains("reason") || paramName.contains("reference") ||
-                        paramName.contains("name") || paramName.contains("description"))) {
+                        paramName.contains("name") || paramName.contains("description") ||
+                        paramName.contains("search") || paramName.contains("query") ||
+                        paramName.contains("filter") || paramName.contains("comment"))) {
             tests.add(new InjectionTest("{{7*7}}", Category.SSTI));
             tests.add(new InjectionTest("${7*7}", Category.SSTI));
+            tests.add(new InjectionTest("#{7*7}", Category.SSTI));
+            tests.add(new InjectionTest("{{''.__class__}}", Category.SSTI));
+            tests.add(new InjectionTest("<%= 7*7 %>", Category.SSTI));
         }
-        // NoSQL инъекции для JSON параметров
-        if (paramName.contains("filter") || parameter.getType().equals("object")) {
-            tests.add(new InjectionTest("{\"$ne\": \"\"}", Category.NOSQL_INJECTION));
-            tests.add(new InjectionTest("{\"$where\": \"sleep(100)\"}", Category.NOSQL_INJECTION));
+
+        // NoSQL инъекции
+        if (paramName.contains("filter") || paramName.contains("query") ||
+                paramName.contains("search") || parameter.getType().equals("object")) {
+            tests.add(new InjectionTest("{\"$ne\": \"invalid\"}", Category.NOSQL_INJECTION));
+            tests.add(new InjectionTest("{\"$where\": \"sleep(5000)\"}", Category.NOSQL_INJECTION));
+            tests.add(new InjectionTest("{\"$regex\": \".*\"}", Category.NOSQL_INJECTION));
+            tests.add(new InjectionTest("{\"$gt\": \"\"}", Category.NOSQL_INJECTION));
+            tests.add(new InjectionTest("{\"$exists\": true}", Category.NOSQL_INJECTION));
         }
-        // Path Traversal для параметров, связанных с путями
-        if (paramName.contains("path") || paramName.contains("file") || paramName.contains("url")) {
+
+        // Path Traversal
+        if (paramName.contains("path") || paramName.contains("file") ||
+                paramName.contains("url") || paramName.contains("location") ||
+                paramName.contains("attachment")) {
             tests.add(new InjectionTest("../../../../etc/passwd", Category.PATH_TRAVERSAL));
+            tests.add(new InjectionTest("..\\..\\..\\..\\windows\\system32\\drivers\\etc\\hosts", Category.PATH_TRAVERSAL));
+            tests.add(new InjectionTest("file:///etc/passwd", Category.PATH_TRAVERSAL));
+            tests.add(new InjectionTest("/etc/passwd", Category.PATH_TRAVERSAL));
+            tests.add(new InjectionTest("....//....//....//etc/passwd", Category.PATH_TRAVERSAL));
         }
+
+        // IDOR тесты (заменяем BOLA на OWASP_API1_BOLA)
+        if (paramName.contains("account") || paramName.contains("user") || paramName.contains("id") || paramName.contains("document")) {
+            tests.add(new InjectionTest("acc-9999", Category.OWASP_API1_BOLA));
+            tests.add(new InjectionTest("acc-0001", Category.OWASP_API1_BOLA));
+            tests.add(new InjectionTest("user-9999", Category.OWASP_API1_BOLA));
+            tests.add(new InjectionTest("user-0001", Category.OWASP_API1_BOLA));
+        }
+
         return tests;
     }
 
     private List<BusinessLogicTest> createBusinessLogicTests(ApiParameter parameter) {
         List<BusinessLogicTest> tests = new ArrayList<>();
         String paramName = parameter.getName().toLowerCase();
-        if (paramName.contains("amount") || paramName.contains("balance")) {
-            tests.add(new BusinessLogicTest("-10000.00", "should be rejected as negative amount"));
-            tests.add(new BusinessLogicTest("999999999999.99", "should be rejected as excessive amount"));
+
+        if (paramName.contains("amount") || paramName.contains("balance") ||
+                paramName.contains("price") || paramName.contains("sum") ||
+                paramName.contains("value")) {
+            tests.add(new BusinessLogicTest("-1000000.00", "should be rejected as negative amount"));
+            tests.add(new BusinessLogicTest("9999999999.99", "should be rejected as excessive amount"));
+            tests.add(new BusinessLogicTest("0", "should be rejected as zero amount"));
+            tests.add(new BusinessLogicTest("0.001", "should be rejected as fractional amount"));
+            tests.add(new BusinessLogicTest("999999999999999999999999999999999999999999999999999999999999", "should be rejected as overflow amount"));
         }
+
+        if (paramName.contains("limit") || paramName.contains("max") || paramName.contains("min")) {
+            tests.add(new BusinessLogicTest("-1", "should be rejected as negative limit"));
+            tests.add(new BusinessLogicTest("0", "should be rejected as zero limit"));
+            tests.add(new BusinessLogicTest("999999999", "should be rejected as excessive limit"));
+            tests.add(new BusinessLogicTest("999999999999999999999999999999999999999999999999999999999999", "should be rejected as overflow limit"));
+        }
+
         return tests;
     }
 
@@ -645,12 +755,13 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         }
 
         public HttpResponse sendRequest(String method, String url,
-                                        Map<String, String> queryParams, // переименовано для ясности
+                                        Map<String, String> queryParams,
                                         Map<String, String> headers,
                                         JSONObject jsonBody) throws Exception {
             long startTime = System.currentTimeMillis();
             // Строим полный URL с параметрами
             String fullUrl = buildUrlWithParams(url, queryParams);
+
             java.net.http.HttpRequest.Builder requestBuilder = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(fullUrl))
                     .timeout(java.time.Duration.ofSeconds(10));
@@ -694,14 +805,16 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
 
         private String buildUrlWithParams(String baseUrl, Map<String, String> queryParams) {
             if (queryParams == null || queryParams.isEmpty()) {
-                return baseUrl;
+                return baseUrl.trim();
             }
-            StringBuilder urlBuilder = new StringBuilder(baseUrl);
-            if (!baseUrl.contains("?")) {
+
+            StringBuilder urlBuilder = new StringBuilder(baseUrl.trim());
+            if (!urlBuilder.toString().contains("?")) {
                 urlBuilder.append("?");
-            } else {
+            } else if (!urlBuilder.toString().endsWith("?") && !urlBuilder.toString().endsWith("&")) {
                 urlBuilder.append("&");
             }
+
             boolean first = true;
             for (Map.Entry<String, String> entry : queryParams.entrySet()) {
                 if (!first) {
@@ -709,12 +822,14 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 }
                 urlBuilder.append(entry.getKey())
                         .append("=")
-                        .append(java.net.URLEncoder.encode(entry.getValue(), java.nio.charset.StandardCharsets.UTF_8));
+                        .append(URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8));
                 first = false;
             }
+
             return urlBuilder.toString();
         }
     }
+
     class BaselineRequestGenerator {
         private static final Map<String, String> SAMPLE_DATA = new HashMap<>();
         private Random random = new Random();
@@ -733,6 +848,28 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             SAMPLE_DATA.put("reference", "Security Test");
             SAMPLE_DATA.put("nickname", "Test Account");
             SAMPLE_DATA.put("amount", "100.00");
+            SAMPLE_DATA.put("card_name", "Test Card");
+            SAMPLE_DATA.put("card_type", "DEBIT");
+            SAMPLE_DATA.put("initial_balance", "1000.00");
+            SAMPLE_DATA.put("destination_account_id", "acc-4686");
+            SAMPLE_DATA.put("term_months", "12");
+            SAMPLE_DATA.put("source_account_id", "acc-4686");
+            SAMPLE_DATA.put("close_product_agreements", "[\"agreement-1\"]");
+            SAMPLE_DATA.put("read_product_agreements", "[\"agreement-1\"]");
+            SAMPLE_DATA.put("allowed_product_types", "[\"SAVINGS\"]");
+            SAMPLE_DATA.put("valid_until", "2025-12-31T23:59:59Z");
+            SAMPLE_DATA.put("max_amount", "1000.00");
+            SAMPLE_DATA.put("open_product_agreements", "[\"agreement-1\"]");
+            SAMPLE_DATA.put("allowed_creditor_accounts", "[\"acc-4686\"]");
+            SAMPLE_DATA.put("consent_type", "SINGLE");
+            SAMPLE_DATA.put("valid_from", "2024-01-01T00:00:00Z");
+            SAMPLE_DATA.put("max_uses", "1");
+            SAMPLE_DATA.put("max_total_amount", "1000.00");
+            SAMPLE_DATA.put("vrp_monthly_limit", "5000.00");
+            SAMPLE_DATA.put("currency", "RUB");
+            SAMPLE_DATA.put("max_amount_per_payment", "1000.00");
+            SAMPLE_DATA.put("vrp_max_individual_amount", "2000.00");
+            SAMPLE_DATA.put("vrp_daily_limit", "1000.00");
         }
 
         public void setRealAccountIds(List<String> realAccountIds) {
@@ -748,7 +885,8 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                                                                  String bankToken,
                                                                  Map<String, Object> allPaths) {
             ValidRequestTemplate template = new ValidRequestTemplate();
-            template.setPath(endpoint.getPath());
+            // ИСПРАВЛЕНИЕ: trim() для пути
+            template.setPath(endpoint.getPath().trim());
 
             // Заголовки по умолчанию
             Map<String, String> headers = new HashMap<>();
@@ -760,7 +898,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
 
             // Если эндпоинт требует согласия, добавляем необходимые заголовки
             if (isEndpointRequiringConsent(endpoint)) {
-                headers.put("X-Requesting-Bank", "team172");
+                headers.put("X-Requesting-Bank", config.getBankId() != null ? config.getBankId() : "team172");
                 if (consentId != null) {
                     headers.put("X-Consent-Id", consentId);
                 }
@@ -772,7 +910,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             Map<String, String> queryParams = new HashMap<>();
             // Для эндпоинтов, требующих client_id, добавляем его в query параметры
             if (isEndpointRequiringClientId(endpoint)) {
-                queryParams.put("client_id", "team172-1");
+                queryParams.put("client_id", config.getClientId() != null ? config.getClientId() : "team172");
             }
 
             // Тело запроса
@@ -782,8 +920,9 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             // Заполняем обязательные параметры
             for (ApiParameter param : endpoint.getParameters()) {
                 if (!param.isRequired()) continue;
-                String value = getSampleValueForParameter(param);
+                String value = getSampleValueForParameter(param, config);
                 if (value == null) continue;
+
                 switch (param.getLocation()) {
                     case QUERY:
                         queryParams.put(param.getName(), value);
@@ -794,10 +933,10 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     case PATH:
                         // Для параметров пути, связанных с accountId, используем реальные accountId
                         if (param.getName().toLowerCase().contains("account") && !realAccountIds.isEmpty()) {
-                            String encodedValue = java.net.URLEncoder.encode(realAccountIds.get(0), java.nio.charset.StandardCharsets.UTF_8);
+                            String encodedValue = URLEncoder.encode(realAccountIds.get(0), StandardCharsets.UTF_8);
                             template.setPath(template.getPath().replace("{" + param.getName() + "}", encodedValue));
                         } else {
-                            String encodedValue = java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8);
+                            String encodedValue = URLEncoder.encode(value, StandardCharsets.UTF_8);
                             template.setPath(template.getPath().replace("{" + param.getName() + "}", encodedValue));
                         }
                         break;
@@ -844,7 +983,9 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     path.contains("/balances") ||
                     path.contains("/transactions") ||
                     path.contains("/payments") ||
-                    path.contains("/consents");
+                    path.contains("/consents") ||
+                    path.contains("/cards") ||
+                    path.contains("/product-agreements");
         }
 
         public String generateConsentId(ScanConfig config, String bankToken) {
@@ -852,27 +993,33 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 HttpClientWrapper client = new HttpClientWrapper();
                 // Формируем правильный запрос для создания согласия
                 JSONObject consentBody = new JSONObject();
-                consentBody.put("client_id", "team172"); // исправлено
+                consentBody.put("client_id", config.getClientId() != null ? config.getClientId() : "team172");
                 consentBody.put("permissions", new JSONArray(Arrays.asList("ReadAccountsDetail", "ReadBalances")));
                 consentBody.put("reason", "Automated security testing");
-                consentBody.put("requesting_bank", "team172");
+                consentBody.put("requesting_bank", config.getBankId() != null ? config.getBankId() : "team172");
                 consentBody.put("requesting_bank_name", "Security Scanner");
 
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Authorization", "Bearer " + bankToken);
                 headers.put("Content-Type", "application/json");
-                headers.put("X-Requesting-Bank", "team172");
+                headers.put("X-Requesting-Bank", config.getBankId() != null ? config.getBankId() : "team172");
+
+                // ИСПРАВЛЕНИЕ: trim() для baseUrl
+                String baseUrl = config.getBankBaseUrl().trim();
 
                 // Создаем пустой Map для query параметров
                 Map<String, String> queryParams = new HashMap<>();
 
                 HttpResponse response = client.sendRequest(
                         "POST",
-                        config.getBankBaseUrl() + "/account-consents/request",
+                        baseUrl + "/account-consents/request",
                         queryParams,
                         headers,
                         consentBody
                 );
+
+                logger.fine("🔍 Consent creation response status: " + response.getStatusCode());
+                logger.fine("🔍 Consent creation response body: " + response.getBody().substring(0, Math.min(300, response.getBody().length())));
 
                 if (response.getStatusCode() == 200 || response.getStatusCode() == 201) {
                     JSONObject responseBody = new JSONObject(response.getBody());
@@ -894,18 +1041,20 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     }
                 }
                 logger.warning("❌ Failed to generate consent ID. Status: " + response.getStatusCode());
+                logger.warning("❌ Response body: " + response.getBody().substring(0, Math.min(300, response.getBody().length())));
             } catch (Exception e) {
                 logger.severe("❌ Error generating consent ID: " + e.getMessage());
+                e.printStackTrace();
             }
             return null;
         }
 
-        private String getSampleValueForParameter(ApiParameter param) {
+        private String getSampleValueForParameter(ApiParameter param, ScanConfig config) {
             String paramName = param.getName().toLowerCase();
             String paramType = param.getType().toLowerCase();
 
             // Если параметр связан с accountId и у нас есть реальные accountId, используем их
-            if (paramName.contains("account") && paramName.contains("id") && !realAccountIds.isEmpty()) {
+            if ((paramName.contains("account") && paramName.contains("id")) && !realAccountIds.isEmpty()) {
                 return realAccountIds.get(0);
             }
 
@@ -921,16 +1070,25 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 if (paramName.contains("id") || paramName.contains("uuid")) {
                     return "test-" + random.nextInt(1000);
                 }
+                if (paramName.contains("email")) {
+                    return "test" + random.nextInt(1000) + "@example.com";
+                }
+                if (paramName.contains("date") || paramName.contains("time")) {
+                    return "2024-01-01T00:00:00Z";
+                }
                 return "Test " + param.getName();
             } else if ("number".equals(paramType) || "integer".equals(paramType)) {
-                if (paramName.contains("amount") || paramName.contains("balance")) {
+                if (paramName.contains("amount") || paramName.contains("balance") || paramName.contains("price")) {
                     return "100.00";
                 }
-                return String.valueOf(random.nextInt(1000));
+                if (paramName.contains("limit") || paramName.contains("max") || paramName.contains("min")) {
+                    return "1000";
+                }
+                return String.valueOf(random.nextInt(1000) + 1);
             } else if ("boolean".equals(paramType)) {
                 return "true";
             }
-            return null;
+            return "test-value";
         }
     }
 
