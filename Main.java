@@ -363,6 +363,16 @@ public class Main implements core.ScanLauncher {
 
                 int currentBankVulnerabilities = 0;
                 try {
+                    // ЗАГРУЖАЕМ OPENAPI СПЕЦИФИКАЦИЮ с помощью OpenApiSpecLoader
+                    Object openApiSpec = loadOpenApiSpec(specUrl);
+                    if (openApiSpec == null) {
+                        log("❌ Не удалось загрузить OpenAPI спецификацию для " + cleanBaseUrl);
+                        failedBanks.add(cleanBaseUrl);
+                        continue;
+                    }
+
+                    log("✅ OpenAPI спецификация успешно загружена");
+
                     ScanConfig scanConfig = new ScanConfig();
                     scanConfig.setTargetBaseUrl(cleanBaseUrl);
                     scanConfig.setOpenApiSpecUrl(specUrl);
@@ -374,7 +384,6 @@ public class Main implements core.ScanLauncher {
 
                     for (ScanConfig.UserCredentials cred : config.getCredentials()) {
                         log("Аутентификация пользователя: " + cred.getUsername());
-                        // Исправление: Используем getTeamToken вместо getBankAccessToken
                         String token = AuthManager.getTeamToken(cleanBaseUrl, cred.getUsername(), cred.getPassword());
                         if (token != null) {
                             tokens.put(cred.getUsername(), token);
@@ -397,13 +406,13 @@ public class Main implements core.ScanLauncher {
 
                     List<Vulnerability> allVulnerabilities = new ArrayList<>();
 
-                    // Запуск сканеров
+                    // Запуск сканеров - передаем загруженную спецификацию
                     for (SecurityScanner scanner : securityScanners) {
                         log("\nЗапуск сканера: " + scanner.getName());
                         webServer.broadcastMessage("scanner_start", "Запуск: " + scanner.getName());
 
                         try {
-                            List<Vulnerability> scannerResults = scanner.scan(null, scanConfig, new HttpApiClient());
+                            List<Vulnerability> scannerResults = scanner.scan(openApiSpec, scanConfig, new HttpApiClient());
                             allVulnerabilities.addAll(scannerResults);
 
                             // Сохранение результатов в реальном времени
@@ -478,6 +487,27 @@ public class Main implements core.ScanLauncher {
         }
     }
 
+    /**
+     * Метод для загрузки OpenAPI спецификации с использованием OpenApiSpecLoader
+     */
+    private static Object loadOpenApiSpec(String specUrl) {
+        try {
+            log("📥 Загрузка OpenAPI спецификации: " + specUrl);
+
+            OpenApiSpecLoader loader = new OpenApiSpecLoader(specUrl);
+            Object openApi = loader.getOpenAPI();
+
+            if (openApi != null) {
+                log("✅ OpenAPI спецификация успешно загружена через OpenApiSpecLoader");
+                return openApi;
+            } else {
+                log("❌ OpenApiSpecLoader вернул null");
+            }
+        } catch (Exception e) {
+            log("❌ Ошибка при загрузке OpenAPI спецификации через OpenApiSpecLoader: " + e.getMessage());
+        }
+        return null;
+    }
     // Метод для сохранения уязвимости в PostgreSQL
     private static void saveVulnerabilityToDatabase(Vulnerability vuln, String bankName, String scannerName) {
         if (webServer != null) {
