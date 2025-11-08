@@ -37,6 +37,9 @@ class ConfigParser {
                             if (bankObj.startsWith("{") && bankObj.endsWith("}")) {
                                 String baseUrl = extractValueFromObject(bankObj, "baseUrl");
                                 String specUrl = extractValueFromObject(bankObj, "specUrl");
+                                // Убираем пробелы в конце URL
+                                if (baseUrl != null) baseUrl = baseUrl.trim();
+                                if (specUrl != null) specUrl = specUrl.trim();
                                 log("Parsed bank - baseUrl: " + baseUrl + ", specUrl: " + specUrl);
                                 if (baseUrl != null && specUrl != null) {
                                     banks.add(new ScanConfig.BankConfig(baseUrl, specUrl));
@@ -378,25 +381,35 @@ public class Main implements core.ScanLauncher {
                     scanConfig.setOpenApiSpecUrl(specUrl);
                     scanConfig.setBankBaseUrl(cleanBaseUrl);
 
-                    // Получение токенов
-                    log("Получение токенов для пользователей...");
-                    Map<String, String> tokens = new HashMap<>();
-
-                    for (ScanConfig.UserCredentials cred : config.getCredentials()) {
-                        log("Аутентификация пользователя: " + cred.getUsername());
-                        String token = AuthManager.getTeamToken(cleanBaseUrl, cred.getUsername(), cred.getPassword());
-                        if (token != null) {
-                            tokens.put(cred.getUsername(), token);
-                            log("✅ Токен получен для " + cred.getUsername());
-                        } else {
-                            log("❌ Не удалось получить токен для " + cred.getUsername());
-                        }
-                        Thread.sleep(1000);
+                    // Устанавливаем обязательные параметры для получения bank token
+                    if (!config.getCredentials().isEmpty()) {
+                        // Берем первого пользователя как основного
+                        ScanConfig.UserCredentials primaryCred = config.getCredentials().get(0);
+                        scanConfig.setClientId(primaryCred.getUsername());
+                        scanConfig.setClientSecret(primaryCred.getPassword());
+                        // Используем team172 как банк ID
+                        scanConfig.setBankId("team172");
                     }
 
+                    // Получение всех токенов, включая bank token
+                    log("Получение всех токенов для сканирования...");
+                    Map<String, String> tokens = AuthManager.getTokensForScanning(scanConfig);
+
+                    // Устанавливаем токены в конфигурацию СНАЧАЛА
                     scanConfig.setUserTokens(tokens);
 
+                    // Проверяем, получен ли bank token
+                    String bankToken = scanConfig.getBankToken();
+                    if (bankToken != null && !bankToken.isEmpty()) {
+                        log("✅ Bank token успешно получен и доступен");
+                    } else {
+                        log("⚠️ Bank token не получен, возможно, проблема с аутентификацией");
+                    }
+
                     log("Получено токенов: " + tokens.size());
+                    for (String key : tokens.keySet()) {
+                        log("   - " + key + ": ***");
+                    }
 
                     if (tokens.isEmpty()) {
                         log("❌ Не удалось получить токены для сканирования. Пропускаем банк.");
@@ -508,6 +521,7 @@ public class Main implements core.ScanLauncher {
         }
         return null;
     }
+
     // Метод для сохранения уязвимости в PostgreSQL
     private static void saveVulnerabilityToDatabase(Vulnerability vuln, String bankName, String scannerName) {
         if (webServer != null) {

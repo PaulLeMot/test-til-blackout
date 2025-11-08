@@ -71,11 +71,18 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             }
 
             // Создаем согласие
-            String consentId = baselineGenerator.generateConsentId(config, bankToken);
-            if (consentId == null) {
-                logger.warning("⚠️  Failed to create consent. Skipping authenticated scans.");
-                return vulnerabilities;
+            String consentId = config.getConsentId();
+            if (consentId == null || consentId.isEmpty()) {
+                // Если consent ID отсутствует, пытаемся создать новый
+                consentId = baselineGenerator.generateConsentId(config, bankToken);
+                if (consentId == null) {
+                    logger.warning("⚠️  Failed to create consent. Skipping authenticated scans.");
+                    return vulnerabilities;
+                }
+                // Сохраняем новый consent ID в конфигурацию
+                config.setConsentId(consentId);
             }
+            logger.info("✅ Using consent ID: " + consentId);
 
             // Получаем реальные accountId
             List<String> realAccountIds = getRealAccountIds(config, bankToken, consentId);
