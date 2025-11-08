@@ -11,6 +11,16 @@ import java.util.logging.Logger;
 import org.json.JSONObject;
 import org.json.JSONArray;
 
+// Импорты для OpenAPI
+import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.PathItem;
+import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.parameters.Parameter;
+import io.swagger.v3.oas.models.parameters.RequestBody;
+import io.swagger.v3.oas.models.media.Content;
+import io.swagger.v3.oas.models.media.MediaType;
+import io.swagger.v3.oas.models.media.Schema;
+
 public class AdvancedFuzzingScanner implements SecurityScanner {
     private static final Logger logger = Logger.getLogger(AdvancedFuzzingScanner.class.getName());
     private EnhancedVulnerabilityDetector vulnerabilityDetector;
@@ -34,8 +44,15 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         try {
             logger.info("🚀 Starting REAL vulnerability scanning...");
-            @SuppressWarnings("unchecked")
-            Map<String, Object> openApi = (Map<String, Object>) openApiObj;
+
+            // Преобразуем OpenAPI объект в Map для совместимости
+            Map<String, Object> openApi = convertOpenApiToMap(openApiObj);
+
+            if (openApi == null) {
+                logger.severe("❌ Не удалось преобразовать OpenAPI объект в Map");
+                return vulnerabilities;
+            }
+
             @SuppressWarnings("unchecked")
             Map<String, Object> paths = (Map<String, Object>) openApi.get("paths");
 
@@ -46,11 +63,27 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
 
             logger.info("📊 Found " + paths.size() + " endpoints in API specification");
 
-            // Получаем токен для банка
+            // Получаем банковский токен
             String bankToken = config.getBankToken();
             if (bankToken == null || bankToken.isEmpty()) {
                 logger.warning("⚠️  No bank token available. Skipping authenticated scans.");
+                return vulnerabilities;
             }
+
+            // Создаем согласие
+            String consentId = baselineGenerator.generateConsentId(config, bankToken);
+            if (consentId == null) {
+                logger.warning("⚠️  Failed to create consent. Skipping authenticated scans.");
+                return vulnerabilities;
+            }
+
+            // Получаем реальные accountId
+            List<String> realAccountIds = getRealAccountIds(config, bankToken, consentId);
+            logger.info("📋 Found " + realAccountIds.size() + " real accounts");
+
+            // Сохраняем реальные ID для использования в фаззинге
+            baselineGenerator.setRealAccountIds(realAccountIds);
+            baselineGenerator.setConsentId(consentId);
 
             // Тестируем каждый эндпоинт
             int totalEndpoints = 0;
@@ -89,7 +122,6 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                                 endpoint, config, bankToken, paths
                         );
 
-                        // ИСПРАВЛЕНО: Используем геттер isValid() вместо прямого доступа к приватному полю
                         if (template == null || !template.isValid()) {
                             logger.warning("⚠️  Could not generate valid request template for " + endpointKey +
                                     ". Skipping fuzzing for this endpoint.");
@@ -126,20 +158,192 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         }
     }
 
+    /**
+     * Конвертирует объект OpenAPI в Map для обратной совместимости
+     */
+    private Map<String, Object> convertOpenApiToMap(Object openApiObj) {
+        try {
+            if (openApiObj instanceof Map) {
+                return (Map<String, Object>) openApiObj;
+            }
+
+            // Если это объект OpenAPI из swagger, конвертируем в Map
+            if (openApiObj instanceof OpenAPI) {
+                OpenAPI openAPI = (OpenAPI) openApiObj;
+                Map<String, Object> result = new HashMap<>();
+
+                if (openAPI.getPaths() != null) {
+                    Map<String, Object> pathsMap = new HashMap<>();
+                    for (String pathKey : openAPI.getPaths().keySet()) {
+                        PathItem pathItem = openAPI.getPaths().get(pathKey);
+                        pathsMap.put(pathKey, convertPathItemToMap(pathItem));
+                    }
+                    result.put("paths", pathsMap);
+                }
+
+                logger.info("✅ OpenAPI объект успешно преобразован в Map");
+                return result;
+            }
+
+        } catch (Exception e) {
+            logger.severe("❌ Error converting OpenAPI to Map: " + e.getMessage());
+        }
+        return null;
+    }
+
+    private Map<String, Object> convertPathItemToMap(PathItem pathItem) {
+        Map<String, Object> result = new HashMap<>();
+        // Конвертируем методы (GET, POST, etc.)
+        if (pathItem.getGet() != null) {
+            result.put("get", convertOperationToMap(pathItem.getGet()));
+        }
+        if (pathItem.getPost() != null) {
+            result.put("post", convertOperationToMap(pathItem.getPost()));
+        }
+        if (pathItem.getPut() != null) {
+            result.put("put", convertOperationToMap(pathItem.getPut()));
+        }
+        if (pathItem.getDelete() != null) {
+            result.put("delete", convertOperationToMap(pathItem.getDelete()));
+        }
+        if (pathItem.getPatch() != null) {
+            result.put("patch", convertOperationToMap(pathItem.getPatch()));
+        }
+        return result;
+    }
+
+    private Map<String, Object> convertOperationToMap(Operation operation) {
+        Map<String, Object> result = new HashMap<>();
+
+        // Параметры
+        if (operation.getParameters() != null) {
+            List<Map<String, Object>> parameters = new ArrayList<>();
+            for (Parameter parameter : operation.getParameters()) {
+                parameters.add(convertParameterToMap(parameter));
+            }
+            result.put("parameters", parameters);
+        }
+
+        // Тело запроса
+        if (operation.getRequestBody() != null) {
+            result.put("requestBody", convertRequestBodyToMap(operation.getRequestBody()));
+        }
+
+        return result;
+    }
+
+    private Map<String, Object> convertParameterToMap(Parameter parameter) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("name", parameter.getName());
+        result.put("in", parameter.getIn());
+        result.put("required", parameter.getRequired());
+        if (parameter.getSchema() != null) {
+            result.put("schema", convertSchemaToMap(parameter.getSchema()));
+        }
+        return result;
+    }
+
+    private Map<String, Object> convertRequestBodyToMap(RequestBody requestBody) {
+        Map<String, Object> result = new HashMap<>();
+        if (requestBody.getContent() != null) {
+            Map<String, Object> content = new HashMap<>();
+            for (String mediaType : requestBody.getContent().keySet()) {
+                MediaType mt = requestBody.getContent().get(mediaType);
+                if (mt != null) {
+                    content.put(mediaType, convertMediaTypeToMap(mt));
+                }
+            }
+            result.put("content", content);
+        }
+        return result;
+    }
+
+    private Map<String, Object> convertMediaTypeToMap(MediaType mediaType) {
+        Map<String, Object> result = new HashMap<>();
+        if (mediaType.getSchema() != null) {
+            result.put("schema", convertSchemaToMap(mediaType.getSchema()));
+        }
+        return result;
+    }
+
+    private Map<String, Object> convertSchemaToMap(Schema<?> schema) {
+        Map<String, Object> result = new HashMap<>();
+        if (schema.getType() != null) {
+            result.put("type", schema.getType());
+        }
+        if (schema.getProperties() != null) {
+            Map<String, Object> properties = new HashMap<>();
+            for (String propName : schema.getProperties().keySet()) {
+                Schema<?> propSchema = (Schema<?>) schema.getProperties().get(propName);
+                properties.put(propName, convertSchemaToMap(propSchema));
+            }
+            result.put("properties", properties);
+        }
+        if (schema.getRequired() != null) {
+            result.put("required", new ArrayList<>(schema.getRequired()));
+        }
+        return result;
+    }
+
+    /**
+     * Получение реальных accountId из API
+     */
+    private List<String> getRealAccountIds(ScanConfig config, String bankToken, String consentId) {
+        List<String> accountIds = new ArrayList<>();
+        try {
+            String url = config.getBankBaseUrl() + "/accounts?client_id=team172-1";
+
+            Map<String, String> headers = new HashMap<>();
+            headers.put("Authorization", "Bearer " + bankToken);
+            headers.put("X-Requesting-Bank", "team172");
+            headers.put("X-Consent-Id", consentId);
+            headers.put("Accept", "application/json");
+
+            HttpResponse response = httpClient.sendRequest("GET", url, new HashMap<>(), headers, null);
+
+            if (response.getStatusCode() == 200) {
+                JSONObject json = new JSONObject(response.getBody());
+                // Парсим реальные accountId из ответа
+                if (json.has("data") && json.getJSONObject("data").has("account")) {
+                    JSONArray accounts = json.getJSONObject("data").getJSONArray("account");
+                    for (int i = 0; i < accounts.length(); i++) {
+                        JSONObject account = accounts.getJSONObject(i);
+                        if (account.has("accountId")) {
+                            accountIds.add(account.getString("accountId"));
+                        }
+                    }
+                }
+            } else {
+                logger.warning("❌ Failed to get real account IDs. Status: " + response.getStatusCode());
+            }
+        } catch (Exception e) {
+            logger.severe("❌ Error getting real account IDs: " + e.getMessage());
+        }
+
+        // Если не удалось получить реальные ID, используем известные рабочие
+        if (accountIds.isEmpty()) {
+            accountIds.add("acc-4686");
+            accountIds.add("acc-4698");
+            logger.info("📋 Using fallback account IDs: " + accountIds);
+        }
+
+        return accountIds;
+    }
+
     private ApiEndpoint createEndpointFromSpec(String path, String method, Map<String, Object> operation) {
         try {
             List<ApiParameter> parameters = new ArrayList<>();
             // Обрабатываем параметры пути
             @SuppressWarnings("unchecked")
-            List<?> pathParams = (List<?>) operation.get("parameters");
+            List<Map<String, Object>> pathParams = (List<Map<String, Object>>) operation.get("parameters");
             if (pathParams != null) {
-                for (Object paramObj : pathParams) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> param = (Map<String, Object>) paramObj;
+                for (Map<String, Object> param : pathParams) {
                     String name = (String) param.get("name");
                     String in = (String) param.get("in");
-                    boolean required = Boolean.TRUE.equals(param.get("required"));
+                    Boolean requiredObj = (Boolean) param.get("required");
+                    boolean required = requiredObj != null ? requiredObj : false;
                     String type = "string";
+
                     @SuppressWarnings("unchecked")
                     Map<String, Object> schema = (Map<String, Object>) param.get("schema");
                     if (schema != null && schema.get("type") != null) {
@@ -172,9 +376,15 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                                 Map<String, Object> propSchema = (Map<String, Object>) properties.get(propName);
                                 String type = propSchema.containsKey("type") ?
                                         propSchema.get("type").toString() : "string";
-                                parameters.add(new ApiParameter(propName, type, ParameterLocation.BODY,
-                                        schemaObj.containsKey("required") &&
-                                                ((List<?>) schemaObj.get("required")).contains(propName)));
+
+                                boolean paramRequired = false;
+                                if (schemaObj.containsKey("required")) {
+                                    @SuppressWarnings("unchecked")
+                                    List<String> requiredList = (List<String>) schemaObj.get("required");
+                                    paramRequired = requiredList != null && requiredList.contains(propName);
+                                }
+
+                                parameters.add(new ApiParameter(propName, type, ParameterLocation.BODY, paramRequired));
                             }
                         }
                     }
@@ -225,7 +435,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 // Отправляем запрос
                 HttpResponse response = httpClient.sendRequest(
                         endpoint.getMethod().name(),
-                        config.getBankBaseUrl() + endpoint.getPath(),
+                        config.getBankBaseUrl() + testTemplate.getPath(),
                         testTemplate.getQueryParams(),
                         testTemplate.getHeaders(),
                         testTemplate.getJsonBody()
@@ -264,7 +474,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 }
                 HttpResponse response = httpClient.sendRequest(
                         endpoint.getMethod().name(),
-                        config.getBankBaseUrl() + endpoint.getPath(),
+                        config.getBankBaseUrl() + testTemplate.getPath(),
                         testTemplate.getQueryParams(),
                         testTemplate.getHeaders(),
                         testTemplate.getJsonBody()
@@ -496,6 +706,8 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
     class BaselineRequestGenerator {
         private static final Map<String, String> SAMPLE_DATA = new HashMap<>();
         private Random random = new Random();
+        private List<String> realAccountIds = new ArrayList<>();
+        private String consentId;
 
         static {
             SAMPLE_DATA.put("client_id", "team172-1");
@@ -509,6 +721,14 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             SAMPLE_DATA.put("reference", "Security Test");
             SAMPLE_DATA.put("nickname", "Test Account");
             SAMPLE_DATA.put("amount", "100.00");
+        }
+
+        public void setRealAccountIds(List<String> realAccountIds) {
+            this.realAccountIds = realAccountIds;
+        }
+
+        public void setConsentId(String consentId) {
+            this.consentId = consentId;
         }
 
         public ValidRequestTemplate generateValidRequestTemplate(ApiEndpoint endpoint,
@@ -525,16 +745,27 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             }
             headers.put("Content-Type", "application/json");
             headers.put("User-Agent", "SecurityScanner/3.0");
+
+            // Если эндпоинт требует согласия, добавляем необходимые заголовки
+            if (isEndpointRequiringConsent(endpoint)) {
+                headers.put("X-Requesting-Bank", "team172");
+                if (consentId != null) {
+                    headers.put("X-Consent-Id", consentId);
+                }
+            }
+
             template.setHeaders(headers);
 
             // Параметры запроса
             Map<String, String> queryParams = new HashMap<>();
+            // Для эндпоинтов, требующих client_id, добавляем его в query параметры
+            if (isEndpointRequiringClientId(endpoint)) {
+                queryParams.put("client_id", "team172-1");
+            }
+
             // Тело запроса
             JSONObject jsonBody = new JSONObject();
             boolean hasBody = false;
-
-            // Проверяем, нужны ли согласия для этого эндпоинта
-            boolean requiresConsent = isEndpointRequiringConsent(endpoint);
 
             // Заполняем обязательные параметры
             for (ApiParameter param : endpoint.getParameters()) {
@@ -549,8 +780,14 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                         headers.put(param.getName(), value);
                         break;
                     case PATH:
-                        String encodedValue = java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8);
-                        template.setPath(template.getPath().replace("{" + param.getName() + "}", encodedValue));
+                        // Для параметров пути, связанных с accountId, используем реальные accountId
+                        if (param.getName().toLowerCase().contains("account") && !realAccountIds.isEmpty()) {
+                            String encodedValue = java.net.URLEncoder.encode(realAccountIds.get(0), java.nio.charset.StandardCharsets.UTF_8);
+                            template.setPath(template.getPath().replace("{" + param.getName() + "}", encodedValue));
+                        } else {
+                            String encodedValue = java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8);
+                            template.setPath(template.getPath().replace("{" + param.getName() + "}", encodedValue));
+                        }
                         break;
                     case BODY:
                         try {
@@ -574,16 +811,6 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 }
             }
 
-            // Если нужны согласия, добавляем соответствующие заголовки
-            if (requiresConsent && bankToken != null) {
-                headers.put("X-Requesting-Bank", "team172");
-                // Генерируем consent_id через отдельный запрос
-                String consentId = generateConsentId(config, bankToken);
-                if (consentId != null) {
-                    headers.put("X-Consent-Id", consentId);
-                }
-            }
-
             template.setQueryParams(queryParams);
             template.setJsonBody(hasBody ? jsonBody : null);
             template.setValid(true);
@@ -599,10 +826,19 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     path.contains("/payment-consents");
         }
 
-        private String generateConsentId(ScanConfig config, String bankToken) {
+        private boolean isEndpointRequiringClientId(ApiEndpoint endpoint) {
+            String path = endpoint.getPath().toLowerCase();
+            return path.contains("/accounts") ||
+                    path.contains("/balances") ||
+                    path.contains("/transactions") ||
+                    path.contains("/payments") ||
+                    path.contains("/consents");
+        }
+
+        public String generateConsentId(ScanConfig config, String bankToken) {
             try {
                 HttpClientWrapper client = new HttpClientWrapper();
-                // Формируем запрос на создание согласия
+                // Формируем правильный запрос для создания согласия
                 JSONObject consentBody = new JSONObject();
                 consentBody.put("client_id", "team172-1");
                 consentBody.put("permissions", new JSONArray(Arrays.asList("ReadAccountsDetail", "ReadBalances")));
@@ -613,6 +849,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Authorization", "Bearer " + bankToken);
                 headers.put("Content-Type", "application/json");
+                headers.put("X-Requesting-Bank", "team172");
 
                 HttpResponse response = client.sendRequest(
                         "POST",
@@ -622,19 +859,28 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                         consentBody
                 );
 
-                if (response.getStatusCode() == 200) {
+                if (response.getStatusCode() == 200 || response.getStatusCode() == 201) {
                     JSONObject responseBody = new JSONObject(response.getBody());
+                    // Пробуем разные варианты извлечения consent_id
                     if (responseBody.has("consent_id")) {
                         return responseBody.getString("consent_id");
                     }
-                    if (responseBody.has("data") && new JSONObject(responseBody.getString("data")).has("consentId")) {
-                        return new JSONObject(responseBody.getString("data")).getString("consentId");
+                    if (responseBody.has("consentId")) {
+                        return responseBody.getString("consentId");
+                    }
+                    if (responseBody.has("data")) {
+                        JSONObject data = responseBody.getJSONObject("data");
+                        if (data.has("consent_id")) {
+                            return data.getString("consent_id");
+                        }
+                        if (data.has("consentId")) {
+                            return data.getString("consentId");
+                        }
                     }
                 }
+                logger.warning("❌ Failed to generate consent ID. Status: " + response.getStatusCode());
             } catch (Exception e) {
-                Logger.getLogger(BaselineRequestGenerator.class.getName()).warning(
-                        "⚠️  Could not generate consent ID: " + e.getMessage()
-                );
+                logger.severe("❌ Error generating consent ID: " + e.getMessage());
             }
             return null;
         }
@@ -642,12 +888,19 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         private String getSampleValueForParameter(ApiParameter param) {
             String paramName = param.getName().toLowerCase();
             String paramType = param.getType().toLowerCase();
+
+            // Если параметр связан с accountId и у нас есть реальные accountId, используем их
+            if (paramName.contains("account") && paramName.contains("id") && !realAccountIds.isEmpty()) {
+                return realAccountIds.get(0);
+            }
+
             // Пытаемся найти значение в предопределенных данных
             for (Map.Entry<String, String> entry : SAMPLE_DATA.entrySet()) {
                 if (paramName.contains(entry.getKey())) {
                     return entry.getValue();
                 }
             }
+
             // Генерируем значения на основе типа
             if ("string".equals(paramType)) {
                 if (paramName.contains("id") || paramName.contains("uuid")) {
@@ -708,7 +961,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         public void setHeaders(Map<String, String> headers) { this.headers = headers; }
         public JSONObject getJsonBody() { return jsonBody; }
         public void setJsonBody(JSONObject jsonBody) { this.jsonBody = jsonBody; }
-        public boolean isValid() { return isValid; } // ИСПРАВЛЕНО: добавлен геттер
+        public boolean isValid() { return isValid; }
         public void setValid(boolean valid) { isValid = valid; }
     }
 }
