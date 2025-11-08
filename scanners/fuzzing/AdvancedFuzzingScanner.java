@@ -35,6 +35,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
     private HttpClientWrapper httpClient;
     private BaselineRequestGenerator baselineGenerator;
     private Set<String> testedEndpoints = new HashSet<>();
+    private Map<String, Integer> rateLimitDelays = new HashMap<>();
 
     public AdvancedFuzzingScanner() {
         this.vulnerabilityDetector = new EnhancedVulnerabilityDetector();
@@ -147,6 +148,15 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                             continue;
                         }
 
+                        // Логируем информацию о подготовленном запросе
+                        logger.info("🔧 Prepared request for " + endpoint.getMethod() + " " + template.getPath());
+                        if (!template.getQueryParams().isEmpty()) {
+                            logger.info("🔧 Query params: " + template.getQueryParams());
+                        }
+                        if (template.getJsonBody() != null) {
+                            logger.info("🔧 Body: " + template.getJsonBody().toString());
+                        }
+
                         // Проводим фаззинг с валидными запросами
                         List<Vulnerability> endpointVulns = fuzzEndpointWithValidRequests(
                                 endpoint, template, config
@@ -156,8 +166,8 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                         logger.info("✅ Endpoint " + endpointKey + " completed: " +
                                 endpointVulns.size() + " vulnerabilities found");
 
-                        // Не спамим сервер
-                        Thread.sleep(200);
+                        // Увеличиваем задержку между эндпоинтами для избежания 429
+                        Thread.sleep(500);
                     } catch (Exception e) {
                         logger.severe("❌ Error scanning endpoint " + endpointKey + ": " + e.getMessage());
                         e.printStackTrace();
@@ -371,7 +381,6 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                         }
                     }
                 }
-                // Попытка 4: корневой массив - УДАЛЕНО из-за ошибки компиляции
 
                 logger.info("✅ Successfully retrieved " + accountIds.size() + " real account IDs");
             } else {
@@ -453,16 +462,31 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                                                               ValidRequestTemplate template,
                                                               ScanConfig config) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
-        // ТЕПЕРЬ ТЕСТИРУЕМ И ОБЯЗАТЕЛЬНЫЕ ПАРАМЕТРЫ ТОЖЕ!
-        for (ApiParameter parameter : endpoint.getParameters()) {
+
+        // Логируем информацию о подготовленном запросе
+        logger.info("🔧 Prepared request for " + endpoint.getMethod() + " " + template.getPath());
+        if (!template.getQueryParams().isEmpty()) {
+            logger.info("🔧 Query params: " + template.getQueryParams());
+        }
+        if (template.getJsonBody() != null) {
+            logger.info("🔧 Body: " + template.getJsonBody().toString());
+        }
+
+        // Используем только тестируемые параметры (исключаем служебные)
+        List<ApiParameter> testableParameters = getTestableParameters(endpoint, template);
+
+        for (ApiParameter parameter : testableParameters) {
             logger.info("🔍 Testing parameter: " + parameter.getName() +
-                    " (" + parameter.getType() + ") at " + parameter.getLocation());
+                    " (" + parameter.getType() + ") at " + parameter.getLocation() +
+                    " [Required: " + parameter.isRequired() + "]");
+
             // Тестируем разные категории уязвимостей
             testInjectionVulnerabilities(endpoint, template, parameter, vulnerabilities, config);
             testBusinessLogicVulnerabilities(endpoint, template, parameter, vulnerabilities, config);
-            // Не спамим сервер
+
+            // Увеличиваем задержку между тестами параметров
             try {
-                Thread.sleep(100);
+                Thread.sleep(300);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
@@ -474,10 +498,27 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                                               ApiParameter parameter, List<Vulnerability> vulnerabilities,
                                               ScanConfig config) {
         List<InjectionTest> tests = createInjectionTests(parameter);
+
+        if (tests.isEmpty()) {
+            logger.fine("⏩ No injection tests for parameter: " + parameter.getName());
+            return;
+        }
+
+        logger.info("🧪 Starting " + tests.size() + " injection tests for: " + parameter.getName());
+
         for (InjectionTest test : tests) {
             try {
+                // Проверяем rate limiting для этого эндпоинта
+                String endpointKey = endpoint.getMethod() + ":" + endpoint.getPath();
+                if (rateLimitDelays.containsKey(endpointKey)) {
+                    int delay = rateLimitDelays.get(endpointKey);
+                    logger.warning("⚠️ Rate limit detected for " + endpointKey + ", waiting " + delay + "ms");
+                    Thread.sleep(delay);
+                }
+
                 // Создаем копию шаблона запроса
                 ValidRequestTemplate testTemplate = template.copy();
+
                 // Подставляем payload в нужное место
                 if (!applyPayloadToTemplate(testTemplate, parameter, test.payload)) {
                     continue;
@@ -486,9 +527,9 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 String baseUrl = config.getBankBaseUrl().trim();
                 String fullPath = baseUrl + testTemplate.getPath();
 
-                logger.fine("🧪 Testing injection: " + test.payload + " for parameter " + parameter.getName());
-                logger.fine("📡 URL: " + fullPath);
-                logger.fine("🔧 Method: " + endpoint.getMethod().name());
+                logger.info("🚀 Testing: " + test.vulnerabilityType + " with payload: " +
+                        test.payload + " in parameter: " + parameter.getName());
+                logger.fine("📡 Full URL: " + fullPath);
 
                 // Отправляем запрос
                 HttpResponse response = httpClient.sendRequest(
@@ -499,9 +540,18 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                         testTemplate.getJsonBody()
                 );
 
-                // Логируем ответ для диагностики
-                logger.fine("📥 Response Status: " + response.getStatusCode());
-                logger.fine("📥 Response Body (first 200 chars): " + response.getBody().substring(0, Math.min(200, response.getBody().length())));
+                logger.info("📥 Response: " + response.getStatusCode() + " for " +
+                        test.vulnerabilityType + " test on " + parameter.getName());
+
+                // Обработка 429 ошибки (Rate Limiting)
+                if (response.getStatusCode() == 429) {
+                    logger.warning("⏰ Rate limit hit (429) for " + endpointKey + ". Increasing delays.");
+                    // Увеличиваем задержку для этого эндпоинта
+                    int currentDelay = rateLimitDelays.getOrDefault(endpointKey, 300);
+                    rateLimitDelays.put(endpointKey, currentDelay + 1000); // Увеличиваем на 1 секунду
+                    Thread.sleep(2000); // Ждем 2 секунды перед продолжением
+                    continue; // Пропускаем этот тест и переходим к следующему
+                }
 
                 // Обнаруживаем уязвимость
                 Vulnerability vulnerability = vulnerabilityDetector.detectInjection(
@@ -510,15 +560,16 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
 
                 if (vulnerability != null) {
                     vulnerabilities.add(vulnerability);
-                    logger.info("🎉 REAL vulnerability found: " + vulnerability.getTitle() +
-                            " [" + vulnerability.getCategory() + "]");
+                    logger.info("🎉 VULNERABILITY FOUND: " + vulnerability.getTitle() +
+                            " [" + vulnerability.getCategory() + "] in parameter: " + parameter.getName());
                     // Не тестируем другие пейлоады для этого параметра, если уже нашли уязвимость
                     break;
                 }
+
+                // Задержка между отдельными тестами
+                Thread.sleep(200);
             } catch (Exception e) {
-                logger.warning("⚠️  Error testing injection for " + parameter.getName() +
-                        ": " + e.getMessage());
-                e.printStackTrace();
+                logger.warning("⚠️ Error testing " + parameter.getName() + ": " + e.getMessage());
             }
         }
     }
@@ -532,8 +583,24 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         }
 
         List<BusinessLogicTest> tests = createBusinessLogicTests(parameter);
+
+        if (tests.isEmpty()) {
+            logger.fine("⏩ No business logic tests for parameter: " + parameter.getName());
+            return;
+        }
+
+        logger.info("🧪 Starting " + tests.size() + " business logic tests for: " + parameter.getName());
+
         for (BusinessLogicTest test : tests) {
             try {
+                // Проверяем rate limiting
+                String endpointKey = endpoint.getMethod() + ":" + endpoint.getPath();
+                if (rateLimitDelays.containsKey(endpointKey)) {
+                    int delay = rateLimitDelays.get(endpointKey);
+                    logger.warning("⚠️ Rate limit detected for " + endpointKey + ", waiting " + delay + "ms");
+                    Thread.sleep(delay);
+                }
+
                 ValidRequestTemplate testTemplate = template.copy();
                 if (!applyPayloadToTemplate(testTemplate, parameter, test.payload)) {
                     continue;
@@ -542,7 +609,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                 String baseUrl = config.getBankBaseUrl().trim();
                 String fullPath = baseUrl + testTemplate.getPath();
 
-                logger.fine("🧪 Testing business logic: " + test.payload + " for parameter " + parameter.getName());
+                logger.info("🚀 Testing business logic: " + test.payload + " for parameter " + parameter.getName());
                 logger.fine("📡 URL: " + fullPath);
 
                 HttpResponse response = httpClient.sendRequest(
@@ -553,7 +620,16 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                         testTemplate.getJsonBody()
                 );
 
-                logger.fine("📥 Response Status: " + response.getStatusCode());
+                logger.info("📥 Response Status: " + response.getStatusCode() + " for business logic test");
+
+                // Обработка 429 ошибки
+                if (response.getStatusCode() == 429) {
+                    logger.warning("⏰ Rate limit hit (429) for " + endpointKey + ". Increasing delays.");
+                    int currentDelay = rateLimitDelays.getOrDefault(endpointKey, 300);
+                    rateLimitDelays.put(endpointKey, currentDelay + 1000);
+                    Thread.sleep(2000);
+                    continue;
+                }
 
                 Vulnerability vulnerability = vulnerabilityDetector.detectBusinessLogicBypass(
                         endpoint, parameter, test.payload, response, test.expectedBehavior
@@ -564,6 +640,9 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                     logger.info("💰 Business logic bypass found: " + vulnerability.getTitle());
                     break;
                 }
+
+                // Задержка между тестами
+                Thread.sleep(200);
             } catch (Exception e) {
                 logger.warning("⚠️  Error testing business logic for " + parameter.getName() +
                         ": " + e.getMessage());
@@ -612,7 +691,9 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             if (param.getName().toLowerCase().contains("token") ||
                     param.getName().toLowerCase().contains("signature") ||
                     param.getName().toLowerCase().contains("timestamp") ||
-                    param.getName().toLowerCase().contains("authorization")) {
+                    param.getName().toLowerCase().contains("authorization") ||
+                    param.getName().toLowerCase().contains("x-consent-id") || // Исключаем consent-id из тестирования
+                    param.getName().toLowerCase().contains("x-requesting-bank")) { // Исключаем банковские заголовки
                 continue;
             }
             result.add(param);
@@ -710,8 +791,9 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             tests.add(new InjectionTest("....//....//....//etc/passwd", Category.PATH_TRAVERSAL));
         }
 
-        // IDOR тесты (заменяем BOLA на OWASP_API1_BOLA)
-        if (paramName.contains("account") || paramName.contains("user") || paramName.contains("id") || paramName.contains("document")) {
+        // IDOR тесты - ТОЛЬКО для параметров пути (PATH), а не заголовков
+        if (parameter.getLocation() == ParameterLocation.PATH &&
+                (paramName.contains("account") || paramName.contains("user") || paramName.contains("id") || paramName.contains("document"))) {
             tests.add(new InjectionTest("acc-9999", Category.OWASP_API1_BOLA));
             tests.add(new InjectionTest("acc-0001", Category.OWASP_API1_BOLA));
             tests.add(new InjectionTest("user-9999", Category.OWASP_API1_BOLA));
@@ -835,6 +917,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
         private Random random = new Random();
         private List<String> realAccountIds = new ArrayList<>();
         private String consentId;
+        private Map<String, String> pathParameterValues = new HashMap<>();
 
         static {
             SAMPLE_DATA.put("client_id", "team172");
@@ -874,10 +957,22 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
 
         public void setRealAccountIds(List<String> realAccountIds) {
             this.realAccountIds = realAccountIds;
+            // Заполняем значения для path параметров
+            if (!realAccountIds.isEmpty()) {
+                pathParameterValues.put("account_id", realAccountIds.get(0));
+                pathParameterValues.put("card_id", "card-" + random.nextInt(1000));
+                pathParameterValues.put("payment_id", "pay-" + random.nextInt(1000));
+                pathParameterValues.put("consent_id", consentId != null ? consentId : "consent-test");
+                pathParameterValues.put("agreement_id", "agr-" + random.nextInt(1000));
+                pathParameterValues.put("product_id", "prod-" + random.nextInt(1000));
+            }
         }
 
         public void setConsentId(String consentId) {
             this.consentId = consentId;
+            if (consentId != null) {
+                pathParameterValues.put("consent_id", consentId);
+            }
         }
 
         public ValidRequestTemplate generateValidRequestTemplate(ApiEndpoint endpoint,
@@ -885,8 +980,11 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                                                                  String bankToken,
                                                                  Map<String, Object> allPaths) {
             ValidRequestTemplate template = new ValidRequestTemplate();
-            // ИСПРАВЛЕНИЕ: trim() для пути
-            template.setPath(endpoint.getPath().trim());
+            String path = endpoint.getPath().trim();
+
+            // ПРЕЖДЕ ВСЕГО: заменяем все path параметры на реальные значения
+            path = replacePathParameters(path);
+            template.setPath(path);
 
             // Заголовки по умолчанию
             Map<String, String> headers = new HashMap<>();
@@ -931,14 +1029,7 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
                         headers.put(param.getName(), value);
                         break;
                     case PATH:
-                        // Для параметров пути, связанных с accountId, используем реальные accountId
-                        if (param.getName().toLowerCase().contains("account") && !realAccountIds.isEmpty()) {
-                            String encodedValue = URLEncoder.encode(realAccountIds.get(0), StandardCharsets.UTF_8);
-                            template.setPath(template.getPath().replace("{" + param.getName() + "}", encodedValue));
-                        } else {
-                            String encodedValue = URLEncoder.encode(value, StandardCharsets.UTF_8);
-                            template.setPath(template.getPath().replace("{" + param.getName() + "}", encodedValue));
-                        }
+                        // Уже обработано выше
                         break;
                     case BODY:
                         try {
@@ -966,6 +1057,90 @@ public class AdvancedFuzzingScanner implements SecurityScanner {
             template.setJsonBody(hasBody ? jsonBody : null);
             template.setValid(true);
             return template;
+        }
+
+        /**
+         * Заменяет все параметры пути на реальные значения
+         */
+        private String replacePathParameters(String path) {
+            String result = path;
+
+            // Заменяем все известные параметры пути
+            for (Map.Entry<String, String> entry : pathParameterValues.entrySet()) {
+                String paramName = entry.getKey();
+                String paramValue = entry.getValue();
+                if (result.contains("{" + paramName + "}") && paramValue != null) {
+                    try {
+                        String encodedValue = URLEncoder.encode(paramValue, StandardCharsets.UTF_8);
+                        result = result.replace("{" + paramName + "}", encodedValue);
+                        logger.info("🔧 Replaced path parameter: " + paramName + " = " + paramValue);
+                    } catch (Exception e) {
+                        logger.warning("⚠️ Error encoding path parameter " + paramName + ": " + e.getMessage());
+                    }
+                }
+            }
+
+            // Для любых оставшихся параметров используем значения по умолчанию
+            result = replaceRemainingPathParameters(result);
+
+            return result;
+        }
+
+        /**
+         * Заменяет оставшиеся параметры пути значениями по умолчанию
+         */
+        private String replaceRemainingPathParameters(String path) {
+            String result = path;
+
+            // Регулярное выражение для поиска оставшихся {параметров}
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("\\{([^}]+)\\}");
+            java.util.regex.Matcher matcher = pattern.matcher(result);
+
+            while (matcher.find()) {
+                String paramName = matcher.group(1);
+                String defaultValue = getDefaultValueForPathParameter(paramName);
+                try {
+                    String encodedValue = URLEncoder.encode(defaultValue, StandardCharsets.UTF_8);
+                    result = result.replace("{" + paramName + "}", encodedValue);
+                    logger.info("🔧 Using default value for path parameter: " + paramName + " = " + defaultValue);
+                } catch (Exception e) {
+                    logger.warning("⚠️ Error encoding default path parameter " + paramName + ": " + e.getMessage());
+                }
+            }
+
+            return result;
+        }
+
+        /**
+         * Генерирует значения по умолчанию для параметров пути
+         */
+        private String getDefaultValueForPathParameter(String paramName) {
+            String lowerParamName = paramName.toLowerCase();
+
+            if (lowerParamName.contains("account") && !realAccountIds.isEmpty()) {
+                return realAccountIds.get(0);
+            }
+            if (lowerParamName.contains("card")) {
+                return "card-" + random.nextInt(1000);
+            }
+            if (lowerParamName.contains("payment")) {
+                return "pay-" + random.nextInt(1000);
+            }
+            if (lowerParamName.contains("consent") && consentId != null) {
+                return consentId;
+            }
+            if (lowerParamName.contains("agreement")) {
+                return "agr-" + random.nextInt(1000);
+            }
+            if (lowerParamName.contains("product")) {
+                return "prod-" + random.nextInt(1000);
+            }
+            if (lowerParamName.contains("id")) {
+                return "id-" + random.nextInt(1000);
+            }
+
+            // Общий fallback
+            return "test-" + random.nextInt(1000);
         }
 
         private boolean isEndpointRequiringConsent(ApiEndpoint endpoint) {
