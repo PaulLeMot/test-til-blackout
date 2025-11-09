@@ -1,6 +1,16 @@
 import core.*;
 import scanners.SecurityScanner;
-import scanners.owasp.*;
+import scanners.owasp.API1_BOLAScanner;
+import scanners.owasp.API2_BrokenAuthScanner;
+import scanners.owasp.API3_BOScanner;
+import scanners.owasp.API4_URCScanner;
+import scanners.owasp.API5_BrokenFunctionLevelAuthScanner;
+import scanners.owasp.API6_BusinessFlowScanner;
+import scanners.owasp.API7_SSRFScanner;
+import scanners.owasp.API8_SecurityConfigScanner;
+import scanners.owasp.API9_InventoryScanner;
+import scanners.owasp.API10_UnsafeConsumptionScanner;
+import scanners.owasp.Validation;
 import java.util.*;
 import java.io.*;
 import java.text.SimpleDateFormat;
@@ -330,17 +340,18 @@ public class Main implements core.ScanLauncher {
 
             // Создаём сканеры
             List<SecurityScanner> securityScanners = Arrays.asList(
-//                    new scanners.fuzzing.AdvancedFuzzingScanner(),
-//                    new API1_BOLAScanner(),
-//                    new API2_BrokenAuthScanner(),
-//                    new API3_BOScanner(),
-//                    new API4_URCScanner(),
-//                    new API5_BrokenFunctionLevelAuthScanner(),
-                    new API6_BusinessFlowScanner(),
-//                    new API7_SSRFScanner(),
-//                    new API8_SecurityConfigScanner(),
-                    new API9_InventoryScanner(),
-                    new API10_UnsafeConsumptionScanner()
+                new API1_BOLAScanner(),
+                new API2_BrokenAuthScanner(),
+                new API3_BOScanner(),
+                new API4_URCScanner(),
+                new API5_BrokenFunctionLevelAuthScanner(),
+                new API6_BusinessFlowScanner(),
+                new API7_SSRFScanner(),
+                new API8_SecurityConfigScanner(),
+                new API9_InventoryScanner(),
+                new API10_UnsafeConsumptionScanner(),
+		            new Validation(),
+                new scanners.fuzzing.AdvancedFuzzingScanner()
             );
 
             log("Зарегистрировано сканеров: " + securityScanners.size());
