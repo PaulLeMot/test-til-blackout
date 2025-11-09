@@ -128,12 +128,11 @@ public class Validation implements SecurityScanner {
             }
             
         } catch (Exception e) {
-            logDebug("Error collecting real test data: " + e.getMessage());
+            // Не логируем ошибки сбора тестовых данных
         }
         
         return testData;
     }
-
 
     private String createRealAccount(String baseUrl, ScanConfig config, ApiClient apiClient) {
         try {
@@ -162,24 +161,19 @@ public class Validation implements SecurityScanner {
                     
                     if (statusCode == 200 || statusCode == 201) {
                         String responseBody = apiResponse.getBody();
-                        logDebug("Account creation response: " + responseBody);
                         
                         // Парсим account_id из ответа
                         String accountId = extractAccountId(responseBody);
                         if (accountId != null) {
-                            logDebug("Successfully created account with ID: " + accountId);
+                            logSuccess("✅ Successfully created account with ID: " + accountId);
                             return accountId;
                         }
-                    } else {
-                        logDebug("Failed to create account, status: " + statusCode + ", response: " + apiResponse.getBody());
                     }
                 }
-            } else {
-                logDebug("No client token available for creating account");
             }
             
         } catch (Exception e) {
-            logDebug("Error creating real account: " + e.getMessage());
+            // Не логируем ошибки создания счета
         }
         return null;
     }
@@ -245,16 +239,13 @@ public class Validation implements SecurityScanner {
                     
                     if (statusCode == 200 || statusCode == 201) {
                         String responseBody = apiResponse.getBody();
-                        logDebug("Deposit product creation response: " + responseBody);
                         
                         // Парсим productId из ответа
                         String productId = extractProductId(responseBody);
                         if (productId != null) {
                             productIds.add(productId);
-                            logDebug("Successfully created deposit product with ID: " + productId);
+                            logSuccess("✅ Successfully created deposit product with ID: " + productId);
                         }
-                    } else {
-                        logDebug("Failed to create deposit product, status: " + statusCode);
                     }
                 }
                 
@@ -281,24 +272,19 @@ public class Validation implements SecurityScanner {
                     
                     if (statusCode == 200 || statusCode == 201) {
                         String responseBody = apiResponse.getBody();
-                        logDebug("Loan product creation response: " + responseBody);
                         
                         // Парсим productId из ответа
                         String productId = extractProductId(responseBody);
                         if (productId != null) {
                             productIds.add(productId);
-                            logDebug("Successfully created loan product with ID: " + productId);
+                            logSuccess("✅ Successfully created loan product with ID: " + productId);
                         }
-                    } else {
-                        logDebug("Failed to create loan product, status: " + statusCode);
                     }
                 }
-            } else {
-                logDebug("No bank token available for creating test products");
             }
             
         } catch (Exception e) {
-            logDebug("Error creating test products: " + e.getMessage());
+            // Не логируем ошибки создания продуктов
         }
         
         return productIds;
@@ -328,7 +314,6 @@ public class Validation implements SecurityScanner {
                     
                     if (statusCode == 200) {
                         String responseBody = apiResponse.getBody();
-                        logDebug("Existing products response: " + responseBody);
                         
                         // Парсим productId из ответа
                         if (responseBody != null && responseBody.contains("productId")) {
@@ -362,15 +347,18 @@ public class Validation implements SecurityScanner {
                                 }
                             }
                         }
+                        
+                        if (!productIds.isEmpty()) {
+                            logSuccess("✅ Successfully fetched " + productIds.size() + " existing product IDs");
+                        }
                     }
                 }
             }
             
         } catch (Exception e) {
-            logDebug("Error fetching existing products: " + e.getMessage());
+            // Не логируем ошибки получения продуктов
         }
         
-        logDebug("Found " + productIds.size() + " existing product IDs");
         return productIds;
     }
 
@@ -419,7 +407,6 @@ public class Validation implements SecurityScanner {
                 
                 if (statusCode == 200) {
                     String responseBody = apiResponse.getBody();
-                    logDebug("Bank token response: " + responseBody);
                     
                     // Парсим access_token из ответа
                     if (responseBody != null && responseBody.contains("access_token")) {
@@ -428,16 +415,14 @@ public class Validation implements SecurityScanner {
                         int end = responseBody.indexOf("\"", start);
                         if (start > 0 && end > start) {
                             String token = responseBody.substring(start, end);
-                            logDebug("Successfully obtained real bank token");
+                            logSuccess("✅ Successfully obtained real bank token");
                             return token;
                         }
                     }
-                } else {
-                    logDebug("Failed to get bank token, status: " + statusCode);
                 }
             }
         } catch (Exception e) {
-            logDebug("Error getting real bank token: " + e.getMessage());
+            // Не логируем ошибки получения токена
         }
         return null;
     }
@@ -465,7 +450,6 @@ public class Validation implements SecurityScanner {
                     
                     if (statusCode == 200) {
                         String responseBody = apiResponse.getBody();
-                        logDebug("Client accounts response: " + responseBody);
                         
                         // Парсим JSON для извлечения account_id
                         if (responseBody != null && responseBody.contains("accountId")) {
@@ -481,6 +465,10 @@ public class Validation implements SecurityScanner {
                                     }
                                 }
                             }
+                        }
+                        
+                        if (!accountIds.isEmpty()) {
+                            logSuccess("✅ Successfully fetched " + accountIds.size() + " account IDs with client token");
                         }
                     }
                 }
@@ -505,7 +493,6 @@ public class Validation implements SecurityScanner {
                         
                         if (statusCode == 200) {
                             String responseBody = apiResponse.getBody();
-                            logDebug("Interbank accounts response: " + responseBody);
                             
                             // Парсим JSON для извлечения account_id
                             if (responseBody != null && responseBody.contains("accountId")) {
@@ -522,18 +509,22 @@ public class Validation implements SecurityScanner {
                                     }
                                 }
                             }
+                            
+                            if (!accountIds.isEmpty()) {
+                                logSuccess("✅ Successfully fetched " + accountIds.size() + " account IDs with bank token");
+                            }
                         }
                     }
                 }
             }
             
         } catch (Exception e) {
-            logDebug("Error fetching real account IDs: " + e.getMessage());
+            // Не логируем ошибки получения счетов
         }
         
-        logDebug("Found " + accountIds.size() + " real account IDs");
         return accountIds;
     }
+
     private String createRealConsent(String baseUrl, ScanConfig config, ApiClient apiClient) {
         try {
             String consentUrl = baseUrl + "/account-consents/request";
@@ -565,7 +556,6 @@ public class Validation implements SecurityScanner {
                     
                     if (statusCode == 200) {
                         String responseBody = apiResponse.getBody();
-                        logDebug("Real consent response: " + responseBody);
                         
                         // Парсим JSON для извлечения consent_id
                         if (responseBody != null) {
@@ -579,23 +569,19 @@ public class Validation implements SecurityScanner {
                                     if (start > 0 && end > start) {
                                         String consentId = responseBody.substring(start, end);
                                         if (consentId.startsWith("consent-")) {
-                                            logDebug("Successfully created real consent with ID: " + consentId);
+                                            logSuccess("✅ Successfully created real consent with ID: " + consentId);
                                             return consentId;
                                         }
                                     }
                                 }
                             }
                         }
-                    } else {
-                        logDebug("Failed to create real consent, status: " + statusCode + ", response: " + apiResponse.getBody());
                     }
                 }
-            } else {
-                logDebug("No bank token available for creating real consent");
             }
             
         } catch (Exception e) {
-            logDebug("Error creating real consent: " + e.getMessage());
+            // Не логируем ошибки создания согласия
         }
         
         return null;
@@ -616,11 +602,13 @@ public class Validation implements SecurityScanner {
                 HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
                 int statusCode = apiResponse.getStatusCode();
                 
-                logDebug("Connectivity test - Status: " + statusCode);
-                return statusCode == 200;
+                if (statusCode == 200) {
+                    logSuccess("✅ Basic connectivity test passed - API server is accessible");
+                    return true;
+                }
             }
         } catch (Exception e) {
-            logDebug("Connectivity test failed: " + e.getMessage());
+            // Не логируем ошибки проверки connectivity
         }
         return false;
     }
@@ -755,19 +743,17 @@ public class Validation implements SecurityScanner {
                 HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
                 int statusCode = apiResponse.getStatusCode();
                 
-                logDebug("Documented endpoint " + method + " " + resolvedPath + " - Status: " + statusCode);
+                // ВЫВОДИМ ТОЛЬКО УСПЕШНЫЕ ЗАПРОСЫ (200)
+                if (statusCode == 200) {
+                    logSuccess("✅ Endpoint " + method + " " + resolvedPath + " is accessible (status: " + statusCode + ")");
+                }
                 
-                // Анализируем ответ
+                // Анализируем ответ (даже для ошибок, но не выводим в консоль)
                 analyzeResponse(path, method, statusCode, requiresAuthentication(operation, openAPI), 
                               requiresInterbankHeaders(operation, path), vulnerabilities);
-                
-                // Log successful responses for debugging
-                if (statusCode >= 200 && statusCode < 300) {
-                    logDebug("✅ Endpoint " + method + " " + resolvedPath + " is accessible (status: " + statusCode + ")");
-                }
             }
         } catch (Exception e) {
-            logDebug("Error testing documented endpoint " + method + " " + path + ": " + e.getMessage());
+            // Не логируем ошибки тестирования endpoints
         }
     }
 
@@ -1040,18 +1026,18 @@ public class Validation implements SecurityScanner {
         return path.contains("/consents/request");
     }
 
-private String getAppropriateAuthToken(ScanConfig config, Operation operation, String path, Map<String, Object> testData) {
-    // Bank token ТОЛЬКО для:
-    // - получения банковского токена
-    // - создания согласий
-    if (path.equals("/auth/bank-token") || 
-        path.contains("/consents/request")) {
-        return config.getUserToken("bank_token");
+    private String getAppropriateAuthToken(ScanConfig config, Operation operation, String path, Map<String, Object> testData) {
+        // Bank token ТОЛЬКО для:
+        // - получения банковского токена
+        // - создания согласий
+        if (path.equals("/auth/bank-token") || 
+            path.contains("/consents/request")) {
+            return config.getUserToken("bank_token");
+        }
+        
+        // Client token для ВСЕГО остального:
+        return config.getUserToken("team172-8");
     }
-    
-    // Client token для ВСЕГО остального:
-    return config.getUserToken("team172-8");
-}
 
     private void analyzeResponse(String path, String method, int statusCode, boolean requiresAuth, 
                                boolean requiresInterbank, List<Vulnerability> vulnerabilities) {
@@ -1123,8 +1109,10 @@ private String getAppropriateAuthToken(ScanConfig config, Operation operation, S
                 boolean documented = isEndpointDocumented(endpoint, "GET", openAPI);
                 boolean accessible = statusCode == 200 || statusCode == 201;
                 
-                logDebug("Standard endpoint " + endpoint + " - Status: " + statusCode + 
-                        ", Documented: " + documented + ", Accessible: " + accessible);
+                // ВЫВОДИМ ТОЛЬКО УСПЕШНЫЕ ЗАПРОСЫ
+                if (accessible) {
+                    logSuccess("✅ Standard endpoint " + endpoint + " is accessible (status: " + statusCode + ")");
+                }
                 
                 if (accessible && !documented) {
                     vulnerabilities.add(createVulnerability(
@@ -1145,7 +1133,7 @@ private String getAppropriateAuthToken(ScanConfig config, Operation operation, S
                 }
             }
         } catch (Exception e) {
-            logDebug("Error testing standard endpoint " + endpoint + ": " + e.getMessage());
+            // Не логируем ошибки тестирования стандартных endpoints
         }
     }
 
@@ -1226,5 +1214,10 @@ private String getAppropriateAuthToken(ScanConfig config, Operation operation, S
         if (DEBUG) {
             System.out.println("[DEBUG Validation] " + message);
         }
+    }
+
+    // НОВЫЙ МЕТОД: вывод только успешных операций
+    private void logSuccess(String message) {
+        System.out.println("[SUCCESS Validation] " + message);
     }
 }
