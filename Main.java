@@ -10,7 +10,7 @@ import scanners.owasp.API7_SSRFScanner;
 import scanners.owasp.API8_SecurityConfigScanner;
 import scanners.owasp.API9_InventoryScanner;
 import scanners.owasp.API10_UnsafeConsumptionScanner;
-import scanners.owasp.ContractValidationScanner;
+import scanners.owasp.Validation;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.Arrays;
@@ -71,7 +71,7 @@ public class Main {
                 //new API8_SecurityConfigScanner(),
                 //new API9_InventoryScanner(),
                 //new API10_UnsafeConsumptionScanner(),
-		new ContractValidationScanner()
+		new Validation()
             );
 
             log("Зарегистрировано сканеров: " + securityScanners.size());
