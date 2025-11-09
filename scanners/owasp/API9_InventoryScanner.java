@@ -8,6 +8,7 @@ import core.HttpApiClient;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.Paths;
+import io.swagger.v3.oas.models.servers.Server;
 
 import java.util.*;
 import java.util.regex.Pattern;
@@ -15,38 +16,45 @@ import java.util.regex.Matcher;
 
 public class API9_InventoryScanner implements SecurityScanner {
 
-    // Легитимные endpoints из спецификации API
-    private static final Set<String> LEGITIMATE_ENDPOINTS = Set.of(
-        "/auth/bank-token", "/accounts", "/account-consents/request", 
-        "/account-consents", "/payment-consents/request", "/payment-consents",
-        "/payments", "/products", "/product-agreements", "/product-agreement-consents/request",
-        "/product-agreement-consents", "/.well-known/jwks.json", "/", "/health"
+    private static final Set<String> PRODUCTION_HOST_INDICATORS = Set.of(
+            "api", "production", "prod", "live", "banking", "financial"
     );
 
-    // Легитимные версии API
-    private static final Set<String> LEGITIMATE_VERSIONS = Set.of("v1", "v2", "v3");
+    private static final Set<String> NON_PRODUCTION_HOST_INDICATORS = Set.of(
+            "test", "beta", "staging", "dev", "development", "sandbox",
+            "hackathon", "demo", "uat", "qa", "preprod"
+    );
 
-    // Подозрительные endpoints, которые действительно могут быть уязвимыми
+    private static final List<String> API_VERSION_PATHS = Arrays.asList(
+            "v1", "v2", "v3", "v4", "v5", "v0", "beta", "alpha",
+            "legacy", "old", "deprecated", "test", "stable"
+    );
+
+    // Расширенный список подозрительных эндпоинтов
     private static final List<String> SUSPICIOUS_ENDPOINTS = Arrays.asList(
-        "admin", "debug", "test", "api/admin", "api/debug", "api/test",
-        "management", "console", "api/console", "_admin", "_debug", "_test", 
-        "private", "secret", "backup", "database", "config", "api/config",
-        "logs", "system", "vendor", "tmp", "temp", "cache", "upload", "download",
-        "export", "import", "backdoor", "shell", "cmd", "exec", "phpmyadmin", 
-        "mysql", "phpinfo", "env", "/.git", "/.env", "DS_Store", "wp-admin", 
-        "administrator"
+            "admin", "debug", "test", "api/admin", "api/debug", "api/test",
+            "management", "console", "api/console", "_admin", "_debug", "_test",
+            "private", "secret", "backup", "database", "config", "api/config",
+            "logs", "system", "vendor", "tmp", "temp", "cache", "upload", "download",
+            "export", "import", "backdoor", "shell", "cmd", "exec", "phpmyadmin",
+            "mysql", "phpinfo", "env", "/.git", "/.env", "DS_Store", "wp-admin",
+            "administrator", "cpanel", "webmin", "jenkins", "gitlab", "grafana",
+            "kibana", "elasticsearch", "swagger-ui", "swagger", "redoc", "docs",
+            "api-docs", "graphql", "graphiql", "voyager", "altair", "playground"
     );
 
     private static final List<String> MONITORING_PATHS = Arrays.asList(
-        "actuator", "actuator/health", "actuator/metrics", "actuator/info",
-        "prometheus", "grafana", "monitoring", "heapdump", "threaddump",
-        "configprops", "mappings", "flyway", "liquibase", "beans", "conditions",
-        "loggers", "scheduledtasks", "sessions", "shutdown", "trace"
+            "actuator", "actuator/health", "actuator/metrics", "actuator/info",
+            "prometheus", "grafana", "monitoring", "heapdump", "threaddump",
+            "configprops", "mappings", "flyway", "liquibase", "beans", "conditions",
+            "loggers", "scheduledtasks", "sessions", "shutdown", "trace",
+            "status", "info", "metrics", "health", "ping", "ready", "live"
     );
 
     private int totalRequests = 0;
     private int foundEndpoints = 0;
     private Set<String> testedUrls = new HashSet<>();
+    private List<Vulnerability> vulnerabilities = new ArrayList<>();
 
     public API9_InventoryScanner() {}
 
@@ -57,10 +65,10 @@ public class API9_InventoryScanner implements SecurityScanner {
 
     @Override
     public List<Vulnerability> scan(Object openApiObj, ScanConfig config, ApiClient apiClient) {
-        System.out.println("(API-9) Запуск улучшенного сканирования управления инвентаризацией...");
+        System.out.println("(API-9) Запуск расширенного сканирования управления инвентаризацией...");
         System.out.println("(API-9) Целевой URL: " + config.getTargetBaseUrl());
 
-        List<Vulnerability> vulnerabilities = new ArrayList<>();
+        vulnerabilities.clear();
         String baseUrl = normalizeBaseUrl(config.getTargetBaseUrl().trim());
         OpenAPI openAPI = (OpenAPI) openApiObj;
 
@@ -70,25 +78,28 @@ public class API9_InventoryScanner implements SecurityScanner {
         testedUrls.clear();
 
         try {
-            // Получаем документированные endpoints из OpenAPI спецификации
-            Set<String> documentedEndpoints = extractDocumentedEndpoints(openAPI);
-            System.out.println("(API-9) Документировано endpoints: " + documentedEndpoints.size());
+            // Анализ OpenAPI спецификации на проблемы инвентаризации
+            analyzeOpenApiSpecification(openAPI, baseUrl);
 
             // 1. Проверка подозрительных endpoints
             System.out.println("(API-9) 5.9.1: Сканирование подозрительных конечных точек...");
-            vulnerabilities.addAll(scanSuspiciousEndpoints(baseUrl, apiClient, documentedEndpoints));
+            scanSuspiciousEndpoints(baseUrl, apiClient);
 
             // 2. Проверка мониторинговых endpoints
             System.out.println("(API-9) 5.9.4: Сканирование мониторинговых конечных точек...");
-            vulnerabilities.addAll(scanMonitoringEndpoints(baseUrl, apiClient, documentedEndpoints));
+            scanMonitoringEndpoints(baseUrl, apiClient);
 
-            // 3. Поиск устаревших версий
+            // 3. Поиск устаревших версий API
             System.out.println("(API-9) 5.9.6: Поиск устаревших версий API...");
-            vulnerabilities.addAll(scanDeprecatedEndpoints(baseUrl, apiClient, documentedEndpoints));
+            scanApiVersions(baseUrl, apiClient);
 
-            // 4. Проверка debug endpoints
-            System.out.println("(API-9) 5.9.7: Проверка debug конечных точек...");
-            vulnerabilities.addAll(scanDebugEndpoints(baseUrl, apiClient, documentedEndpoints));
+            // 4. Проверка среды выполнения (production vs non-production)
+            System.out.println("(API-9) Проверка среды выполнения...");
+            analyzeEnvironmentIndicators(baseUrl, openAPI);
+
+            // 5. Проверка документационных слепых зон
+            System.out.println("(API-9) Проверка документационных слепых зон...");
+            analyzeDocumentationBlindSpots(openAPI, baseUrl);
 
         } catch (Exception e) {
             System.err.println("(API-9) Ошибка при сканировании инвентаризации: " + e.getMessage());
@@ -99,52 +110,143 @@ public class API9_InventoryScanner implements SecurityScanner {
 
         System.out.println("(API-9) СКАНИРОВАНИЕ ИНВЕНТАРИЗАЦИИ ЗАВЕРШЕНО:");
         System.out.println("(API-9) Всего выполнено запросов: " + totalRequests);
-        System.out.println("(API-9) Обнаружено подозрительных конечных точек: " + foundEndpoints);
+        System.out.println("(API-9) Обнаружено проблемных конечных точек: " + foundEndpoints);
         System.out.println("(API-9) Найдено уязвимостей: " + vulnerabilities.size());
 
         return vulnerabilities;
     }
 
-    private Set<String> extractDocumentedEndpoints(OpenAPI openAPI) {
-        Set<String> endpoints = new HashSet<>();
-        if (openAPI == null) {
-            return endpoints;
+    private void analyzeOpenApiSpecification(OpenAPI openAPI, String baseUrl) {
+        // Проверка наличия версии в путях
+        checkApiVersioning(openAPI, baseUrl);
+
+        // Проверка серверов и окружения
+        checkServersAndEnvironment(openAPI, baseUrl);
+
+        // Проверка документации на наличие тестовых ссылок
+        checkDocumentationForTestReferences(openAPI);
+    }
+
+    private void checkApiVersioning(OpenAPI openAPI, String baseUrl) {
+        Paths paths = openAPI.getPaths();
+        boolean hasVersionInPaths = false;
+
+        if (paths != null) {
+            for (String path : paths.keySet()) {
+                if (path.matches("/v\\d+/.*") || path.matches("/api/v\\d+/.*")) {
+                    hasVersionInPaths = true;
+                    break;
+                }
+            }
         }
 
-        try {
-            Paths paths = openAPI.getPaths();
-            if (paths != null) {
-                for (String path : paths.keySet()) {
-                    endpoints.add(path);
-                    // Также добавляем базовые пути без параметров
-                    if (path.contains("/")) {
-                        String basePath = path.split("/")[0];
-                        if (!basePath.isEmpty()) {
-                            endpoints.add("/" + basePath);
+        if (!hasVersionInPaths) {
+            String evidence = "API не использует версионирование в путях URL.\n" +
+                    "Текущая версия в info.version: " +
+                    (openAPI.getInfo() != null ? openAPI.getInfo().getVersion() : "не указана") + "\n" +
+                    "Все пути: " + (paths != null ? paths.keySet() : "не найдены");
+
+            Vulnerability vuln = createInventoryVulnerability(
+                    "Отсутствие версионирования API в путях",
+                    "КРИТИЧЕСКАЯ ПРОБЛЕМА ИНВЕНТАРИЗАЦИИ: API не использует явное версионирование в URL путях.\n\n" +
+                            "Риски:\n" +
+                            "• Невозможно определить активные/устаревшие версии\n" +
+                            "• Сложность управления жизненным циклом API\n" +
+                            "• Потенциальное наличие скрытых устаревших версий\n" +
+                            "• Нарушение best practices API design\n\n" +
+                            "Рекомендации:\n" +
+                            "• Внедрить версионирование в путях (например, /v1/accounts)\n" +
+                            "• Вести инвентаризацию всех активных версий\n" +
+                            "• Разработать политику deprecated версий",
+                    baseUrl,
+                    200,
+                    evidence,
+                    Vulnerability.Severity.HIGH
+            );
+            vulnerabilities.add(vuln);
+            foundEndpoints++;
+        }
+    }
+
+    private void checkServersAndEnvironment(OpenAPI openAPI, String baseUrl) {
+        List<Server> servers = openAPI.getServers();
+        if (servers != null) {
+            for (Server server : servers) {
+                String serverUrl = server.getUrl();
+                if (serverUrl != null) {
+                    // Проверка на не-production индикаторы
+                    for (String indicator : NON_PRODUCTION_HOST_INDICATORS) {
+                        if (serverUrl.toLowerCase().contains(indicator)) {
+                            String evidence = "Обнаружен сервер с не-production индикатором: " + serverUrl +
+                                    "\nОписание: " + server.getDescription();
+
+                            Vulnerability vuln = createInventoryVulnerability(
+                                    "Потенциальная не-production среда в спецификации",
+                                    "ПРОБЛЕМА ИНВЕНТАРИЗАЦИИ: В спецификации указаны серверы с не-production индикаторами.\n\n" +
+                                            "Обнаруженный индикатор: " + indicator + "\n" +
+                                            "URL сервера: " + serverUrl + "\n\n" +
+                                            "Риски:\n" +
+                                            "• Возможная путаница между средами выполнения\n" +
+                                            "• Использование тестовых данных в production\n" +
+                                            "• Неправильная маршрутизация запросов\n\n" +
+                                            "Рекомендации:\n" +
+                                            "• Четко разделять спецификации для разных сред\n" +
+                                            "• Удалить тестовые серверы из production документации\n" +
+                                            "• Использовать разные домены для разных сред",
+                                    serverUrl,
+                                    200,
+                                    evidence,
+                                    Vulnerability.Severity.MEDIUM
+                            );
+                            vulnerabilities.add(vuln);
+                            foundEndpoints++;
                         }
                     }
                 }
             }
-        } catch (Exception e) {
-            System.err.println("(API-9) Ошибка при извлечении documented endpoints: " + e.getMessage());
         }
-
-        // Добавляем легитимные endpoints из спецификации
-        endpoints.addAll(LEGITIMATE_ENDPOINTS);
-        return endpoints;
     }
 
-    private List<Vulnerability> scanSuspiciousEndpoints(String baseUrl, ApiClient apiClient, Set<String> documentedEndpoints) {
-        List<Vulnerability> vulns = new ArrayList<>();
+    private void checkDocumentationForTestReferences(OpenAPI openAPI) {
+        // Проверка описаний на наличие тестовых ссылок
+        if (openAPI.getInfo() != null && openAPI.getInfo().getDescription() != null) {
+            String description = openAPI.getInfo().getDescription().toLowerCase();
+            if (description.contains("хакатон") || description.contains("hackathon") ||
+                    description.contains("тест") || description.contains("sandbox")) {
+
+                String evidence = "Документация содержит ссылки на тестовую среду\n" +
+                        "Фрагмент описания: " +
+                        (openAPI.getInfo().getDescription().length() > 200 ?
+                                openAPI.getInfo().getDescription().substring(0, 200) + "..." :
+                                openAPI.getInfo().getDescription());
+
+                Vulnerability vuln = createInventoryVulnerability(
+                        "Тестовые ссылки в production документации",
+                        "ПРОБЛЕМА ИНВЕНТАРИЗАЦИИ: Документация API содержит ссылки на тестовые среды или события.\n\n" +
+                                "Риски:\n" +
+                                "• Путаница между production и test средами\n" +
+                                "• Возможное использование тестовых credentials\n" +
+                                "• Непрофессиональное представление API\n\n" +
+                                "Рекомендации:\n" +
+                                "• Удалить все тестовые ссылки из production документации\n" +
+                                "• Создать отдельную документацию для тестовых сред\n" +
+                                "• Четко маркировать среды выполнения",
+                        "API Documentation",
+                        200,
+                        evidence,
+                        Vulnerability.Severity.LOW
+                );
+                vulnerabilities.add(vuln);
+                foundEndpoints++;
+            }
+        }
+    }
+
+    private void scanSuspiciousEndpoints(String baseUrl, ApiClient apiClient) {
         int discovered = 0;
 
         for (String endpoint : SUSPICIOUS_ENDPOINTS) {
-            // Пропускаем если endpoint документирован
-            if (isEndpointDocumented("/" + endpoint, documentedEndpoints)) {
-                continue;
-            }
-
-            String fullUrl = baseUrl + endpoint;
+            String fullUrl = baseUrl + (endpoint.startsWith("/") ? endpoint.substring(1) : endpoint);
             if (testedUrls.contains(fullUrl)) {
                 continue;
             }
@@ -152,45 +254,40 @@ public class API9_InventoryScanner implements SecurityScanner {
             HttpApiClient.ApiResponse response = makeRequest(apiClient, fullUrl, "SUSPICIOUS_ENDPOINT");
             testedUrls.add(fullUrl);
 
-            if (response != null && isTrulySuspiciousResponse(response, endpoint)) {
+            if (response != null && isSuccessStatus(response.getStatusCode())) {
                 discovered++;
                 String evidence = buildEvidence("Подозрительная конечная точка", fullUrl, response);
 
                 Vulnerability vuln = createInventoryVulnerability(
-                    "Обнаружена подозрительная конечная точка: " + endpoint,
-                    "УРОВЕНЬ РИСКА: " + assessSuspiciousEndpointRisk(endpoint, response) +
-                    "\nОбнаружена потенциально опасная конечная точка: " + endpoint +
-                    "\nСтатус: HTTP " + response.getStatusCode() +
-                    "\nТип: " + classifySuspiciousEndpoint(endpoint) +
-                    "\n\nКонечная точка соответствует известным шаблонам административных, debug или системных путей. " +
-                    "Рекомендуется проверить необходимость существования данной конечной точки в production среде.",
-                    "/" + endpoint,
-                    response.getStatusCode(),
-                    evidence,
-                    assessSuspiciousEndpointSeverity(endpoint, response)
+                        "Обнаружена подозрительная конечная точка: " + endpoint,
+                        "ВЫСОКИЙ УРОВЕНЬ: Обнаружена потенциально опасная конечная точка!\n\n" +
+                                "Тип: " + classifySuspiciousEndpoint(endpoint) + "\n" +
+                                "Статус: HTTP " + response.getStatusCode() + "\n" +
+                                "Риск: " + assessSuspiciousEndpointRisk(endpoint, response) + "\n\n" +
+                                "Рекомендации:\n" +
+                                "• Проверить необходимость endpoint в production\n" +
+                                "• Ограничить доступ к административным интерфейсам\n" +
+                                "• Удалить неиспользуемые debug endpoints",
+                        "/" + endpoint,
+                        response.getStatusCode(),
+                        evidence,
+                        Vulnerability.Severity.HIGH
                 );
 
-                vulns.add(vuln);
+                vulnerabilities.add(vuln);
                 System.out.println("(API-9) Подозрительная конечная точка: " + endpoint + " (" + response.getStatusCode() + ")");
             }
         }
 
         System.out.println("(API-9) Подозрительных конечных точек обнаружено: " + discovered);
         foundEndpoints += discovered;
-        return vulns;
     }
 
-    private List<Vulnerability> scanMonitoringEndpoints(String baseUrl, ApiClient apiClient, Set<String> documentedEndpoints) {
-        List<Vulnerability> vulns = new ArrayList<>();
+    private void scanMonitoringEndpoints(String baseUrl, ApiClient apiClient) {
         int discovered = 0;
 
         for (String monitoringPath : MONITORING_PATHS) {
-            // Пропускаем если endpoint документирован
-            if (isEndpointDocumented("/" + monitoringPath, documentedEndpoints)) {
-                continue;
-            }
-
-            String fullUrl = baseUrl + monitoringPath;
+            String fullUrl = baseUrl + (monitoringPath.startsWith("/") ? monitoringPath.substring(1) : monitoringPath);
             if (testedUrls.contains(fullUrl)) {
                 continue;
             }
@@ -198,226 +295,169 @@ public class API9_InventoryScanner implements SecurityScanner {
             HttpApiClient.ApiResponse response = makeRequest(apiClient, fullUrl, "MONITORING");
             testedUrls.add(fullUrl);
 
-            if (response != null && response.getStatusCode() == 200 && containsSensitiveMonitoringData(response)) {
+            if (response != null && isSuccessStatus(response.getStatusCode())) {
                 discovered++;
-                String evidence = buildEvidence("Мониторинговая конечная точка с чувствительными данными", fullUrl, response);
+                String evidence = buildEvidence("Мониторинговая конечная точка", fullUrl, response);
 
                 Vulnerability vuln = createInventoryVulnerability(
-                    "Публичная мониторинговая конечная точка с чувствительными данными: " + monitoringPath,
-                    "КРИТИЧЕСКИЙ УРОВЕНЬ: Обнаружена публичная мониторинговая конечная точка с чувствительными данными!" +
-                    "\nКонечная точка: " + monitoringPath +
-                    "\nРиск: Раскрытие системной информации, конфигурации или метрик" +
-                    "\nОбнаруженные чувствительные данные: " + identifySensitiveData(response),
-                    "/" + monitoringPath,
-                    response.getStatusCode(),
-                    evidence,
-                    Vulnerability.Severity.HIGH
+                        "Публичная мониторинговая конечная точка: " + monitoringPath,
+                        "СРЕДНИЙ УРОВЕНЬ: Обнаружена публичная мониторинговая конечная точка!\n\n" +
+                                "Статус: HTTP " + response.getStatusCode() + "\n" +
+                                "Риск: Раскрытие системной информации и метрик\n" +
+                                "Обнаруженные данные: " + identifySensitiveData(response) + "\n\n" +
+                                "Рекомендации:\n" +
+                                "• Ограничить доступ к мониторинговым endpoint'ам\n" +
+                                "• Использовать аутентификацию для sensitive метрик\n" +
+                                "• Вынести мониторинг на отдельные домены",
+                        "/" + monitoringPath,
+                        response.getStatusCode(),
+                        evidence,
+                        Vulnerability.Severity.MEDIUM
                 );
 
-                vulns.add(vuln);
-                System.out.println("(API-9) КРИТИЧЕСКИЙ: Мониторинговая конечная точка с чувствительными данными: " + monitoringPath);
+                vulnerabilities.add(vuln);
+                System.out.println("(API-9) Мониторинговая конечная точка: " + monitoringPath + " (" + response.getStatusCode() + ")");
             }
         }
 
-        System.out.println("(API-9) Опасных мониторинговых конечных точек: " + discovered);
+        System.out.println("(API-9) Мониторинговых конечных точек обнаружено: " + discovered);
         foundEndpoints += discovered;
-        return vulns;
     }
 
-    private List<Vulnerability> scanDeprecatedEndpoints(String baseUrl, ApiClient apiClient, Set<String> documentedEndpoints) {
-        List<Vulnerability> vulns = new ArrayList<>();
+    private void scanApiVersions(String baseUrl, ApiClient apiClient) {
         int discovered = 0;
 
-        // Проверяем наличие устаревших версий API
-        for (String version : Arrays.asList("v0", "v1", "beta", "alpha", "legacy", "old")) {
-            if (LEGITIMATE_VERSIONS.contains(version)) {
-                continue; // Пропускаем легитимные версии
-            }
-
+        for (String version : API_VERSION_PATHS) {
             String versionUrl = baseUrl + version;
             if (testedUrls.contains(versionUrl)) {
                 continue;
             }
 
-            HttpApiClient.ApiResponse response = makeRequest(apiClient, versionUrl, "DEPRECATED_VERSION");
+            HttpApiClient.ApiResponse response = makeRequest(apiClient, versionUrl, "API_VERSION");
             testedUrls.add(versionUrl);
 
-            if (response != null && response.getStatusCode() == 200) {
-                // Проверяем действительно ли это устаревшая версия API
-                if (isTrulyDeprecatedAPI(response, version)) {
-                    discovered++;
-                    String evidence = buildEvidence("Устаревшая версия API", versionUrl, response);
+            if (response != null && isSuccessStatus(response.getStatusCode())) {
+                discovered++;
+                String evidence = buildEvidence("Версия API", versionUrl, response);
 
-                    Vulnerability vuln = createInventoryVulnerability(
-                        "Обнаружена устаревшая версия API: " + version,
-                        "СРЕДНИЙ УРОВЕНЬ: Обнаружена устаревшая версия API!" +
-                        "\nВерсия: " + version +
-                        "\nРиск: Устаревшие версии могут содержать известные уязвимости и не получать security updates" +
-                        "\nРекомендация: Отключить устаревшие версии API или обеспечить их безопасность",
+                Vulnerability vuln = createInventoryVulnerability(
+                        "Обнаружена версия API: " + version,
+                        "СРЕДНИЙ УРОВЕНЬ: Обнаружена дополнительная версия API!\n\n" +
+                                "Версия: " + version + "\n" +
+                                "Статус: HTTP " + response.getStatusCode() + "\n" +
+                                "Риск: Расширение attack surface, потенциально устаревшие версии\n\n" +
+                                "Рекомендации:\n" +
+                                "• Вести инвентаризацию всех активных версий\n" +
+                                "• Разработать политику deprecated\n" +
+                                "• Обеспечить безопасность всех версий",
                         "/" + version,
                         response.getStatusCode(),
                         evidence,
                         Vulnerability.Severity.MEDIUM
-                    );
-
-                    vulns.add(vuln);
-                    System.out.println("(API-9) Устаревшая версия API: " + version);
-                }
-            }
-        }
-
-        System.out.println("(API-9) Устаревших версий API: " + discovered);
-        foundEndpoints += discovered;
-        return vulns;
-    }
-
-    private List<Vulnerability> scanDebugEndpoints(String baseUrl, ApiClient apiClient, Set<String> documentedEndpoints) {
-        List<Vulnerability> vulns = new ArrayList<>();
-        int discovered = 0;
-
-        List<String> debugEndpoints = Arrays.asList("debug", "api/debug", "_debug", "develop", "development");
-
-        for (String debugPath : debugEndpoints) {
-            // Пропускаем если endpoint документирован
-            if (isEndpointDocumented("/" + debugPath, documentedEndpoints)) {
-                continue;
-            }
-
-            String fullUrl = baseUrl + debugPath;
-            if (testedUrls.contains(fullUrl)) {
-                continue;
-            }
-
-            HttpApiClient.ApiResponse response = makeRequest(apiClient, fullUrl, "DEBUG_ENDPOINT");
-            testedUrls.add(fullUrl);
-
-            if (response != null && response.getStatusCode() == 200 && isTrulyDebugEndpoint(response)) {
-                discovered++;
-                String evidence = buildEvidence("Debug конечная точка в production", fullUrl, response);
-
-                Vulnerability vuln = createInventoryVulnerability(
-                    "Debug конечная точка в production: " + debugPath,
-                    "ВЫСОКИЙ УРОВЕНЬ: Debug конечная точка доступна в production среде!" +
-                    "\nКонечная точка: " + debugPath +
-                    "\nРиск: Раскрытие отладочной информации, stack traces, системной конфигурации" +
-                    "\nУгроза: Получение чувствительной информации о приложении",
-                    "/" + debugPath,
-                    response.getStatusCode(),
-                    evidence,
-                    Vulnerability.Severity.HIGH
                 );
 
-                vulns.add(vuln);
-                System.out.println("(API-9) ВЫСОКИЙ УРОВЕНЬ: Debug конечная точка: " + debugPath);
+                vulnerabilities.add(vuln);
+                System.out.println("(API-9) Версия API: " + version + " (" + response.getStatusCode() + ")");
             }
         }
 
-        System.out.println("(API-9) Debug конечных точек обнаружено: " + discovered);
+        System.out.println("(API-9) Дополнительных версий API обнаружено: " + discovered);
         foundEndpoints += discovered;
-        return vulns;
     }
 
-    // Вспомогательные методы
-    private boolean isEndpointDocumented(String endpoint, Set<String> documentedEndpoints) {
-        return documentedEndpoints.contains(endpoint) || 
-               documentedEndpoints.stream().anyMatch(doc -> doc.startsWith(endpoint) || endpoint.startsWith(doc));
-    }
+    private void analyzeEnvironmentIndicators(String baseUrl, OpenAPI openAPI) {
+        // Анализ базового URL на признаки среды выполнения
+        String lowerBaseUrl = baseUrl.toLowerCase();
 
-    private boolean isTrulySuspiciousResponse(HttpApiClient.ApiResponse response, String endpoint) {
-        if (response.getStatusCode() != 200) {
-            return false;
+        boolean hasProductionIndicators = PRODUCTION_HOST_INDICATORS.stream()
+                .anyMatch(lowerBaseUrl::contains);
+
+        boolean hasNonProductionIndicators = NON_PRODUCTION_HOST_INDICATORS.stream()
+                .anyMatch(lowerBaseUrl::contains);
+
+        if (hasNonProductionIndicators && !hasProductionIndicators) {
+            String evidence = "Базовый URL содержит не-production индикаторы: " + baseUrl +
+                    "\nОбнаруженные индикаторы: " +
+                    String.join(", ", findMatchingIndicators(lowerBaseUrl, NON_PRODUCTION_HOST_INDICATORS));
+
+            Vulnerability vuln = createInventoryVulnerability(
+                    "Потенциальная не-production среда выполнения",
+                    "ВЫСОКИЙ УРОВЕНЬ: Базовый URL указывает на не-production среду!\n\n" +
+                            "Риски:\n" +
+                            "• Использование тестовых данных в production\n" +
+                            "• Отсутствие production-grade security controls\n" +
+                            "• Потенциальное раскрытие тестовой информации\n\n" +
+                            "Рекомендации:\n" +
+                            "• Подтвердить среду выполнения\n" +
+                            "• Использовать production домены для production API\n" +
+                            "• Разделить инфраструктуру сред",
+                    baseUrl,
+                    200,
+                    evidence,
+                    Vulnerability.Severity.HIGH
+            );
+            vulnerabilities.add(vuln);
+            foundEndpoints++;
         }
-
-        String body = response.getBody().toLowerCase();
-        
-        // Игнорируем стандартные ответы
-        if (body.contains("page not found") || body.contains("404") || 
-            body.contains("not found") || body.isEmpty()) {
-            return false;
-        }
-
-        // Для подозрительных endpoints требуем дополнительные индикаторы
-        return containsSensitiveKeywords(body) || 
-               isAdminInterface(response, endpoint) ||
-               isDebugInterface(response, endpoint);
     }
 
-    private boolean containsSensitiveKeywords(String body) {
-        String[] sensitiveKeywords = {"password", "secret", "key", "token", "admin", "debug", "config", "environment"};
-        return Arrays.stream(sensitiveKeywords).anyMatch(body::contains);
-    }
+    private void analyzeDocumentationBlindSpots(OpenAPI openAPI, String baseUrl) {
+        // Проверка на "documentation blindspots"
+        List<String> blindSpots = new ArrayList<>();
 
-    private boolean isAdminInterface(HttpApiClient.ApiResponse response, String endpoint) {
-        String body = response.getBody().toLowerCase();
-        return endpoint.contains("admin") && 
-               (body.contains("dashboard") || body.contains("management") || body.contains("control"));
-    }
-
-    private boolean isDebugInterface(HttpApiClient.ApiResponse response, String endpoint) {
-        String body = response.getBody().toLowerCase();
-        return endpoint.contains("debug") && 
-               (body.contains("stack trace") || body.contains("exception") || body.contains("debug"));
-    }
-
-    private boolean containsSensitiveMonitoringData(HttpApiClient.ApiResponse response) {
-        String body = response.getBody().toLowerCase();
-        String[] sensitiveMonitoringIndicators = {
-            "environment", "configuration", "password", "secret", "database", 
-            "heap", "thread", "memory", "credentials"
-        };
-        return Arrays.stream(sensitiveMonitoringIndicators).anyMatch(body::contains);
-    }
-
-    private boolean isTrulyDeprecatedAPI(HttpApiClient.ApiResponse response, String version) {
-        String body = response.getBody().toLowerCase();
-        return body.contains("deprecated") || body.contains("legacy") || 
-               body.contains("outdated") || body.contains("no longer supported") ||
-               body.contains("version") && body.contains(version);
-    }
-
-    private boolean isTrulyDebugEndpoint(HttpApiClient.ApiResponse response) {
-        String body = response.getBody().toLowerCase();
-        return body.contains("stack trace") || body.contains("exception") || 
-               body.contains("debug information") || body.contains("environment variables") ||
-               body.contains("configuration") && body.contains("password");
-    }
-
-    private String identifySensitiveData(HttpApiClient.ApiResponse response) {
-        String body = response.getBody().toLowerCase();
-        List<String> foundData = new ArrayList<>();
-        
-        if (body.contains("password")) foundData.add("пароли");
-        if (body.contains("secret")) foundData.add("секреты");
-        if (body.contains("key")) foundData.add("ключи");
-        if (body.contains("database")) foundData.add("информация о БД");
-        if (body.contains("environment")) foundData.add("переменные окружения");
-        if (body.contains("configuration")) foundData.add("конфигурация");
-        
-        return foundData.isEmpty() ? "не определено" : String.join(", ", foundData);
-    }
-
-    private String assessSuspiciousEndpointRisk(String endpoint, HttpApiClient.ApiResponse response) {
-        if (endpoint.contains("admin") || endpoint.contains("debug") || endpoint.contains("secret")) {
-            return "ВЫСОКИЙ - Административный/Debug доступ";
-        }
-        if (endpoint.contains("config") || endpoint.contains("log") || endpoint.contains("system")) {
-            return "СРЕДНИЙ - Доступ к системной информации";
-        }
-        if (endpoint.contains("backup") || endpoint.contains("database")) {
-            return "ВЫСОКИЙ - Доступ к данным";
-        }
-        return "НИЗКИЙ - Общая конечная точка";
-    }
-
-    private Vulnerability.Severity assessSuspiciousEndpointSeverity(String endpoint, HttpApiClient.ApiResponse response) {
-        if (endpoint.contains("admin") || endpoint.contains("debug") || endpoint.contains("secret") ||
-            endpoint.contains("backdoor") || endpoint.contains("env")) {
-            return Vulnerability.Severity.HIGH;
-        } else if (endpoint.contains("config") || endpoint.contains("log") || endpoint.contains("system")) {
-            return Vulnerability.Severity.MEDIUM;
+        if (openAPI.getInfo() == null) {
+            blindSpots.add("Отсутствует информация об API (info)");
         } else {
-            return Vulnerability.Severity.LOW;
+            if (openAPI.getInfo().getDescription() == null || openAPI.getInfo().getDescription().trim().isEmpty()) {
+                blindSpots.add("Отсутствует описание API");
+            }
+            if (openAPI.getInfo().getVersion() == null || openAPI.getInfo().getVersion().trim().isEmpty()) {
+                blindSpots.add("Отсутствует версия API");
+            }
         }
+
+        if (openAPI.getPaths() == null || openAPI.getPaths().isEmpty()) {
+            blindSpots.add("Отсутствуют документированные endpoints");
+        }
+
+        if (!blindSpots.isEmpty()) {
+            String evidence = "Обнаружены documentation blindspots:\n" + String.join("\n", blindSpots);
+
+            Vulnerability vuln = createInventoryVulnerability(
+                    "Documentation Blind Spots",
+                    "СРЕДНИЙ УРОВЕНЬ: Обнаружены пробелы в документации API!\n\n" +
+                            "Проблемы:\n" + String.join("\n• ", blindSpots) + "\n\n" +
+                            "Риски OWASP API9:\n" +
+                            "• Сложность управления безопасностью API\n" +
+                            "• Невозможность полной инвентаризации\n" +
+                            "• Пропущенные уязвимости при ревью\n\n" +
+                            "Рекомендации:\n" +
+                            "• Внедрить полную документацию OpenAPI\n" +
+                            "• Автоматизировать генерацию документации\n" +
+                            "• Интегрировать документацию в CI/CD",
+                    baseUrl,
+                    200,
+                    evidence,
+                    Vulnerability.Severity.MEDIUM
+            );
+            vulnerabilities.add(vuln);
+            foundEndpoints++;
+        }
+    }
+
+    // Вспомогательные методы остаются аналогичными предыдущей версии
+    private boolean isSuccessStatus(int statusCode) {
+        return statusCode >= 200 && statusCode < 400 && statusCode != 204;
+    }
+
+    private List<String> findMatchingIndicators(String text, Set<String> indicators) {
+        List<String> matches = new ArrayList<>();
+        for (String indicator : indicators) {
+            if (text.contains(indicator)) {
+                matches.add(indicator);
+            }
+        }
+        return matches;
     }
 
     private String classifySuspiciousEndpoint(String endpoint) {
@@ -430,6 +470,30 @@ public class API9_InventoryScanner implements SecurityScanner {
         return "Подозрительная конечная точка";
     }
 
+    private String assessSuspiciousEndpointRisk(String endpoint, HttpApiClient.ApiResponse response) {
+        if (endpoint.contains("admin") || endpoint.contains("debug") || endpoint.contains("secret")) {
+            return "ВЫСОКИЙ - Административный/Debug доступ";
+        }
+        if (endpoint.contains("config") || endpoint.contains("log") || endpoint.contains("system")) {
+            return "СРЕДНИЙ - Доступ к системной информации";
+        }
+        return "НИЗКИЙ - Общая конечная точка";
+    }
+
+    private String identifySensitiveData(HttpApiClient.ApiResponse response) {
+        String body = response.getBody() != null ? response.getBody().toLowerCase() : "";
+        List<String> foundData = new ArrayList<>();
+
+        if (body.contains("password")) foundData.add("пароли");
+        if (body.contains("secret")) foundData.add("секреты");
+        if (body.contains("key")) foundData.add("ключи");
+        if (body.contains("database")) foundData.add("информация о БД");
+        if (body.contains("environment")) foundData.add("переменные окружения");
+        if (body.contains("configuration")) foundData.add("конфигурация");
+
+        return foundData.isEmpty() ? "не определено" : String.join(", ", foundData);
+    }
+
     private String normalizeBaseUrl(String baseUrl) {
         if (baseUrl == null || baseUrl.isEmpty()) {
             return baseUrl;
@@ -440,9 +504,8 @@ public class API9_InventoryScanner implements SecurityScanner {
     private HttpApiClient.ApiResponse makeRequest(ApiClient apiClient, String url, String type) {
         totalRequests++;
         try {
-            // Добавляем задержку чтобы не перегружать сервер
             Thread.sleep(100);
-            
+
             Map<String, String> headers = new HashMap<>();
             headers.put("Accept", "application/json");
             headers.put("User-Agent", "GOSTGuardian-Scanner/1.0");
@@ -451,6 +514,7 @@ public class API9_InventoryScanner implements SecurityScanner {
             return (HttpApiClient.ApiResponse) response;
 
         } catch (Exception e) {
+            System.err.println("(API-9) Ошибка при запросе " + url + ": " + e.getMessage());
             return null;
         }
     }
@@ -485,11 +549,12 @@ public class API9_InventoryScanner implements SecurityScanner {
         vuln.setMethod("GET");
 
         List<String> recommendations = new ArrayList<>();
-        recommendations.add("Проведите инвентаризацию всех API конечных точек");
-        recommendations.add("Удалите неиспользуемые и устаревшие конечные точки");
-        recommendations.add("Ограничьте доступ к debug и monitoring конечным точкам в production среде");
-        recommendations.add("Внедрите процесс управления версиями API");
-        recommendations.add("Регулярно обновляйте документацию API");
+        recommendations.add("Проведите полную инвентаризацию всех API конечных точек");
+        recommendations.add("Внедрите версионирование API в путях URL");
+        recommendations.add("Разработайте политику управления жизненным циклом API");
+        recommendations.add("Ограничьте доступ к административным и debug endpoint'ам");
+        recommendations.add("Ведите актуальную документацию для всех версий API");
+        recommendations.add("Разделяйте production и non-production среды");
         vuln.setRecommendations(recommendations);
 
         return vuln;

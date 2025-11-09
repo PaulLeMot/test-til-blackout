@@ -26,5 +26,7 @@
     </orderEntry>
     <orderEntry type="library" name="swagger-parser-v3-2.1.19" level="project" />
     <orderEntry type="library" name="commons-collections4-4.4" level="project" />
+    <orderEntry type="library" name="postgresql-42.7.8" level="project" />
+    <orderEntry type="library" name="json-20250517" level="project" />
   </component>
 </module>

@@ -5,7 +5,6 @@ import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
 import core.HttpApiClient;
-import core.AuthManager;
 import java.util.*;
 
 public class API2_BrokenAuthScanner implements SecurityScanner {
@@ -29,8 +28,11 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
 
         List<Vulnerability> vulnerabilities = new ArrayList<>();
 
-        // Предварительно получаем токены один раз
-        preloadTokens(config);
+        // Используем токены из конфигурации вместо повторной аутентификации
+        if (!preloadTokensFromConfig(config)) {
+            System.out.println("(API-2) Предупреждение: не удалось загрузить валидные токены из конфигурации");
+            return vulnerabilities;
+        }
 
         testUnauthorizedAccess(config, apiClient, vulnerabilities);
         testInvalidTokens(config, apiClient, vulnerabilities);
@@ -46,28 +48,47 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
         return vulnerabilities;
     }
 
-    private void preloadTokens(ScanConfig config) {
-        System.out.println("(API-2) Предварительная загрузка токенов...");
-        Map<String, String> tokens = AuthManager.getBankAccessTokensForTeam(
-                config.getTargetBaseUrl(),
-                config.getPassword()
-        );
+    /**
+     * Загружаем токены из конфигурации вместо повторной аутентификации
+     */
+    private boolean preloadTokensFromConfig(ScanConfig config) {
+        System.out.println("(API-2) Загрузка токенов из конфигурации...");
+
+        Map<String, String> tokens = config.getUserTokens();
+
+        if (tokens == null || tokens.isEmpty()) {
+            System.out.println("(API-2) В конфигурации нет доступных токенов");
+            return false;
+        }
 
         tokenCache.putAll(tokens);
+        System.out.println("(API-2) Загружено токенов из конфигурации: " + tokens.size());
 
         // Сохраняем первый валидный токен
         for (String token : tokens.values()) {
-            if (token != null && AuthManager.isTokenValid(token)) {
+            if (token != null && isTokenValid(token)) {
                 cachedValidToken = token;
-                break;
+                System.out.println("(API-2) Валидный токен найден");
+                return true;
             }
         }
 
-        if (cachedValidToken != null) {
-            System.out.println("(API-2) Токены успешно загружены, найдено: " + tokens.size());
-        } else {
-            System.out.println("(API-2) Предупреждение: не удалось загрузить валидные токены");
+        System.out.println("(API-2) В конфигурации нет валидных токенов");
+        return false;
+    }
+
+    /**
+     * Простая проверка валидности токена по формату
+     */
+    private boolean isTokenValid(String token) {
+        if (token == null || token.trim().isEmpty()) {
+            return false;
         }
+        // JWT токены обычно начинаются с eyJ и содержат 2 точки
+        boolean isJWT = token.startsWith("eyJ") && token.chars().filter(ch -> ch == '.').count() == 2;
+        boolean hasMinLength = token.length() >= 10;
+
+        return isJWT && hasMinLength;
     }
 
     /**
