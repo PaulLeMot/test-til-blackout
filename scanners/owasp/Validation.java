@@ -55,8 +55,11 @@ public class Validation implements SecurityScanner {
             }
             
             vulnerabilities.addAll(validateSpecificationCompleteness(openAPI));
-            vulnerabilities.addAll(validatePublicEndpoints(openAPI, baseUrl, apiClient));
-            vulnerabilities.addAll(validateProtectedEndpoints(openAPI, baseUrl, config, apiClient));
+            
+            // Сначала собираем реальные данные через API
+            Map<String, Object> testData = collectRealTestData(openAPI, baseUrl, config, apiClient);
+            vulnerabilities.addAll(validateDocumentedEndpoints(openAPI, baseUrl, config, apiClient, testData));
+            vulnerabilities.addAll(validateStandardEndpoints(openAPI, baseUrl, config, apiClient));
             
             logDebug("Contract validation completed. Found: " + vulnerabilities.size() + " vulnerabilities");
         } catch (Exception e) {
@@ -70,6 +73,532 @@ public class Validation implements SecurityScanner {
         }
         
         return vulnerabilities;
+    }
+
+    private Map<String, Object> collectRealTestData(OpenAPI openAPI, String baseUrl, ScanConfig config, ApiClient apiClient) {
+        Map<String, Object> testData = new HashMap<>();
+        
+        try {
+            // Получаем реальный bank token через /auth/bank-token
+            String realBankToken = getRealBankToken(baseUrl, config, apiClient);
+            if (realBankToken != null) {
+                testData.put("real_bank_token", realBankToken);
+                logDebug("Obtained real bank token");
+            }
+            
+            // Получаем реальные consent_id через создание согласия с bank token
+            String consentId = createRealConsent(baseUrl, config, apiClient);
+            if (consentId != null) {
+                testData.put("consent_id", consentId);
+                logDebug("Created real consent with ID: " + consentId);
+            }
+
+            // СОЗДАЕМ РЕАЛЬНЫЙ СЧЕТ ДЛЯ ТЕСТИРОВАНИЯ
+            String accountId = createRealAccount(baseUrl, config, apiClient);
+            if (accountId != null) {
+                testData.put("account_ids", Collections.singletonList(accountId));
+                testData.put("account_id", accountId);
+                logDebug("Created real account with ID: " + accountId);
+            } else {
+                // Если не удалось создать счет, пробуем получить существующие
+                List<String> accountIds = getRealAccountIds(baseUrl, config, apiClient);
+                if (!accountIds.isEmpty()) {
+                    testData.put("account_ids", accountIds);
+                    testData.put("account_id", accountIds.get(0));
+                    logDebug("Collected " + accountIds.size() + " real account IDs: " + accountIds);
+                } else {
+                    logDebug("No real account IDs found");
+                }
+            }
+            
+            // СОЗДАЕМ ТЕСТОВЫЕ ПРОДУКТЫ И ПОЛУЧАЕМ ИХ ID
+            List<String> productIds = createTestProducts(baseUrl, config, apiClient);
+            if (!productIds.isEmpty()) {
+                testData.put("product_ids", productIds);
+                testData.put("product_id", productIds.get(0));
+                logDebug("Collected " + productIds.size() + " product IDs: " + productIds);
+            } else {
+                logDebug("No product IDs found - trying to get existing products");
+                List<String> existingProductIds = getExistingProductIds(baseUrl, config, apiClient);
+                if (!existingProductIds.isEmpty()) {
+                    testData.put("product_ids", existingProductIds);
+                    testData.put("product_id", existingProductIds.get(0));
+                    logDebug("Using existing product IDs: " + existingProductIds);
+                }
+            }
+            
+        } catch (Exception e) {
+            logDebug("Error collecting real test data: " + e.getMessage());
+        }
+        
+        return testData;
+    }
+
+
+    private String createRealAccount(String baseUrl, ScanConfig config, ApiClient apiClient) {
+        try {
+            String accountsUrl = baseUrl + "/accounts";
+            Map<String, String> headers = new HashMap<>();
+            headers.put("User-Agent", "curl/7.68.0");
+            headers.put("Accept", "application/json");
+            headers.put("Content-Type", "application/json");
+            
+            // Используем client token для создания счета (свои счета)
+            String clientToken = config.getUserToken("team172-8");
+            if (clientToken != null) {
+                headers.put("Authorization", "Bearer " + clientToken);
+                
+                String requestBody = "{\n" +
+                    "  \"account_type\": \"checking\",\n" +
+                    "  \"initial_balance\": 1000\n" +
+                    "}";
+                
+                logDebug("Creating real account at: " + accountsUrl);
+                Object response = apiClient.executeRequest("POST", accountsUrl, requestBody, headers);
+                
+                if (response instanceof HttpApiClient.ApiResponse) {
+                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                    int statusCode = apiResponse.getStatusCode();
+                    
+                    if (statusCode == 200 || statusCode == 201) {
+                        String responseBody = apiResponse.getBody();
+                        logDebug("Account creation response: " + responseBody);
+                        
+                        // Парсим account_id из ответа
+                        String accountId = extractAccountId(responseBody);
+                        if (accountId != null) {
+                            logDebug("Successfully created account with ID: " + accountId);
+                            return accountId;
+                        }
+                    } else {
+                        logDebug("Failed to create account, status: " + statusCode + ", response: " + apiResponse.getBody());
+                    }
+                }
+            } else {
+                logDebug("No client token available for creating account");
+            }
+            
+        } catch (Exception e) {
+            logDebug("Error creating real account: " + e.getMessage());
+        }
+        return null;
+    }
+
+    // НОВЫЙ МЕТОД: Извлечение account_id из ответа
+    private String extractAccountId(String responseBody) {
+        if (responseBody == null) return null;
+        
+        // Пробуем разные варианты извлечения account_id
+        String[] possibleFields = {"accountId", "account_id", "id"};
+        for (String field : possibleFields) {
+            if (responseBody.contains(field)) {
+                int start = responseBody.indexOf("\"" + field + "\"") + ("\"" + field + "\"").length();
+                start = responseBody.indexOf("\"", start) + 1;
+                int end = responseBody.indexOf("\"", start);
+                if (start > 0 && end > start) {
+                    String accountId = responseBody.substring(start, end);
+                    if (accountId.startsWith("acc-")) {
+                        return accountId;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    // НОВЫЙ МЕТОД: Создание тестовых продуктов
+    private List<String> createTestProducts(String baseUrl, ScanConfig config, ApiClient apiClient) {
+        List<String> productIds = new ArrayList<>();
+        
+        try {
+            String productsUrl = baseUrl + "/products";
+            Map<String, String> headers = new HashMap<>();
+            headers.put("User-Agent", "curl/7.68.0");
+            headers.put("Accept", "application/json");
+            headers.put("Content-Type", "application/json");
+            
+            // Используем bank token для создания продуктов (требует повышенных привилегий)
+            String bankToken = config.getUserToken("bank_token");
+            if (bankToken != null) {
+                headers.put("Authorization", "Bearer " + bankToken);
+                
+                // Создаем тестовый депозитный продукт
+                String depositProductBody = "{" +
+                    "\"productType\": \"deposit\"," +
+                    "\"productName\": \"Тестовый вклад для сканирования\"," +
+                    "\"description\": \"Вклад создан для тестирования API безопасности\"," +
+                    "\"interestRate\": 5.5," +
+                    "\"minAmount\": 1000," +
+                    "\"maxAmount\": 100000," +
+                    "\"termMonths\": 12," +
+                    "\"currency\": \"RUB\"," +
+                    "\"features\": [\"пополнение\", \"капитализация\"]," +
+                    "\"isTestProduct\": true" +
+                    "}";
+                
+                logDebug("Creating test deposit product at: " + productsUrl);
+                Object response = apiClient.executeRequest("POST", productsUrl, depositProductBody, headers);
+                
+                if (response instanceof HttpApiClient.ApiResponse) {
+                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                    int statusCode = apiResponse.getStatusCode();
+                    
+                    if (statusCode == 200 || statusCode == 201) {
+                        String responseBody = apiResponse.getBody();
+                        logDebug("Deposit product creation response: " + responseBody);
+                        
+                        // Парсим productId из ответа
+                        String productId = extractProductId(responseBody);
+                        if (productId != null) {
+                            productIds.add(productId);
+                            logDebug("Successfully created deposit product with ID: " + productId);
+                        }
+                    } else {
+                        logDebug("Failed to create deposit product, status: " + statusCode);
+                    }
+                }
+                
+                // Создаем тестовый кредитный продукт
+                String loanProductBody = "{" +
+                    "\"productType\": \"loan\"," +
+                    "\"productName\": \"Тестовый кредит для сканирования\"," +
+                    "\"description\": \"Кредит создан для тестирования API безопасности\"," +
+                    "\"interestRate\": 15.9," +
+                    "\"minAmount\": 5000," +
+                    "\"maxAmount\": 500000," +
+                    "\"termMonths\": 36," +
+                    "\"currency\": \"RUB\"," +
+                    "\"loanPurpose\": \"потребительский\"," +
+                    "\"isTestProduct\": true" +
+                    "}";
+                
+                logDebug("Creating test loan product at: " + productsUrl);
+                response = apiClient.executeRequest("POST", productsUrl, loanProductBody, headers);
+                
+                if (response instanceof HttpApiClient.ApiResponse) {
+                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                    int statusCode = apiResponse.getStatusCode();
+                    
+                    if (statusCode == 200 || statusCode == 201) {
+                        String responseBody = apiResponse.getBody();
+                        logDebug("Loan product creation response: " + responseBody);
+                        
+                        // Парсим productId из ответа
+                        String productId = extractProductId(responseBody);
+                        if (productId != null) {
+                            productIds.add(productId);
+                            logDebug("Successfully created loan product with ID: " + productId);
+                        }
+                    } else {
+                        logDebug("Failed to create loan product, status: " + statusCode);
+                    }
+                }
+            } else {
+                logDebug("No bank token available for creating test products");
+            }
+            
+        } catch (Exception e) {
+            logDebug("Error creating test products: " + e.getMessage());
+        }
+        
+        return productIds;
+    }
+
+    // НОВЫЙ МЕТОД: Получение существующих продуктов
+    private List<String> getExistingProductIds(String baseUrl, ScanConfig config, ApiClient apiClient) {
+        List<String> productIds = new ArrayList<>();
+        
+        try {
+            String productsUrl = baseUrl + "/products";
+            Map<String, String> headers = new HashMap<>();
+            headers.put("User-Agent", "curl/7.68.0");
+            headers.put("Accept", "application/json");
+            
+            // Используем client token для получения продуктов
+            String clientToken = config.getUserToken("team172-8");
+            if (clientToken != null) {
+                headers.put("Authorization", "Bearer " + clientToken);
+                
+                logDebug("Fetching existing products from: " + productsUrl);
+                Object response = apiClient.executeRequest("GET", productsUrl, null, headers);
+                
+                if (response instanceof HttpApiClient.ApiResponse) {
+                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                    int statusCode = apiResponse.getStatusCode();
+                    
+                    if (statusCode == 200) {
+                        String responseBody = apiResponse.getBody();
+                        logDebug("Existing products response: " + responseBody);
+                        
+                        // Парсим productId из ответа
+                        if (responseBody != null && responseBody.contains("productId")) {
+                            String[] parts = responseBody.split("\"productId\"");
+                            for (int i = 1; i < parts.length; i++) {
+                                String part = parts[i];
+                                int start = part.indexOf("\"") + 1;
+                                int end = part.indexOf("\"", start);
+                                if (start > 0 && end > start) {
+                                    String productId = part.substring(start, end);
+                                    if (productId.startsWith("prod-") || productId.startsWith("product-")) {
+                                        productIds.add(productId);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Если не нашли в стандартном формате, пробуем альтернативный
+                        if (productIds.isEmpty() && responseBody != null) {
+                            // Пробуем найти в массиве
+                            String[] productEntries = responseBody.split("\\{");
+                            for (String entry : productEntries) {
+                                if (entry.contains("\"id\"")) {
+                                    int start = entry.indexOf("\"id\"") + "\"id\"".length();
+                                    start = entry.indexOf("\"", start) + 1;
+                                    int end = entry.indexOf("\"", start);
+                                    if (start > 0 && end > start) {
+                                        String productId = entry.substring(start, end);
+                                        productIds.add(productId);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+        } catch (Exception e) {
+            logDebug("Error fetching existing products: " + e.getMessage());
+        }
+        
+        logDebug("Found " + productIds.size() + " existing product IDs");
+        return productIds;
+    }
+
+    // НОВЫЙ МЕТОД: Извлечение productId из ответа
+    private String extractProductId(String responseBody) {
+        if (responseBody == null) return null;
+        
+        // Пробуем разные варианты извлечения product_id
+        String[] possibleFields = {"productId", "product_id", "id"};
+        for (String field : possibleFields) {
+            if (responseBody.contains(field)) {
+                int start = responseBody.indexOf("\"" + field + "\"") + ("\"" + field + "\"").length();
+                start = responseBody.indexOf("\"", start) + 1;
+                int end = responseBody.indexOf("\"", start);
+                if (start > 0 && end > start) {
+                    String productId = responseBody.substring(start, end);
+                    if (!productId.isEmpty()) {
+                        return productId;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private String getRealBankToken(String baseUrl, ScanConfig config, ApiClient apiClient) {
+        try {
+            String authUrl = baseUrl + "/auth/bank-token";
+            Map<String, String> headers = new HashMap<>();
+            headers.put("User-Agent", "curl/7.68.0");
+            headers.put("Accept", "application/json");
+            headers.put("Content-Type", "application/x-www-form-urlencoded");
+            
+            // Используем реальные credentials из конфигурации
+            String clientId = "team172"; // Базовый ID команды без суффикса
+            String clientSecret = config.getPassword();
+            
+            String fullUrl = authUrl + "?client_id=" + clientId + "&client_secret=" + clientSecret;
+            
+            logDebug("Getting real bank token from: " + authUrl);
+            Object response = apiClient.executeRequest("POST", fullUrl, "", headers);
+            
+            if (response instanceof HttpApiClient.ApiResponse) {
+                HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                int statusCode = apiResponse.getStatusCode();
+                
+                if (statusCode == 200) {
+                    String responseBody = apiResponse.getBody();
+                    logDebug("Bank token response: " + responseBody);
+                    
+                    // Парсим access_token из ответа
+                    if (responseBody != null && responseBody.contains("access_token")) {
+                        int start = responseBody.indexOf("\"access_token\"") + "\"access_token\"".length();
+                        start = responseBody.indexOf("\"", start) + 1;
+                        int end = responseBody.indexOf("\"", start);
+                        if (start > 0 && end > start) {
+                            String token = responseBody.substring(start, end);
+                            logDebug("Successfully obtained real bank token");
+                            return token;
+                        }
+                    }
+                } else {
+                    logDebug("Failed to get bank token, status: " + statusCode);
+                }
+            }
+        } catch (Exception e) {
+            logDebug("Error getting real bank token: " + e.getMessage());
+        }
+        return null;
+    }
+
+    private List<String> getRealAccountIds(String baseUrl, ScanConfig config, ApiClient apiClient) {
+        List<String> accountIds = new ArrayList<>();
+        
+        try {
+            String accountsUrl = baseUrl + "/accounts";
+            Map<String, String> headers = new HashMap<>();
+            headers.put("User-Agent", "curl/7.68.0");
+            headers.put("Accept", "application/json");
+            
+            // Сначала пробуем с client token для получения собственных счетов
+            String clientToken = config.getUserToken("team172-8");
+            if (clientToken != null) {
+                headers.put("Authorization", "Bearer " + clientToken);
+                
+                logDebug("Fetching account IDs with client token from: " + accountsUrl);
+                Object response = apiClient.executeRequest("GET", accountsUrl, null, headers);
+                
+                if (response instanceof HttpApiClient.ApiResponse) {
+                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                    int statusCode = apiResponse.getStatusCode();
+                    
+                    if (statusCode == 200) {
+                        String responseBody = apiResponse.getBody();
+                        logDebug("Client accounts response: " + responseBody);
+                        
+                        // Парсим JSON для извлечения account_id
+                        if (responseBody != null && responseBody.contains("accountId")) {
+                            String[] parts = responseBody.split("\"accountId\"");
+                            for (int i = 1; i < parts.length; i++) {
+                                String part = parts[i];
+                                int start = part.indexOf("\"") + 1;
+                                int end = part.indexOf("\"", start);
+                                if (start > 0 && end > start) {
+                                    String accountId = part.substring(start, end);
+                                    if (accountId.startsWith("acc-")) {
+                                        accountIds.add(accountId);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Если не нашли своих счетов, пробуем межбанковый запрос с bank token
+            if (accountIds.isEmpty()) {
+                String bankToken = config.getUserToken("bank_token");
+                if (bankToken != null) {
+                    headers.put("Authorization", "Bearer " + bankToken);
+                    headers.put("X-Requesting-Bank", "team172");
+                    
+                    // Добавляем client_id в query параметры для межбанкового запроса
+                    String interbankAccountsUrl = accountsUrl + "?client_id=team172-1";
+                    
+                    logDebug("Fetching account IDs with bank token from: " + interbankAccountsUrl);
+                    Object response = apiClient.executeRequest("GET", interbankAccountsUrl, null, headers);
+                    
+                    if (response instanceof HttpApiClient.ApiResponse) {
+                        HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                        int statusCode = apiResponse.getStatusCode();
+                        
+                        if (statusCode == 200) {
+                            String responseBody = apiResponse.getBody();
+                            logDebug("Interbank accounts response: " + responseBody);
+                            
+                            // Парсим JSON для извлечения account_id
+                            if (responseBody != null && responseBody.contains("accountId")) {
+                                String[] parts = responseBody.split("\"accountId\"");
+                                for (int i = 1; i < parts.length; i++) {
+                                    String part = parts[i];
+                                    int start = part.indexOf("\"") + 1;
+                                    int end = part.indexOf("\"", start);
+                                    if (start > 0 && end > start) {
+                                        String accountId = part.substring(start, end);
+                                        if (accountId.startsWith("acc-")) {
+                                            accountIds.add(accountId);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+        } catch (Exception e) {
+            logDebug("Error fetching real account IDs: " + e.getMessage());
+        }
+        
+        logDebug("Found " + accountIds.size() + " real account IDs");
+        return accountIds;
+    }
+    private String createRealConsent(String baseUrl, ScanConfig config, ApiClient apiClient) {
+        try {
+            String consentUrl = baseUrl + "/account-consents/request";
+            Map<String, String> headers = new HashMap<>();
+            headers.put("User-Agent", "curl/7.68.0");
+            headers.put("Accept", "application/json");
+            headers.put("Content-Type", "application/json");
+            
+            // Используем bank token для создания согласия
+            String bankToken = config.getUserToken("bank_token");
+            if (bankToken != null) {
+                headers.put("Authorization", "Bearer " + bankToken);
+                headers.put("X-Requesting-Bank", "team172");
+                
+                String requestBody = "{" +
+                    "\"client_id\": \"team172-1\"," +
+                    "\"permissions\": [\"ReadAccountsDetail\", \"ReadBalances\", \"ReadTransactionsDetail\"]," +
+                    "\"reason\": \"Security testing for contract validation\"," +
+                    "\"requesting_bank\": \"team172\"," +
+                    "\"requesting_bank_name\": \"Security Scanner\"" +
+                    "}";
+                
+                logDebug("Creating real consent at: " + consentUrl);
+                Object response = apiClient.executeRequest("POST", consentUrl, requestBody, headers);
+                
+                if (response instanceof HttpApiClient.ApiResponse) {
+                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                    int statusCode = apiResponse.getStatusCode();
+                    
+                    if (statusCode == 200) {
+                        String responseBody = apiResponse.getBody();
+                        logDebug("Real consent response: " + responseBody);
+                        
+                        // Парсим JSON для извлечения consent_id
+                        if (responseBody != null) {
+                            // Пробуем разные варианты извлечения consent_id
+                            String[] possibleFields = {"consent_id", "consentId"};
+                            for (String field : possibleFields) {
+                                if (responseBody.contains(field)) {
+                                    int start = responseBody.indexOf("\"" + field + "\"") + ("\"" + field + "\"").length();
+                                    start = responseBody.indexOf("\"", start) + 1;
+                                    int end = responseBody.indexOf("\"", start);
+                                    if (start > 0 && end > start) {
+                                        String consentId = responseBody.substring(start, end);
+                                        if (consentId.startsWith("consent-")) {
+                                            logDebug("Successfully created real consent with ID: " + consentId);
+                                            return consentId;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        logDebug("Failed to create real consent, status: " + statusCode + ", response: " + apiResponse.getBody());
+                    }
+                }
+            } else {
+                logDebug("No bank token available for creating real consent");
+            }
+            
+        } catch (Exception e) {
+            logDebug("Error creating real consent: " + e.getMessage());
+        }
+        
+        return null;
     }
 
     private boolean testBasicConnectivity(String baseUrl, ApiClient apiClient) {
@@ -148,42 +677,435 @@ public class Validation implements SecurityScanner {
         return vulnerabilities;
     }
 
-    private List<Vulnerability> validatePublicEndpoints(OpenAPI openAPI, String baseUrl, ApiClient apiClient) {
+    private List<Vulnerability> validateDocumentedEndpoints(OpenAPI openAPI, String baseUrl, ScanConfig config, 
+                                                          ApiClient apiClient, Map<String, Object> testData) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
+        Map<String, PathItem> paths = openAPI.getPaths();
         
-        String[] publicEndpoints = {
-            "/health",
-            "/.well-known/jwks.json",
-            "/",
-            "/products"
-        };
+        if (paths == null) return vulnerabilities;
         
-        logDebug("Testing " + publicEndpoints.length + " public endpoints");
+        logDebug("Testing " + paths.size() + " documented endpoints with real test data");
         
-        for (String endpoint : publicEndpoints) {
-            testPublicEndpoint(endpoint, openAPI, baseUrl, apiClient, vulnerabilities);
+        for (Map.Entry<String, PathItem> pathEntry : paths.entrySet()) {
+            String path = pathEntry.getKey();
+            PathItem pathItem = pathEntry.getValue();
+            
+            for (Map.Entry<PathItem.HttpMethod, Operation> operationEntry : getOperations(pathItem).entrySet()) {
+                PathItem.HttpMethod method = operationEntry.getKey();
+                Operation operation = operationEntry.getValue();
+                
+                testDocumentedEndpoint(path, method.name(), operation, openAPI, baseUrl, config, apiClient, vulnerabilities, testData);
+            }
         }
         
         return vulnerabilities;
     }
 
-    private List<Vulnerability> validateProtectedEndpoints(OpenAPI openAPI, String baseUrl, ScanConfig config, ApiClient apiClient) {
+    private List<Vulnerability> validateStandardEndpoints(OpenAPI openAPI, String baseUrl, ScanConfig config, ApiClient apiClient) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         
-        // Test protected endpoints that we can access with available tokens
-        logDebug("Testing protected endpoints with available authentication");
+        String[] standardEndpoints = {
+            "/health",
+            "/.well-known/jwks.json",
+            "/",
+            "/openapi.json"
+        };
         
-        // Test /accounts with client token (own accounts)
-        testAccountsWithClientToken(openAPI, baseUrl, config, apiClient, vulnerabilities);
+        logDebug("Testing " + standardEndpoints.length + " standard endpoints");
         
-        // Test /auth/bank-token (should work with query params)
-        testBankTokenEndpoint(openAPI, baseUrl, apiClient, vulnerabilities);
+        for (String endpoint : standardEndpoints) {
+            testStandardEndpoint(endpoint, openAPI, baseUrl, apiClient, vulnerabilities);
+        }
         
         return vulnerabilities;
     }
 
-    private void testPublicEndpoint(String endpoint, OpenAPI openAPI, String baseUrl, 
-                                  ApiClient apiClient, List<Vulnerability> vulnerabilities) {
+    private void testDocumentedEndpoint(String path, String method, Operation operation, 
+                                      OpenAPI openAPI, String baseUrl, ScanConfig config,
+                                      ApiClient apiClient, List<Vulnerability> vulnerabilities, 
+                                      Map<String, Object> testData) {
+        
+        // Пропускаем endpoints, для которых нет реальных данных
+        if (shouldSkipEndpoint(path, method, testData)) {
+            logDebug("Skipping endpoint " + method + " " + path + " - no real data available");
+            return;
+        }
+        
+        // Заменяем path parameters на реальные значения
+        String resolvedPath = resolvePathParameters(path, testData);
+        if (resolvedPath == null) {
+            logDebug("Skipping endpoint " + method + " " + path + " - cannot resolve path parameters");
+            return;
+        }
+        
+        String fullUrl = buildUrlWithParameters(baseUrl + resolvedPath, operation, testData);
+        
+        // Получаем правильный токен для endpoint
+        String authToken = getAppropriateAuthToken(config, operation, path, testData);
+        Map<String, String> headers = buildCorrectHeaders(operation, path, testData, authToken);
+        
+        try {
+            logDebug("Testing documented endpoint: " + method + " " + resolvedPath + 
+                    (authToken != null ? " (with auth)" : " (without auth)"));
+            
+            String requestBody = buildCorrectRequestBody(operation, path, testData);
+            Object response = apiClient.executeRequest(method, fullUrl, requestBody, headers);
+            
+            if (response instanceof HttpApiClient.ApiResponse) {
+                HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                int statusCode = apiResponse.getStatusCode();
+                
+                logDebug("Documented endpoint " + method + " " + resolvedPath + " - Status: " + statusCode);
+                
+                // Анализируем ответ
+                analyzeResponse(path, method, statusCode, requiresAuthentication(operation, openAPI), 
+                              requiresInterbankHeaders(operation, path), vulnerabilities);
+                
+                // Log successful responses for debugging
+                if (statusCode >= 200 && statusCode < 300) {
+                    logDebug("✅ Endpoint " + method + " " + resolvedPath + " is accessible (status: " + statusCode + ")");
+                }
+            }
+        } catch (Exception e) {
+            logDebug("Error testing documented endpoint " + method + " " + path + ": " + e.getMessage());
+        }
+    }
+
+    private boolean shouldSkipEndpoint(String path, String method, Map<String, Object> testData) {
+        // Пропускаем endpoints, для которых нужны специальные данные, которых у нас нет
+        if (path.contains("{card_id}") || path.contains("{payment_id}") || path.contains("{agreement_id}")) {
+            return true;
+        }
+        
+        // НЕ пропускаем product_id endpoints - у нас теперь есть тестовые данные
+        if (path.contains("{product_id}")) {
+            return testData.get("product_id") == null;
+        }
+        
+        // Пропускаем POST /auth/bank-token - он требует специальных параметров
+        if (path.equals("/auth/bank-token") && "POST".equals(method)) {
+            return true;
+        }
+        
+        // Пропускаем endpoints, требующие согласия, если его нет
+        if (requiresConsent(path) && testData.get("consent_id") == null) {
+            return true;
+        }
+        
+        // Пропускаем endpoints, требующие account_id, если его нет
+        if (requiresAccountId(path) && testData.get("account_id") == null) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    private boolean requiresConsent(String path) {
+        return path.contains("/accounts") && !path.equals("/accounts") ||
+               path.contains("/cards") || path.contains("/payments");
+    }
+
+    private boolean requiresAccountId(String path) {
+        return path.contains("{account_id}") || 
+               path.contains("/accounts/") && !path.equals("/accounts");
+    }
+
+    private String resolvePathParameters(String path, Map<String, Object> testData) {
+        // Заменяем параметры пути на реальные значения
+        String resolvedPath = path;
+        
+        if (path.contains("{account_id}")) {
+            String accountId = (String) testData.get("account_id");
+            if (accountId != null) {
+                resolvedPath = resolvedPath.replace("{account_id}", accountId);
+            } else {
+                return null;
+            }
+        }
+        
+        if (path.contains("{consent_id}")) {
+            String consentId = (String) testData.get("consent_id");
+            if (consentId != null) {
+                resolvedPath = resolvedPath.replace("{consent_id}", consentId);
+            } else {
+                return null;
+            }
+        }
+        
+        // ДОБАВЛЯЕМ ОБРАБОТКУ product_id
+        if (path.contains("{product_id}")) {
+            String productId = (String) testData.get("product_id");
+            if (productId != null) {
+                resolvedPath = resolvedPath.replace("{product_id}", productId);
+            } else {
+                return null;
+            }
+        }
+        
+        return resolvedPath;
+    }
+
+    private String buildUrlWithParameters(String baseUrl, Operation operation, Map<String, Object> testData) {
+        // For GET requests, add appropriate query parameters
+        if (operation.getParameters() != null) {
+            StringBuilder urlBuilder = new StringBuilder(baseUrl);
+            boolean firstParam = true;
+            
+            for (Parameter param : operation.getParameters()) {
+                if ("query".equals(param.getIn())) {
+                    if (firstParam) {
+                        urlBuilder.append("?");
+                        firstParam = false;
+                    } else {
+                        urlBuilder.append("&");
+                    }
+                    
+                    String paramName = param.getName();
+                    String realValue = getRealParameterValue(param, testData);
+                    if (realValue != null) {
+                        urlBuilder.append(paramName).append("=").append(realValue);
+                    }
+                }
+            }
+            return urlBuilder.toString();
+        }
+        return baseUrl;
+    }
+
+    private String buildCorrectRequestBody(Operation operation, String path, Map<String, Object> testData) {
+        // Create appropriate request body using real data
+        if (operation.getRequestBody() != null && operation.getRequestBody().getContent() != null) {
+            
+            if (path.equals("/account-consents/request")) {
+                return "{\n" +
+                       "  \"client_id\": \"team172-1\",\n" +
+                       "  \"permissions\": [\"ReadAccountsDetail\", \"ReadBalances\", \"ReadTransactionsDetail\"],\n" +
+                       "  \"reason\": \"Security testing\",\n" +
+                       "  \"requesting_bank\": \"team172\",\n" +
+                       "  \"requesting_bank_name\": \"Security Scanner\"\n" +
+                       "}";
+            }
+            
+            if (path.equals("/accounts") && "POST".equals(operation.getOperationId())) {
+                return "{\n" +
+                       "  \"account_type\": \"checking\",\n" +
+                       "  \"initial_balance\": 0\n" +
+                       "}";
+            }
+            
+            if (path.contains("/status")) {
+                return "{\n" +
+                       "  \"status\": \"active\"\n" +
+                       "}";
+            }
+            
+            if (path.contains("/close")) {
+                return "{\n" +
+                       "  \"action\": \"donate\"\n" +
+                       "}";
+            }
+            
+            if (path.equals("/payment-consents/request")) {
+                String accountId = (String) testData.get("account_id");
+                return "{\n" +
+                       "  \"requesting_bank\": \"team172\",\n" +
+                       "  \"client_id\": \"team172-1\",\n" +
+                       "  \"consent_type\": \"single_use\",\n" +
+                       "  \"amount\": 100.00,\n" +
+                       "  \"currency\": \"RUB\",\n" +
+                       "  \"debtor_account\": \"" + (accountId != null ? accountId : "acc-test") + "\",\n" +
+                       "  \"reference\": \"Test payment\"\n" +
+                       "}";
+            }
+            
+            if (path.equals("/payments") && "POST".equals(operation.getOperationId())) {
+                String accountId = (String) testData.get("account_id");
+                return "{\n" +
+                       "  \"data\": {\n" +
+                       "    \"initiation\": {\n" +
+                       "      \"instructedAmount\": {\n" +
+                       "        \"amount\": \"100.00\",\n" +
+                       "        \"currency\": \"RUB\"\n" +
+                       "      },\n" +
+                       "      \"debtorAccount\": {\n" +
+                       "        \"schemeName\": \"RU.CBR.PAN\",\n" +
+                       "        \"identification\": \"" + (accountId != null ? accountId : "acc-test") + "\"\n" +
+                       "      },\n" +
+                       "      \"creditorAccount\": {\n" +
+                       "        \"schemeName\": \"RU.CBR.PAN\", \n" +
+                       "        \"identification\": \"40817810099910005423\"\n" +
+                       "      },\n" +
+                       "      \"comment\": \"Test payment\"\n" +
+                       "    }\n" +
+                       "  }\n" +
+                       "}";
+            }
+            
+            // ДОБАВЛЯЕМ ТЕЛО ДЛЯ СОЗДАНИЯ ПРОДУКТОВЫХ СОГЛАШЕНИЙ
+            if (path.equals("/product-agreements") && "POST".equals(operation.getOperationId())) {
+                String productId = (String) testData.get("product_id");
+                String accountId = (String) testData.get("account_id");
+                return "{\n" +
+                       "  \"product_id\": \"" + (productId != null ? productId : "prod-test-001") + "\",\n" +
+                       "  \"account_id\": \"" + (accountId != null ? accountId : "acc-test") + "\",\n" +
+                       "  \"amount\": 5000,\n" +
+                       "  \"term_months\": 12,\n" +
+                       "  \"auto_renewal\": false\n" +
+                       "}";
+            }
+            
+            if (path.equals("/product-agreement-consents/request")) {
+                String productId = (String) testData.get("product_id");
+                return "{\n" +
+                       "  \"product_id\": \"" + (productId != null ? productId : "prod-test-001") + "\",\n" +
+                       "  \"client_id\": \"team172-1\",\n" +
+                       "  \"permissions\": [\"ReadProductDetails\", \"ManageProduct\"],\n" +
+                       "  \"reason\": \"Security testing\",\n" +
+                       "  \"requesting_bank\": \"team172\"\n" +
+                       "}";
+            }
+            
+            // Return minimal JSON object as fallback
+            return "{}";
+        }
+        return null;
+    }
+
+    private Map<String, String> buildCorrectHeaders(Operation operation, String path, Map<String, Object> testData, String authToken) {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("User-Agent", "curl/7.68.0");
+        headers.put("Accept", "application/json");
+        
+        if (authToken != null) {
+            headers.put("Authorization", "Bearer " + authToken);
+        }
+        
+        // Межбанковые заголовки ТОЛЬКО для создания согласий
+        if (path.contains("/consents/request")) {
+            headers.put("X-Requesting-Bank", "team172");
+        }
+        
+        // Для POST/PUT/PATCH добавляем Content-Type
+        String method = operation.getOperationId();
+        if ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method)) {
+            headers.put("Content-Type", "application/json");
+        }
+        
+        return headers;
+    }
+
+    private String getRealParameterValue(Parameter param, Map<String, Object> testData) {
+        // Provide real values based on parameter type and available test data
+        String paramName = param.getName().toLowerCase();
+        
+        if (paramName.contains("client_id")) {
+            return "team172-1"; // Используем реальный client_id
+        } else if (paramName.contains("client_secret")) {
+            return null; // Не передаем client_secret в query параметрах
+        } else if (paramName.contains("account_id") && testData.containsKey("account_id")) {
+            return (String) testData.get("account_id");
+        } else if (paramName.contains("consent_id") && testData.containsKey("consent_id")) {
+            return (String) testData.get("consent_id");
+        } else if (paramName.contains("product_id") && testData.containsKey("product_id")) {
+            return (String) testData.get("product_id");
+        } else if (paramName.contains("product_type")) {
+            return "deposit"; // Используем deposit как тестовый тип продукта
+        } else if (paramName.contains("page")) {
+            return "1";
+        } else if (paramName.contains("limit")) {
+            return "10";
+        } else if (paramName.contains("show_full_number")) {
+            return "false";
+        }
+        
+        return null;
+    }
+
+    private boolean requiresAuthentication(Operation operation, OpenAPI openAPI) {
+        // Check operation-level security
+        if (operation.getSecurity() != null && !operation.getSecurity().isEmpty()) {
+            return true;
+        }
+        
+        // Check global security
+        if (openAPI.getSecurity() != null && !openAPI.getSecurity().isEmpty()) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    private boolean requiresInterbankHeaders(Operation operation, String path) {
+        // Межбанковые заголовки нужны ТОЛЬКО для создания согласий
+        return path.contains("/consents/request");
+    }
+
+private String getAppropriateAuthToken(ScanConfig config, Operation operation, String path, Map<String, Object> testData) {
+    // Bank token ТОЛЬКО для:
+    // - получения банковского токена
+    // - создания согласий
+    if (path.equals("/auth/bank-token") || 
+        path.contains("/consents/request")) {
+        return config.getUserToken("bank_token");
+    }
+    
+    // Client token для ВСЕГО остального:
+    return config.getUserToken("team172-8");
+}
+
+    private void analyzeResponse(String path, String method, int statusCode, boolean requiresAuth, 
+                               boolean requiresInterbank, List<Vulnerability> vulnerabilities) {
+        // Check if endpoint is accessible
+        if (statusCode >= 400 && statusCode < 500) {
+            if (statusCode == 401 || statusCode == 403) {
+                if (!requiresAuth) {
+                    vulnerabilities.add(createVulnerability(
+                        "Unexpected Authentication Requirement",
+                        "Endpoint requires authentication but is not marked as secured in OpenAPI",
+                        Vulnerability.Severity.MEDIUM,
+                        path, method,
+                        "Endpoint " + method + " " + path + " returns " + statusCode + " but has no security requirement in spec"
+                    ));
+                } else if (requiresInterbank && statusCode == 403) {
+                    vulnerabilities.add(createVulnerability(
+                        "Missing Interbank Headers",
+                        "Endpoint requires interbank headers but they are missing or incorrect",
+                        Vulnerability.Severity.MEDIUM,
+                        path, method,
+                        "Interbank endpoint " + method + " " + path + " returns 403 - check X-Requesting-Bank and X-Consent-Id headers"
+                    ));
+                }
+            } else if (statusCode == 422) {
+                // 422 Validation Error - обычно проблема с request body
+                vulnerabilities.add(createVulnerability(
+                    "Request Validation Error",
+                    "Endpoint returns validation error - check request body format",
+                    Vulnerability.Severity.LOW,
+                    path, method,
+                    "Endpoint " + method + " " + path + " returns 422 Validation Error"
+                ));
+            } else if (statusCode != 404) { // 404 может быть нормальным для тестовых данных
+                vulnerabilities.add(createVulnerability(
+                    "Documented Endpoint Not Accessible",
+                    "Endpoint documented in OpenAPI specification returns client error",
+                    Vulnerability.Severity.MEDIUM,
+                    path, method,
+                    "Endpoint " + method + " " + path + " documented but returns " + statusCode
+                ));
+            }
+        } else if (statusCode >= 500) {
+            vulnerabilities.add(createVulnerability(
+                "Documented Endpoint Server Error",
+                "Endpoint documented in OpenAPI specification returns server error",
+                Vulnerability.Severity.HIGH,
+                path, method,
+                "Endpoint " + method + " " + path + " documented but returns " + statusCode
+            ));
+        }
+    }
+
+    private void testStandardEndpoint(String endpoint, OpenAPI openAPI, String baseUrl, 
+                                   ApiClient apiClient, List<Vulnerability> vulnerabilities) {
         String fullUrl = baseUrl + endpoint;
         
         Map<String, String> headers = new HashMap<>();
@@ -191,7 +1113,7 @@ public class Validation implements SecurityScanner {
         headers.put("Accept", "*/*");
         
         try {
-            logDebug("Testing public endpoint: GET " + endpoint);
+            logDebug("Testing standard endpoint: GET " + endpoint);
             Object response = apiClient.executeRequest("GET", fullUrl, null, headers);
             
             if (response instanceof HttpApiClient.ApiResponse) {
@@ -199,9 +1121,9 @@ public class Validation implements SecurityScanner {
                 int statusCode = apiResponse.getStatusCode();
                 
                 boolean documented = isEndpointDocumented(endpoint, "GET", openAPI);
-                boolean accessible = statusCode == 200;
+                boolean accessible = statusCode == 200 || statusCode == 201;
                 
-                logDebug("Public endpoint " + endpoint + " - Status: " + statusCode + 
+                logDebug("Standard endpoint " + endpoint + " - Status: " + statusCode + 
                         ", Documented: " + documented + ", Accessible: " + accessible);
                 
                 if (accessible && !documented) {
@@ -223,99 +1145,7 @@ public class Validation implements SecurityScanner {
                 }
             }
         } catch (Exception e) {
-            logDebug("Error testing public endpoint " + endpoint + ": " + e.getMessage());
-        }
-    }
-
-    private void testAccountsWithClientToken(OpenAPI openAPI, String baseUrl, ScanConfig config, 
-                                           ApiClient apiClient, List<Vulnerability> vulnerabilities) {
-        String endpoint = "/accounts";
-        String fullUrl = baseUrl + endpoint;
-        
-        // Use client token for own accounts (no additional headers needed)
-        String clientToken = config.getUserToken("team172-8");
-        if (clientToken == null) {
-            logDebug("No client token available for testing /accounts");
-            return;
-        }
-        
-        Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", "curl/7.68.0");
-        headers.put("Accept", "application/json");
-        headers.put("Authorization", "Bearer " + clientToken);
-        
-        try {
-            logDebug("Testing protected endpoint: GET " + endpoint + " with client token");
-            Object response = apiClient.executeRequest("GET", fullUrl, null, headers);
-            
-            if (response instanceof HttpApiClient.ApiResponse) {
-                HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-                int statusCode = apiResponse.getStatusCode();
-                
-                boolean documented = isEndpointDocumented(endpoint, "GET", openAPI);
-                boolean accessible = statusCode == 200;
-                
-                logDebug("Protected endpoint " + endpoint + " with client token - Status: " + statusCode + 
-                        ", Documented: " + documented + ", Accessible: " + accessible);
-                
-                if (!accessible && documented) {
-                    vulnerabilities.add(createVulnerability(
-                        "Protected Endpoint Authentication Issue",
-                        "Protected API endpoint documented in OpenAPI specification returns error with valid authentication",
-                        Vulnerability.Severity.MEDIUM,
-                        endpoint, "GET",
-                        "Protected endpoint " + endpoint + " documented but returns " + statusCode + " with valid client token"
-                    ));
-                }
-                
-                // Log response for debugging
-                if (apiResponse.getBody() != null && !apiResponse.getBody().trim().isEmpty()) {
-                    logDebug("Response from " + endpoint + ": " + 
-                            (apiResponse.getBody().length() > 200 ? 
-                             apiResponse.getBody().substring(0, 200) + "..." : apiResponse.getBody()));
-                }
-            }
-        } catch (Exception e) {
-            logDebug("Error testing protected endpoint " + endpoint + ": " + e.getMessage());
-        }
-    }
-
-    private void testBankTokenEndpoint(OpenAPI openAPI, String baseUrl, ApiClient apiClient, 
-                                     List<Vulnerability> vulnerabilities) {
-        String endpoint = "/auth/bank-token";
-        String fullUrl = baseUrl + endpoint + "?client_id=team172&client_secret="***REMOVED***"";
-        
-        Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", "curl/7.68.0");
-        headers.put("Accept", "application/json");
-        headers.put("Content-Type", "application/x-www-form-urlencoded");
-        
-        try {
-            logDebug("Testing authentication endpoint: POST " + endpoint);
-            Object response = apiClient.executeRequest("POST", fullUrl, "", headers);
-            
-            if (response instanceof HttpApiClient.ApiResponse) {
-                HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
-                int statusCode = apiResponse.getStatusCode();
-                
-                boolean documented = isEndpointDocumented(endpoint, "POST", openAPI);
-                boolean accessible = statusCode == 200;
-                
-                logDebug("Authentication endpoint " + endpoint + " - Status: " + statusCode + 
-                        ", Documented: " + documented + ", Accessible: " + accessible);
-                
-                if (!accessible && documented) {
-                    vulnerabilities.add(createVulnerability(
-                        "Authentication Endpoint Issue",
-                        "Authentication endpoint documented in OpenAPI specification returns error",
-                        Vulnerability.Severity.HIGH,
-                        endpoint, "POST",
-                        "Authentication endpoint " + endpoint + " documented but returns " + statusCode
-                    ));
-                }
-            }
-        } catch (Exception e) {
-            logDebug("Error testing authentication endpoint " + endpoint + ": " + e.getMessage());
+            logDebug("Error testing standard endpoint " + endpoint + ": " + e.getMessage());
         }
     }
 
@@ -367,15 +1197,25 @@ public class Validation implements SecurityScanner {
         } else if (title.contains("Not Accessible")) {
             recommendations.add("Verify the endpoint is properly implemented on the server");
             recommendations.add("Check server configuration and routing");
+            recommendations.add("Ensure authentication requirements are correctly configured");
         } else if (title.contains("Missing Operation ID")) {
             recommendations.add("Add unique operationId for each API operation");
             recommendations.add("Use meaningful operationId names (e.g., getAccounts, createPayment)");
         } else if (title.contains("Missing Response")) {
             recommendations.add("Define at least one response for each API operation");
             recommendations.add("Include both success (2xx) and error (4xx, 5xx) responses");
-        } else if (title.contains("Authentication")) {
-            recommendations.add("Check authentication requirements for the endpoint");
-            recommendations.add("Verify token validity and permissions");
+        } else if (title.contains("Unexpected Authentication")) {
+            recommendations.add("Update OpenAPI specification to reflect actual security requirements");
+            recommendations.add("Ensure security schemes are properly defined");
+        } else if (title.contains("Missing Interbank Headers")) {
+            recommendations.add("Add X-Requesting-Bank and X-Consent-Id headers for interbank requests");
+            recommendations.add("Ensure consent is properly created and active");
+        } else if (title.contains("Request Validation")) {
+            recommendations.add("Check request body format and required fields");
+            recommendations.add("Verify parameter types and constraints");
+        } else if (title.contains("Server Error")) {
+            recommendations.add("Check server implementation for the endpoint");
+            recommendations.add("Verify backend services are running correctly");
         }
         
         vuln.setRecommendations(recommendations);
