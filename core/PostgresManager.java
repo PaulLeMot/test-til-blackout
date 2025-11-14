@@ -310,10 +310,16 @@ public class PostgresManager {
 
     public void clearResults() {
         try (Statement stmt = connection.createStatement()) {
-            stmt.execute("DELETE FROM scan_results");
-            System.out.println("🗑️ All scan results cleared from database");
+            // Отключаем проверку внешних ключей для безопасной очистки
+            stmt.execute("TRUNCATE TABLE scan_results RESTART IDENTITY CASCADE");
+
+            // Сбрасываем последовательность ID
+            stmt.execute("ALTER SEQUENCE scan_results_id_seq RESTART WITH 1");
+
+            System.out.println("БД очищена");
         } catch (SQLException e) {
-            System.err.println("❌ Error clearing results: " + e.getMessage());
+            System.err.println("Ошибка очистки: " + e.getMessage());
+            throw new RuntimeException("Failed to clear database", e);
         }
     }
 

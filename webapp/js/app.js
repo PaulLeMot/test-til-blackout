@@ -72,8 +72,42 @@ class SecurityDashboard {
             this.loadDefaultConfiguration();
         });
 
+        // Новый обработчик для очистки базы данных
+        document.getElementById('clearDatabase').addEventListener('click', () => {
+            this.clearDatabase();
+        });
+
         // Загружаем сохраненные настройки при инициализации
         this.loadSavedConfiguration();
+    }
+
+    async clearDatabase() {
+        if (!confirm('Вы уверены, что хотите полностью очистить базу данных? Это действие нельзя отменить.')) {
+            return;
+        }
+
+        try {
+            this.showNotification('🔄 Очистка базы данных...', 'info');
+
+            const response = await fetch('/api/scan/clear', {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                this.showNotification('✅ База данных успешно очищена', 'success');
+                // Обновляем данные на странице
+                this.currentData = [];
+                this.filteredData = [];
+                this.currentPage = 1;
+                this.renderTable();
+                this.updateStats();
+            } else {
+                throw new Error('Server error');
+            }
+        } catch (error) {
+            console.error('Error clearing database:', error);
+            this.showNotification('❌ Ошибка при очистке базы данных', 'error');
+        }
     }
 
     saveConfiguration() {
