@@ -8,16 +8,11 @@ import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 public class ScannerService {
-    private static final List<String> BANKS = Arrays.asList(
-            "https://vbank.open.bankingapi.ru",
-            "https://abank.open.bankingapi.ru",
-            "https://sbank.open.bankingapi.ru"
-    );
-    private static final String PASSWORD = "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
     private final WebServer webServer;
     private final ExecutorService executor;
     private boolean isScanning = false;
     private Consumer<String> messageListener;
+    private ScanConfig config;
 
     public ScannerService(WebServer webServer) {
         this.webServer = webServer;
@@ -28,10 +23,20 @@ public class ScannerService {
         this.messageListener = listener;
     }
 
+    // Обновленный метод для установки конфигурации из UI
+    public void setConfig(ScanConfig config) {
+        this.config = config;
+    }
+
     public synchronized boolean startScan() {
         if (isScanning) {
             return false;
         }
+        if (config == null || config.getBanks().isEmpty() || config.getCredentials().isEmpty()) {
+            notifyMessage("scan_error", "Конфигурация не задана. Сначала сохраните настройки в UI.");
+            return false;
+        }
+
         isScanning = true;
         notifyMessage("scan_started", "Сканирование запущено. Ожидайте результатов...");
         executor.submit(() -> {
@@ -58,7 +63,7 @@ public class ScannerService {
                 new API3_BOScanner(),
                 new API4_URCScanner(),
                 new API5_BrokenFunctionLevelAuthScanner(),
-                new API6_BusinessFlowScanner(), // Уже исправлен
+                new API6_BusinessFlowScanner(),
                 new API7_SSRFScanner(),
                 new API8_SecurityConfigScanner(),
                 new API9_InventoryScanner(),
@@ -66,37 +71,38 @@ public class ScannerService {
         );
 
         int totalVulnerabilities = 0;
-        for (String baseUrl : BANKS) {
+
+        // Используем банки из конфигурации UI вместо хардкода
+        for (ScanConfig.BankConfig bankConfig : config.getBanks()) {
+            String baseUrl = bankConfig.getBaseUrl();
+            String specUrl = bankConfig.getSpecUrl();
+
             notifyMessage("info", "=".repeat(50));
             notifyMessage("info", "Сканирование: " + baseUrl);
             notifyMessage("info", "=".repeat(50));
 
             String cleanBaseUrl = baseUrl.trim();
-            String specUrl = cleanBaseUrl + "/openapi.json";
             notifyMessage("info", "Загрузка OpenAPI-спецификации: " + specUrl);
 
-            // Инициализация конфигурации
-            ScanConfig config = new ScanConfig();
-            config.setTargetBaseUrl(cleanBaseUrl);
-            config.setPassword(PASSWORD);
-            config.setBankBaseUrl(cleanBaseUrl);
-            config.setClientId("team172-8");
-            config.setClientSecret(PASSWORD);
-            config.setBankId("team172");
+            // Инициализация конфигурации для конкретного банка
+            ScanConfig bankScanConfig = new ScanConfig();
+            bankScanConfig.setTargetBaseUrl(cleanBaseUrl);
+            bankScanConfig.setBankBaseUrl(cleanBaseUrl);
 
-            // ИСПРАВЛЕНО: Используем правильный метод для получения токенов
+            // Используем учетные данные из UI конфигурации
+            if (!config.getCredentials().isEmpty()) {
+                // Берем первого пользователя как основного
+                ScanConfig.UserCredentials primaryCred = config.getCredentials().get(0);
+                bankScanConfig.setClientId(primaryCred.getUsername());
+                bankScanConfig.setClientSecret(primaryCred.getPassword());
+                bankScanConfig.setBankId("team172"); // Используем префикс команды
+            }
+
+            // Получение токенов для пользователей из UI
             notifyMessage("info", "Получение токенов для пользователей...");
+            Map<String, String> tokens = AuthManager.getTokensForScanning(bankScanConfig);
 
-            // Настраиваем конфиг для получения токенов
-            ScanConfig tokenConfig = new ScanConfig();
-            tokenConfig.setBankBaseUrl(cleanBaseUrl);
-            tokenConfig.setClientSecret(PASSWORD);
-            tokenConfig.setClientId("team172-8");
-            tokenConfig.setBankId("team172");
-
-            Map<String, String> tokens = AuthManager.getTokensForScanning(tokenConfig);
-
-            config.setUserTokens(tokens);
+            bankScanConfig.setUserTokens(tokens);
             notifyMessage("info", "Получено токенов: " + tokens.size());
 
             // Запуск сканеров
@@ -105,8 +111,9 @@ public class ScannerService {
                 notifyMessage("info", "-".repeat(40));
                 notifyMessage("info", "Запуск сканера: " + scanner.getName());
                 try {
-                    List<Vulnerability> scannerResults = scanner.scan(null, config, new HttpApiClient());
+                    List<Vulnerability> scannerResults = scanner.scan(null, bankScanConfig, new HttpApiClient());
                     allVulnerabilities.addAll(scannerResults);
+
                     // Сохранение результатов в реальном времени
                     for (Vulnerability vuln : scannerResults) {
                         String proof = extractProofFromVulnerability(vuln);

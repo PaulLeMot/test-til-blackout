@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="JAVA_MODULE" version="4">
+  <component name="NewModuleRootManager" inherit-compiler-output="true">
+    <exclude-output />
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$" isTestSource="false" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+    <orderEntry type="module-library">
+      <library>
+        <CLASSES>
+          <root url="file://$MODULE_DIR$/lib/swagger-parser-v3-2.1.19.jar" />
+          <root url="file://$MODULE_DIR$/lib/jackson-annotations-2.15.2.jar" />
+          <root url="file://$MODULE_DIR$/lib/jackson-core-2.15.2.jar" />
+          <root url="file://$MODULE_DIR$/lib/jackson-databind-2.15.2.jar" />
+          <root url="file://$MODULE_DIR$/lib/jackson-dataformat-yaml-2.15.2.jar" />
+          <root url="file://$MODULE_DIR$/lib/snakeyaml-2.0.jar" />
+          <root url="file://$MODULE_DIR$/lib/swagger-core-2.2.8.jar" />
+          <root url="file://$MODULE_DIR$/lib/swagger-models-2.2.8.jar" />
+          <root url="file://$MODULE_DIR$/lib/validation-api-2.0.1.Final.jar" />
+        </CLASSES>
+        <JAVADOC />
+        <SOURCES />
+      </library>
+    </orderEntry>
+    <orderEntry type="library" name="swagger-parser-v3-2.1.19" level="project" />
+    <orderEntry type="library" name="commons-collections4-4.4" level="project" />
+    <orderEntry type="library" name="postgresql-42.7.8" level="project" />
+    <orderEntry type="library" name="json-20250517" level="project" />
+  </component>
+</module>
