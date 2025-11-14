@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: security_scanner_db
+    environment:
+      POSTGRES_DB: security_scanner
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - security-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d security_scanner"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  security-scanner:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: security_scanner_app
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: security_scanner
+      DB_USER: admin
+      DB_PASSWORD: admin
+      DB_SUPER_USER: postgres
+      DB_SUPER_PASSWORD: admin
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - ./webapp:/app/webapp
+    networks:
+      - security-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  security-network:
+    driver: bridge
