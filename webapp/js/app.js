@@ -100,14 +100,14 @@ class SecurityDashboard {
         }
 
         try {
-            this.showNotification('🔄 Очистка базы данных...', 'info');
+            this.showNotification('Очистка базы данных...', 'info');
 
             const response = await fetch('/api/scan/clear', {
                 method: 'POST'
             });
 
             if (response.ok) {
-                this.showNotification('✅ База данных успешно очищена', 'success');
+                this.showNotification('База данных успешно очищена', 'success');
                 // Обновляем данные на странице
                 this.currentData = [];
                 this.filteredData = [];
@@ -119,7 +119,7 @@ class SecurityDashboard {
             }
         } catch (error) {
             console.error('Error clearing database:', error);
-            this.showNotification('❌ Ошибка при очистке базы данных', 'error');
+            this.showNotification('Ошибка при очистке базы данных', 'error');
         }
     }
 
@@ -358,7 +358,7 @@ class SecurityDashboard {
         try {
             this.isScanning = true;
             this.updateScanButton(true);
-            this.showNotification('🔄 Запущено расширенное сканирование с новыми типами атак', 'success');
+            this.showNotification('Запущено расширенное сканирование с новыми типами атак', 'success');
             this.lastDataCount = this.currentData.length;
 
             const response = await fetch('/api/scan/start', {
@@ -373,7 +373,7 @@ class SecurityDashboard {
                 throw new Error('Server error');
             }
 
-            this.showNotification('🔍 Сканирование запущено. Ожидайте первые результаты...', 'info');
+            this.showNotification('Сканирование запущено. Ожидайте первые результаты...', 'info');
 
         } catch (error) {
             console.error('Error starting scan:', error);
@@ -389,7 +389,7 @@ class SecurityDashboard {
             btn.innerHTML = '<span class="scanning-indicator"><span class="pulse">⏳</span> Расширенное сканирование...</span>';
             btn.disabled = true;
         } else {
-            btn.innerHTML = '🚀 Запустить расширенное сканирование';
+            btn.innerHTML = 'Запустить расширенное сканирование';
             btn.disabled = false;
         }
         this.updateConnectionStatus();
@@ -400,10 +400,10 @@ class SecurityDashboard {
         if (statusElement) {
             if (this.isScanning) {
                 statusElement.className = 'status-connecting';
-                statusElement.textContent = '● Расширенное сканирование...';
+                statusElement.textContent = 'Расширенное сканирование...';
             } else {
                 statusElement.className = 'status-online';
-                statusElement.textContent = '● Online';
+                statusElement.textContent = 'Online';
             }
         }
     }
@@ -673,7 +673,7 @@ class SecurityDashboard {
             <td>${new Date(item.scanDate).toLocaleDateString('ru-RU')}</td>
             <td>
                 <button class="btn btn-outline btn-sm view-details" data-id="${item.id}">
-                    👁️ Подробнее
+                    Подробнее
                 </button>
             </td>
         `;
@@ -956,7 +956,7 @@ async populateSessionSelects(sessions) {
         }
 
         try {
-            this.showNotification('🔄 Сравниваю сессии...', 'info');
+            this.showNotification('Сравниваю сессии...', 'info');
 
             const response = await fetch(`/api/sessions/compare?session1=${session1Id}&session2=${session2Id}`);
             if (response.ok) {
@@ -980,7 +980,7 @@ async populateSessionSelects(sessions) {
         // Прокрутка к результатам
         resultsContainer.scrollIntoView({ behavior: 'smooth' });
 
-        this.showNotification('✅ Сравнение завершено', 'success');
+        this.showNotification('Сравнение завершено', 'success');
     }
 
     // Генерация HTML для результатов сравнения
@@ -995,7 +995,7 @@ async populateSessionSelects(sessions) {
 
         return `
             <div class="comparison-results">
-                <h4>📊 Результаты сравнения сессий сканирования</h4>
+                <h4>Результаты сравнения сессий сканирования</h4>
 
                 <!-- Сводная статистика -->
                 <div class="comparison-stats">
@@ -1048,7 +1048,7 @@ async populateSessionSelects(sessions) {
                 <!-- Новые уязвимости -->
                 ${comparison.newVulnerabilities && comparison.newVulnerabilities.length > 0 ? `
                 <div class="comparison-vulnerabilities">
-                    <h5>🆕 Новые уязвимости (${comparison.newCount})</h5>
+                    <h5>Новые уязвимости (${comparison.newCount})</h5>
                     <div class="vulnerability-change-list">
                         ${comparison.newVulnerabilities.map(vuln => `
                             <div class="vulnerability-change-item">
@@ -1068,7 +1068,7 @@ async populateSessionSelects(sessions) {
                 <!-- Исправленные уязвимости -->
                 ${comparison.fixedVulnerabilities && comparison.fixedVulnerabilities.length > 0 ? `
                 <div class="comparison-vulnerabilities">
-                    <h5>✅ Исправленные уязвимости (${comparison.fixedCount})</h5>
+                    <h5>Исправленные уязвимости (${comparison.fixedCount})</h5>
                     <div class="vulnerability-change-list">
                         ${comparison.fixedVulnerabilities.map(vuln => `
                             <div class="vulnerability-change-item">
