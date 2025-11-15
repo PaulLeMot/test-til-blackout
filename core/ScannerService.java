@@ -101,6 +101,12 @@ public class ScannerService {
             String cleanBaseUrl = baseUrl.trim();
             notifyMessage("info", "Загрузка OpenAPI-спецификации: " + specUrl);
 
+            // ЗАГРУЖАЕМ OPENAPI СПЕЦИФИКАЦИЮ
+            Object openApiSpec = loadOpenApiSpec(specUrl);
+            if (openApiSpec == null) {
+                notifyMessage("warning", "Не удалось загрузить OpenAPI спецификацию, некоторые сканеры будут пропущены");
+            }
+
             // Инициализация конфигурации для конкретного банка
             ScanConfig bankScanConfig = new ScanConfig();
             bankScanConfig.setTargetBaseUrl(cleanBaseUrl);
@@ -122,13 +128,14 @@ public class ScannerService {
             bankScanConfig.setUserTokens(tokens);
             notifyMessage("info", "Получено токенов: " + tokens.size());
 
-            // Запуск сканеров
+            // Запуск сканеров С ПЕРЕДАЧЕЙ OPENAPI СПЕЦИФИКАЦИИ
             List<Vulnerability> allVulnerabilities = new ArrayList<>();
             for (SecurityScanner scanner : securityScanners) {
                 notifyMessage("info", "-".repeat(40));
                 notifyMessage("info", "Запуск сканера: " + scanner.getName());
                 try {
-                    List<Vulnerability> scannerResults = scanner.scan(null, bankScanConfig, new HttpApiClient());
+                    // ПЕРЕДАЕМ openApiSpec ВМЕСТО null
+                    List<Vulnerability> scannerResults = scanner.scan(openApiSpec, bankScanConfig, new HttpApiClient());
                     allVulnerabilities.addAll(scannerResults);
 
                     // Сохранение результатов в реальном времени с sessionId
@@ -173,6 +180,39 @@ public class ScannerService {
         notifyMessage("info", "СКАНИРОВАНИЕ ЗАВЕРШЕНО");
         notifyMessage("info", "Всего уязвимостей: " + totalVulnerabilities);
         notifyMessage("info", "Идентификатор сессии: " + currentSessionId);
+    }
+
+    /**
+     * Загружает OpenAPI спецификацию из URL
+     */
+    private Object loadOpenApiSpec(String specUrl) {
+        if (specUrl == null || specUrl.trim().isEmpty()) {
+            System.out.println("❌ URL спецификации не указан");
+            return null;
+        }
+
+        try {
+            System.out.println("📥 Загрузка OpenAPI спецификации: " + specUrl);
+
+            // Используем OpenAPIV3Parser для загрузки спецификации
+            io.swagger.v3.parser.OpenAPIV3Parser parser = new io.swagger.v3.parser.OpenAPIV3Parser();
+            io.swagger.v3.parser.core.models.ParseOptions options = new io.swagger.v3.parser.core.models.ParseOptions();
+            options.setResolve(true);
+            options.setResolveFully(true);
+
+            io.swagger.v3.parser.core.models.SwaggerParseResult result = parser.readLocation(specUrl, null, options);
+
+            if (result.getOpenAPI() != null) {
+                System.out.println("✅ OpenAPI спецификация успешно загружена");
+                return result.getOpenAPI();
+            } else {
+                System.err.println("❌ Не удалось загрузить OpenAPI спецификацию: " + result.getMessages());
+                return null;
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Ошибка при загрузке OpenAPI спецификации: " + e.getMessage());
+            return null;
+        }
     }
 
     private String configToJson(ScanConfig config) {

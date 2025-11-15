@@ -1,12 +1,7 @@
 package scanners.owasp;
 
 import scanners.SecurityScanner;
-import core.HttpApiClient;
-import core.ScanConfig;
-import core.Vulnerability;
-import core.ApiClient;
-import core.ApiResponse;
-import core.AuthManager;
+import core.*;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.Operation;
@@ -14,11 +9,6 @@ import io.swagger.v3.oas.models.parameters.Parameter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.net.URI;
-import java.time.Duration;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -35,17 +25,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             "POST", "PUT", "DELETE"
     );
 
-    // Правильные тестовые параметры из спецификации API
-    private static final Map<String, String> TEST_PARAMETERS = Map.of(
-            "account_id", "acc-1010",
-            "payment_id", "payment-123",
-            "consent_id", "consent-69e75facabba",
-            "agreement_id", "agreement-123",
-            "product_id", "prod-vb-deposit-001",
-            "request_id", "req-123",
-            "client_id", "team172-1",
-            "card_id", "card-123"
-    );
+    private ScanConfig config;
+    private Map<String, String> testParameters;
 
     @Override
     public String getName() {
@@ -54,21 +35,31 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
     @Override
     public List<Vulnerability> scan(Object openApiObj, ScanConfig config, ApiClient apiClient) {
+        this.config = config;
+        this.testParameters = initializeTestParameters();
+
         System.out.println("(API-6) 🚀 Запуск сканирования Unrestricted Access to Sensitive Business Flows...");
         List<Vulnerability> vulnerabilities = new ArrayList<>();
 
+        // ПРОВЕРЯЕМ, ЧТО OPENAPI ОБЪЕКТ ДОСТУПЕН
+        if (openApiObj == null) {
+            System.out.println("(API-6) ⚠️ OpenAPI спецификация недоступна, выполняется базовое сканирование бизнес-процессов");
+            // Выполняем базовое сканирование без OpenAPI спецификации
+            return performBasicBusinessFlowScan(config, apiClient);
+        }
+
         if (!(openApiObj instanceof OpenAPI)) {
-            System.err.println("(API-6) ❌ Ошибка: передан не OpenAPI объект");
-            return vulnerabilities;
+            System.err.println("(API-6) ❌ Ошибка: передан не OpenAPI объект, выполняется базовое сканирование");
+            return performBasicBusinessFlowScan(config, apiClient);
         }
 
         OpenAPI openAPI = (OpenAPI) openApiObj;
         String baseUrl = config.getTargetBaseUrl();
 
         try {
-            // ИСПРАВЛЕНИЕ: Используем методы из API3 для получения токенов
-            System.out.println("(API-6) 🔑 Получение токенов через методы API3...");
-            Map<String, String> tokens = getAllTokens(baseUrl, config);
+            // Используем AuthManager для получения токенов
+            System.out.println("(API-6) 🔑 Получение токенов через AuthManager...");
+            Map<String, String> tokens = AuthManager.getTokensForScanning(config);
 
             if (tokens.isEmpty()) {
                 System.err.println("(API-6) ❌ Не удалось получить токены");
@@ -102,7 +93,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             Map<String, BusinessFlowEndpoint> businessEndpoints = identifyBusinessEndpointsFromSpec(openAPI);
 
             if (businessEndpoints.isEmpty()) {
-                System.out.println("(API-6) ⚠️ Бизнес-процессы не идентифицированы");
+                System.out.println("(API-6) ⚠️ Бизнес-процессы не идентифицированы, выполняется базовое сканирование");
+                vulnerabilities.addAll(performBasicBusinessFlowScan(config, apiClient));
                 return vulnerabilities;
             }
 
@@ -137,70 +129,224 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         return vulnerabilities;
     }
 
-    // ========== МЕТОДЫ ПОЛУЧЕНИЯ ТОКЕНОВ ИЗ API3 ==========
-
     /**
-     * ПОЛУЧАЕМ ВСЕ ВОЗМОЖНЫЕ ТОКЕНЫ РАЗНЫМИ СПОСОБАМИ (из API3)
+     * Базовое сканирование бизнес-процессов без OpenAPI спецификации
      */
-    private Map<String, String> getAllTokens(String baseUrl, ScanConfig config) {
-        Map<String, String> tokens = new HashMap<>();
+    private List<Vulnerability> performBasicBusinessFlowScan(ScanConfig config, ApiClient apiClient) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+        String baseUrl = config.getTargetBaseUrl();
 
         try {
-            // Получаем учетные данные из конфигурации
-            String username = "team172-1";
-            String password = "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
+            System.out.println("(API-6) 🔑 Получение токенов через AuthManager...");
+            Map<String, String> tokens = AuthManager.getTokensForScanning(config);
 
-            if (!config.getCredentials().isEmpty()) {
-                username = config.getCredentials().get(0).getUsername();
-                password = config.getCredentials().get(0).getPassword();
+            if (tokens.isEmpty()) {
+                System.err.println("(API-6) ❌ Не удалось получить токены");
+                return vulnerabilities;
             }
 
-            System.out.println("(API-6) 🔑 Получение токенов для: " + username);
-
-            // 1. Client token через /auth/login (основной)
-            String clientToken1 = getTokenViaLogin(baseUrl, username, password);
-            if (clientToken1 != null) {
-                tokens.put("client_login", clientToken1);
-                System.out.println("(API-6) ✅ Client token (login) получен: " +
-                        clientToken1.substring(0, Math.min(20, clientToken1.length())) + "...");
+            String token = tokens.get("bank_token");
+            if (token == null) {
+                token = tokens.values().iterator().next();
             }
 
-            // 2. Bank token через /auth/bank-token (основной)
-            String bankToken1 = getTokenViaBankToken(baseUrl, "team172", password);
-            if (bankToken1 != null) {
-                tokens.put("bank_token", bankToken1);
-                System.out.println("(API-6) ✅ Bank token (bank-token) получен: " +
-                        bankToken1.substring(0, Math.min(20, bankToken1.length())) + "...");
-            }
-
-            // 3. Bank token через /auth/bank-token с client token
-            if (clientToken1 != null) {
-                String bankToken2 = getTokenViaBankTokenWithAuth(baseUrl, "team172", password, clientToken1);
-                if (bankToken2 != null) {
-                    tokens.put("bank_token_auth", bankToken2);
-                    System.out.println("(API-6) ✅ Bank token (with auth) получен: " +
-                            bankToken2.substring(0, Math.min(20, bankToken2.length())) + "...");
-                }
-            }
-
-            // 4. Пробуем других пользователей
-            for (int i = 2; i <= 3; i++) {
-                String altUser = "team172-" + i;
-                String altToken = getTokenViaLogin(baseUrl, altUser, password);
-                if (altToken != null) {
-                    tokens.put("client_" + altUser, altToken);
-                    System.out.println("(API-6) ✅ Token для " + altUser + " получен: " +
-                            altToken.substring(0, Math.min(20, altToken.length())) + "...");
-                }
-            }
-
-            System.out.println("(API-6) 🎯 Всего получено токенов: " + tokens.size());
+            // Тестируем основные бизнес-эндпоинты без OpenAPI спецификации
+            vulnerabilities.addAll(testBasicBusinessEndpoints(baseUrl, token, apiClient));
+            vulnerabilities.addAll(testRateLimitingBasic(baseUrl, token, apiClient));
+            vulnerabilities.addAll(testBusinessLogicBypassBasic(baseUrl, token, apiClient));
 
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка получения токенов: " + e.getMessage());
+            System.err.println("(API-6) ❌ Ошибка в базовом сканировании: " + e.getMessage());
         }
 
-        return tokens;
+        return vulnerabilities;
+    }
+
+    /**
+     * Тестирование основных бизнес-эндпоинтов
+     */
+    private List<Vulnerability> testBasicBusinessEndpoints(String baseUrl, String token, ApiClient apiClient) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+        ObjectMapper mapper = new ObjectMapper();
+
+        // Основные бизнес-эндпоинты для тестирования
+        String[] businessEndpoints = {
+                "/payments",
+                "/payment-consents/request",
+                "/account-consents/request",
+                "/product-agreements",
+                "/accounts"
+        };
+
+        try {
+            Map<String, String> headers = createAuthHeaders(token);
+
+            for (String endpoint : businessEndpoints) {
+                System.out.println("(API-6) 🧪 Тестирование бизнес-эндпоинта: " + endpoint);
+
+                // Тестируем доступность эндпоинта
+                Object response = apiClient.executeRequest("GET", baseUrl + endpoint, null, headers);
+                if (isSuccessfulResponse(response)) {
+                    // Если эндпоинт доступен, тестируем бизнес-операции
+                    vulnerabilities.addAll(testEndpointAutomationBasic(baseUrl, token, endpoint, apiClient, mapper));
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("(API-6) ❌ Ошибка тестирования бизнес-эндпоинтов: " + e.getMessage());
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Базовое тестирование автоматизации для эндпоинта
+     */
+    private List<Vulnerability> testEndpointAutomationBasic(String baseUrl, String token, String endpoint,
+                                                            ApiClient apiClient, ObjectMapper mapper) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        try {
+            Map<String, String> headers = createAuthHeaders(token);
+            String testPayload = createBasicTestPayload(endpoint);
+
+            // Тестируем возможность автоматизации
+            int successfulCalls = 0;
+            for (int i = 0; i < 3; i++) {
+                Object response = apiClient.executeRequest("POST", baseUrl + endpoint, testPayload, headers);
+                if (isSuccessfulResponse(response)) {
+                    successfulCalls++;
+                }
+                Thread.sleep(1000);
+            }
+
+            // Если все запросы успешны - возможна автоматизация
+            if (successfulCalls == 3) {
+                Vulnerability vuln = createBusinessFlowVulnerability(
+                        endpoint,
+                        "Неограниченная автоматизация бизнес-процесса (базовое сканирование)",
+                        "Эндпоинт " + endpoint + " позволяет выполнять последовательные операции без ограничений. " +
+                                "Возможна полная автоматизация чувствительного бизнес-процесса. " +
+                                "Доказательство: успешное выполнение 3 последовательных запросов.",
+                        Vulnerability.Severity.HIGH
+                );
+                vulnerabilities.add(vuln);
+            }
+        } catch (Exception e) {
+            System.err.println("(API-6) ❌ Ошибка тестирования автоматизации: " + e.getMessage());
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Создание базового тестового payload
+     */
+    private String createBasicTestPayload(String endpoint) {
+        // Базовые payload для различных эндпоинтов
+        if (endpoint.contains("/payments")) {
+            return "{\"data\":{\"initiation\":{\"instructedAmount\":{\"amount\":\"100.00\",\"currency\":\"RUB\"},\"debtorAccount\":{\"schemeName\":\"RU.CBR.PAN\",\"identification\":\"40817810099910004312\"},\"creditorAccount\":{\"schemeName\":\"RU.CBR.PAN\",\"identification\":\"40817810099910005423\"}}}}";
+        } else if (endpoint.contains("/payment-consents")) {
+            return "{\"requesting_bank\":\"" + config.getBankId() + "\",\"client_id\":\"" + config.getClientId() + "\",\"debtor_account\":\"acc-1010\",\"amount\":100.00,\"currency\":\"RUB\"}";
+        } else if (endpoint.contains("/account-consents")) {
+            return "{\"client_id\":\"" + config.getClientId() + "\",\"permissions\":[\"ReadAccountsDetail\",\"ReadBalances\"],\"reason\":\"Тестовый запрос\",\"requesting_bank\":\"" + config.getBankId() + "\"}";
+        } else if (endpoint.contains("/product-agreements")) {
+            return "{\"product_id\":\"prod-vb-deposit-001\",\"amount\":1000.00}";
+        } else {
+            return "{}";
+        }
+    }
+
+    // Базовая реализация тестирования rate limiting
+    private List<Vulnerability> testRateLimitingBasic(String baseUrl, String token, ApiClient apiClient) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        try {
+            Map<String, String> headers = createAuthHeaders(token);
+            String[] criticalEndpoints = {"/payments", "/payment-consents/request"};
+
+            for (String endpoint : criticalEndpoints) {
+                System.out.println("(API-6) 📈 Базовый тест rate limiting для: " + endpoint);
+
+                List<Integer> responseCodes = new ArrayList<>();
+                for (int i = 0; i < 5; i++) {
+                    Object response = apiClient.executeRequest("POST", baseUrl + endpoint, createBasicTestPayload(endpoint), headers);
+                    if (response instanceof core.HttpApiClient.ApiResponse) {
+                        core.HttpApiClient.ApiResponse apiResponse = (core.HttpApiClient.ApiResponse) response;
+                        responseCodes.add(apiResponse.getStatusCode());
+
+                        if (apiResponse.getStatusCode() == 429) {
+                            System.out.println("(API-6) ✅ Rate limiting обнаружен");
+                            break;
+                        }
+                    }
+                    Thread.sleep(100);
+                }
+
+                boolean hasRateLimiting = responseCodes.stream().anyMatch(code -> code == 429);
+                if (!hasRateLimiting) {
+                    Vulnerability vuln = createBusinessFlowVulnerability(
+                            endpoint,
+                            "Отсутствие rate limiting (базовое сканирование)",
+                            "Критичный бизнес-процесс " + endpoint + " не имеет ограничений частоты запросов.",
+                            Vulnerability.Severity.MEDIUM
+                    );
+                    vulnerabilities.add(vuln);
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("(API-6) ❌ Ошибка базового тестирования rate limiting: " + e.getMessage());
+        }
+
+        return vulnerabilities;
+    }
+
+    // Базовая реализация тестирования обхода бизнес-логики
+    private List<Vulnerability> testBusinessLogicBypassBasic(String baseUrl, String token, ApiClient apiClient) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        try {
+            Map<String, String> headers = createAuthHeaders(token);
+
+            // Тестируем платежи с отрицательной суммой
+            String negativePaymentPayload = "{\"data\":{\"initiation\":{\"instructedAmount\":{\"amount\":\"-1000.00\",\"currency\":\"RUB\"},\"debtorAccount\":{\"schemeName\":\"RU.CBR.PAN\",\"identification\":\"acc-1010\"},\"creditorAccount\":{\"schemeName\":\"RU.CBR.PAN\",\"identification\":\"acc-1011\"}}}}";
+
+            Object response = apiClient.executeRequest("POST", baseUrl + "/payments", negativePaymentPayload, headers);
+            if (isSuccessfulResponse(response)) {
+                Vulnerability vuln = createBusinessFlowVulnerability(
+                        "/payments",
+                        "Обход бизнес-логики (отрицательные суммы)",
+                        "Эндпоинт /payments принимает отрицательные суммы без валидации.",
+                        Vulnerability.Severity.HIGH
+                );
+                vulnerabilities.add(vuln);
+            }
+
+        } catch (Exception e) {
+            System.err.println("(API-6) ❌ Ошибка базового тестирования бизнес-логики: " + e.getMessage());
+        }
+
+        return vulnerabilities;
+    }
+
+    // Остальные методы остаются без изменений
+    private Map<String, String> initializeTestParameters() {
+        Map<String, String> params = new HashMap<>();
+
+        // Используем данные из конфигурации вместо хардкода
+        String clientId = config.getClientId();
+        String bankId = config.getBankId();
+
+        params.put("account_id", "acc-1010");
+        params.put("payment_id", "payment-123");
+        params.put("consent_id", "consent-69e75facabba");
+        params.put("agreement_id", "agreement-123");
+        params.put("product_id", "prod-vb-deposit-001");
+        params.put("request_id", "req-123");
+        params.put("client_id", clientId != null ? clientId : "default-client");
+        params.put("card_id", "card-123");
+        params.put("bank_id", bankId != null ? bankId : "default-bank");
+
+        return params;
     }
 
     /**
@@ -208,7 +354,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
      */
     private boolean checkTokenPermissions(String baseUrl, String token, ApiClient apiClient) {
         try {
-            Map<String, String> headers = createAuthHeaders(token, "team172");
+            Map<String, String> headers = createAuthHeaders(token);
             Object response = apiClient.executeRequest("GET", baseUrl + "/accounts", null, headers);
 
             if (response instanceof core.HttpApiClient.ApiResponse) {
@@ -237,151 +383,6 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         return false;
     }
 
-    private String getTokenViaLogin(String baseUrl, String username, String password) {
-        try {
-            String loginUrl = baseUrl + "/auth/login";
-
-            Map<String, String> requestBody = new HashMap<>();
-            requestBody.put("username", username);
-            requestBody.put("password", password);
-
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .build();
-
-            String jsonBody = new ObjectMapper().writeValueAsString(requestBody);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(loginUrl))
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/json")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .timeout(Duration.ofSeconds(10))
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            System.out.println("(API-6) 🔐 Login response для " + username + ": " + response.statusCode());
-
-            if (response.statusCode() == 200) {
-                return extractTokenFromResponse(response.body());
-            } else {
-                System.out.println("(API-6) ⚠️ Login failed with status: " + response.statusCode());
-                if (response.body() != null) {
-                    System.out.println("(API-6) 📄 Response body: " + response.body());
-                }
-            }
-
-        } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка getTokenViaLogin: " + e.getMessage());
-        }
-        return null;
-    }
-
-    private String getTokenViaBankToken(String baseUrl, String clientId, String clientSecret) {
-        try {
-            String authUrl = baseUrl + "/auth/bank-token?client_id=" + clientId +
-                    "&client_secret=" + clientSecret + "&grant_type=client_credentials";
-
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .build();
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(authUrl))
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Accept", "application/json")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .timeout(Duration.ofSeconds(10))
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            System.out.println("(API-6) 🏦 Bank token response: " + response.statusCode());
-
-            if (response.statusCode() == 200) {
-                return extractTokenFromResponse(response.body());
-            } else {
-                System.out.println("(API-6) ⚠️ Bank token failed with status: " + response.statusCode());
-                if (response.body() != null) {
-                    System.out.println("(API-6) 📄 Response body: " + response.body());
-                }
-            }
-
-        } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка getTokenViaBankToken: " + e.getMessage());
-        }
-        return null;
-    }
-
-    private String getTokenViaBankTokenWithAuth(String baseUrl, String clientId, String clientSecret, String authToken) {
-        try {
-            String authUrl = baseUrl + "/auth/bank-token?client_id=" + clientId +
-                    "&client_secret=" + clientSecret + "&grant_type=client_credentials";
-
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .build();
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(authUrl))
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Accept", "application/json")
-                    .header("Authorization", "Bearer " + authToken)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .timeout(Duration.ofSeconds(10))
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            System.out.println("(API-6) 🔐 Bank token with auth response: " + response.statusCode());
-
-            if (response.statusCode() == 200) {
-                return extractTokenFromResponse(response.body());
-            } else {
-                System.out.println("(API-6) ⚠️ Bank token with auth failed with status: " + response.statusCode());
-                if (response.body() != null) {
-                    System.out.println("(API-6) 📄 Response body: " + response.body());
-                }
-            }
-
-        } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка getTokenViaBankTokenWithAuth: " + e.getMessage());
-        }
-        return null;
-    }
-
-    private String extractTokenFromResponse(String responseBody) {
-        try {
-            if (responseBody == null) return null;
-
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode json = mapper.readTree(responseBody);
-
-            if (json.has("access_token")) {
-                return json.get("access_token").asText();
-            }
-            if (json.has("token")) {
-                return json.get("token").asText();
-            }
-
-            // Fallback: поиск в тексте
-            if (responseBody.contains("access_token")) {
-                String[] parts = responseBody.split("\"access_token\"\\s*:\\s*\"");
-                if (parts.length > 1) {
-                    return parts[1].split("\"")[0];
-                }
-            }
-
-        } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка извлечения токена: " + e.getMessage());
-        }
-        return null;
-    }
-
     /**
      * СОЗДАЕМ НЕОБХОДИМЫЕ СОГЛАСИЯ ДЛЯ ТЕСТИРОВАНИЯ
      */
@@ -398,14 +399,14 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             // 1. Account Consent
             Map<String, Object> accountConsentPayload = new HashMap<>();
-            accountConsentPayload.put("client_id", "team172-1");
+            accountConsentPayload.put("client_id", config.getClientId());
             accountConsentPayload.put("permissions", Arrays.asList("ReadAccountsDetail", "ReadBalances", "ReadTransactionsDetail"));
             accountConsentPayload.put("reason", "Business Flow Security Testing");
-            accountConsentPayload.put("requesting_bank", "team172");
+            accountConsentPayload.put("requesting_bank", config.getBankId());
             accountConsentPayload.put("requesting_bank_name", "Security Scanner");
 
             String accountConsentStr = mapper.writeValueAsString(accountConsentPayload);
-            Map<String, String> headers = createAuthHeaders(token, "team172");
+            Map<String, String> headers = createAuthHeaders(token);
 
             System.out.println("(API-6) 📋 Создание account consent...");
             Object accountResponse = apiClient.executeRequest("POST",
@@ -422,8 +423,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             // 2. Payment Consent
             Map<String, Object> paymentConsentPayload = new HashMap<>();
-            paymentConsentPayload.put("requesting_bank", "team172");
-            paymentConsentPayload.put("client_id", "team172-1");
+            paymentConsentPayload.put("requesting_bank", config.getBankId());
+            paymentConsentPayload.put("client_id", config.getClientId());
             paymentConsentPayload.put("debtor_account", "acc-1010");
             paymentConsentPayload.put("consent_type", "single_use");
             paymentConsentPayload.put("amount", 1000.00);
@@ -634,7 +635,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                                         ApiClient apiClient, BusinessFlowEndpoint endpoint,
                                         List<Vulnerability> vulnerabilities) {
         try {
-            Map<String, String> headers = createAuthHeadersWithConsents(token, "team172", consents);
+            Map<String, String> headers = createAuthHeadersWithConsents(token, consents);
             String testPayload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
@@ -739,7 +740,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                                           ApiClient apiClient, BusinessFlowEndpoint endpoint,
                                           List<Vulnerability> vulnerabilities) {
         try {
-            Map<String, String> headers = createAuthHeadersWithConsents(token, "team172", consents);
+            Map<String, String> headers = createAuthHeadersWithConsents(token, consents);
             String testPayload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
@@ -857,7 +858,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                                            List<Vulnerability> vulnerabilities) {
         // Тестируем защиту от повторных операций (идемпотентность)
         try {
-            Map<String, String> headers = createAuthHeadersWithConsents(token, "team172", consents);
+            Map<String, String> headers = createAuthHeadersWithConsents(token, consents);
             String testPayload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
@@ -925,7 +926,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                                     ApiClient apiClient, BusinessFlowEndpoint endpoint,
                                     List<Vulnerability> vulnerabilities) {
         try {
-            Map<String, String> headers = createAuthHeadersWithConsents(token, "team172", consents);
+            Map<String, String> headers = createAuthHeadersWithConsents(token, consents);
             String negativePayload = createNegativeValuePayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
@@ -956,7 +957,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                                     ApiClient apiClient, BusinessFlowEndpoint endpoint,
                                     List<Vulnerability> vulnerabilities) {
         try {
-            Map<String, String> headers = createAuthHeadersWithConsents(token, "team172", consents);
+            Map<String, String> headers = createAuthHeadersWithConsents(token, consents);
             String boundaryPayload = createBoundaryValuePayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
@@ -987,7 +988,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                                       ApiClient apiClient, BusinessFlowEndpoint endpoint,
                                       List<Vulnerability> vulnerabilities) {
         try {
-            Map<String, String> headers = createAuthHeadersWithConsents(token, "team172", consents);
+            Map<String, String> headers = createAuthHeadersWithConsents(token, consents);
             String invalidTypePayload = createInvalidDataTypePayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
@@ -1018,7 +1019,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                                            ApiClient apiClient, BusinessFlowEndpoint endpoint,
                                            List<Vulnerability> vulnerabilities) {
         try {
-            Map<String, String> headers = createAuthHeadersWithConsents(token, "team172", consents);
+            Map<String, String> headers = createAuthHeadersWithConsents(token, consents);
             String minimalPayload = createMinimalPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
@@ -1098,7 +1099,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                                            ApiClient apiClient, BusinessFlowEndpoint endpoint,
                                            List<Vulnerability> vulnerabilities) {
         try {
-            Map<String, String> headers = createAuthHeaders(token, "team172");
+            Map<String, String> headers = createAuthHeaders(token);
             // Специально не добавляем consent headers
             String paymentPayload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
@@ -1146,7 +1147,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                                           ApiClient apiClient, BusinessFlowEndpoint endpoint,
                                           List<Vulnerability> vulnerabilities) {
         try {
-            Map<String, String> headers = createAuthHeadersWithConsents(token, "team172", consents);
+            Map<String, String> headers = createAuthHeadersWithConsents(token, consents);
             String payload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
@@ -1183,7 +1184,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         String resolvedPath = path;
 
         // Заменяем параметры в пути
-        for (Map.Entry<String, String> param : TEST_PARAMETERS.entrySet()) {
+        for (Map.Entry<String, String> param : testParameters.entrySet()) {
             String paramPlaceholder = "{" + param.getKey() + "}";
             if (resolvedPath.contains(paramPlaceholder)) {
                 resolvedPath = resolvedPath.replace(paramPlaceholder, param.getValue());
@@ -1196,19 +1197,19 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         return fullUrl;
     }
 
-    private Map<String, String> createAuthHeaders(String token, String requestingBank) {
+    private Map<String, String> createAuthHeaders(String token) {
         Map<String, String> headers = new HashMap<>();
         headers.put("Authorization", "Bearer " + token);
         headers.put("Content-Type", "application/json");
         headers.put("Accept", "application/json");
-        headers.put("X-Requesting-Bank", requestingBank);
+        headers.put("X-Requesting-Bank", config.getBankId());
 
-        System.out.println("(API-6) 🔑 Заголовки: Authorization=Bearer ***, X-Requesting-Bank=" + requestingBank);
+        System.out.println("(API-6) 🔑 Заголовки: Authorization=Bearer ***, X-Requesting-Bank=" + config.getBankId());
         return headers;
     }
 
-    private Map<String, String> createAuthHeadersWithConsents(String token, String requestingBank, Map<String, String> consents) {
-        Map<String, String> headers = createAuthHeaders(token, requestingBank);
+    private Map<String, String> createAuthHeadersWithConsents(String token, Map<String, String> consents) {
+        Map<String, String> headers = createAuthHeaders(token);
 
         // Добавляем согласия если они есть
         if (consents.containsKey("account_consent")) {
@@ -1251,15 +1252,15 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
         System.out.println("(API-6) 🎯 Создание payload для: " + method + " " + path);
 
-        // Реальные payload из спецификации API
+        // Реальные payload из спецификации API с использованием данных из конфигурации
         if (path.contains("/payment-consents/request") && "POST".equals(method)) {
-            return "{\"requesting_bank\":\"team172\",\"client_id\":\"team172-1\",\"debtor_account\":\"acc-1010\",\"amount\":100.00,\"currency\":\"RUB\",\"consent_type\":\"single_use\"}";
+            return "{\"requesting_bank\":\"" + config.getBankId() + "\",\"client_id\":\"" + config.getClientId() + "\",\"debtor_account\":\"acc-1010\",\"amount\":100.00,\"currency\":\"RUB\",\"consent_type\":\"single_use\"}";
         } else if (path.contains("/payments") && "POST".equals(method)) {
             return "{\"data\":{\"initiation\":{\"instructedAmount\":{\"amount\":\"100.00\",\"currency\":\"RUB\"},\"debtorAccount\":{\"schemeName\":\"RU.CBR.PAN\",\"identification\":\"40817810099910004312\"},\"creditorAccount\":{\"schemeName\":\"RU.CBR.PAN\",\"identification\":\"40817810099910005423\"}}}}";
         } else if (path.contains("/product-agreements") && "POST".equals(method)) {
             return "{\"product_id\":\"prod-vb-deposit-001\",\"amount\":1000.00}";
         } else if (path.contains("/account-consents/request") && "POST".equals(method)) {
-            return "{\"client_id\":\"team172-1\",\"permissions\":[\"ReadAccountsDetail\",\"ReadBalances\"],\"reason\":\"Тестовый запрос\",\"requesting_bank\":\"team172\",\"requesting_bank_name\":\"Test App\"}";
+            return "{\"client_id\":\"" + config.getClientId() + "\",\"permissions\":[\"ReadAccountsDetail\",\"ReadBalances\"],\"reason\":\"Тестовый запрос\",\"requesting_bank\":\"" + config.getBankId() + "\",\"requesting_bank_name\":\"Test App\"}";
         } else if (path.contains("/accounts") && "POST".equals(method)) {
             return "{\"account_type\":\"checking\",\"initial_balance\":100.00}";
         } else if (path.contains("/cards") && "POST".equals(method)) {
