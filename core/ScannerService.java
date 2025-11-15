@@ -83,7 +83,8 @@ public class ScannerService {
                 new API7_SSRFScanner(),
                 new API8_SecurityConfigScanner(),
                 new API9_InventoryScanner(),
-                new API10_UnsafeConsumptionScanner()
+                new API10_UnsafeConsumptionScanner(),
+                new Validation()
         );
 
         int totalVulnerabilities = 0;
