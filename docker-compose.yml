@@ -33,7 +33,7 @@ services:
       DB_SUPER_USER: postgres
       DB_SUPER_PASSWORD: admin
     ports:
-      - "8081:8081"
+      - "8082:8081"
     depends_on:
       postgres:
         condition: service_healthy

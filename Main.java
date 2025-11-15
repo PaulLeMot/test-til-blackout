@@ -1,16 +1,6 @@
 import core.*;
 import scanners.SecurityScanner;
-import scanners.owasp.API1_BOLAScanner;
-import scanners.owasp.API2_BrokenAuthScanner;
-import scanners.owasp.API3_BOScanner;
-import scanners.owasp.API4_URCScanner;
-import scanners.owasp.API5_BrokenFunctionLevelAuthScanner;
-import scanners.owasp.API6_BusinessFlowScanner;
-import scanners.owasp.API7_SSRFScanner;
-import scanners.owasp.API8_SecurityConfigScanner;
-import scanners.owasp.API9_InventoryScanner;
-import scanners.owasp.API10_UnsafeConsumptionScanner;
-import scanners.owasp.Validation;
+import scanners.owasp.*;
 import java.util.*;
 import java.io.*;
 import java.text.SimpleDateFormat;
@@ -228,6 +218,7 @@ class ConfigParser {
 public class Main implements core.ScanLauncher {
     private static PrintWriter logWriter;
     private static WebServer webServer;
+    private static ScannerService scannerService;
     private static boolean isScanning = false;
 
     public static void main(String[] args) {
@@ -251,6 +242,9 @@ public class Main implements core.ScanLauncher {
         try {
             webServer = new WebServer(8081);
 
+            // Создаем ScannerService с передачей databaseManager
+            scannerService = new ScannerService(webServer, webServer.getDatabaseManager());
+
             // Устанавливаем ссылку на Main (который реализует ScanLauncher)
             webServer.setScanLauncher(new Main());
 
@@ -270,6 +264,7 @@ public class Main implements core.ScanLauncher {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (logWriter != null) logWriter.close();
             if (webServer != null) webServer.stop();
+            if (scannerService != null) scannerService.shutdown();
             log("Приложение завершено");
         }));
 
@@ -338,171 +333,15 @@ public class Main implements core.ScanLauncher {
             log("  Банков: " + config.getBanks().size());
             log("  Учетных записей: " + config.getCredentials().size());
 
-            // Создаём сканеры
-            List<SecurityScanner> securityScanners = Arrays.asList(
-                new API1_BOLAScanner(),
-                new API2_BrokenAuthScanner(),
-                new API3_BOScanner(),
-                new API4_URCScanner(),
-                new API5_BrokenFunctionLevelAuthScanner(),
-                new API6_BusinessFlowScanner(),
-                new API7_SSRFScanner(),
-                new API8_SecurityConfigScanner(),
-                new API9_InventoryScanner(),
-                new API10_UnsafeConsumptionScanner(),
-		new Validation()
-                //new scanners.fuzzing.AdvancedFuzzingScanner()
-            );
+            // Устанавливаем конфигурацию в ScannerService
+            scannerService.setConfig(config);
 
-            log("Зарегистрировано сканеров: " + securityScanners.size());
-
-            int totalVulnerabilities = 0;
-            int totalScannedBanks = 0;
-            List<String> failedBanks = new ArrayList<>();
-            Map<String, Integer> bankVulnerabilities = new HashMap<>();
-
-            for (ScanConfig.BankConfig bankConfig : config.getBanks()) {
-                String baseUrl = bankConfig.getBaseUrl();
-                String specUrl = bankConfig.getSpecUrl();
-
-                log("\n" + "=".repeat(50));
-                log("Сканирование: " + baseUrl);
-                log("Спецификация: " + specUrl);
-                log("=".repeat(50));
-
-                String cleanBaseUrl = baseUrl.trim();
-
-                // Отправляем уведомление в веб-интерфейс
-                webServer.broadcastMessage("scan_progress", "Сканирование банка: " + cleanBaseUrl);
-
-                int currentBankVulnerabilities = 0;
-                try {
-                    // ЗАГРУЖАЕМ OPENAPI СПЕЦИФИКАЦИЮ с помощью OpenApiSpecLoader
-                    Object openApiSpec = loadOpenApiSpec(specUrl);
-                    if (openApiSpec == null) {
-                        log("❌ Не удалось загрузить OpenAPI спецификацию для " + cleanBaseUrl);
-                        failedBanks.add(cleanBaseUrl);
-                        continue;
-                    }
-
-                    log("✅ OpenAPI спецификация успешно загружена");
-
-                    ScanConfig scanConfig = new ScanConfig();
-                    scanConfig.setTargetBaseUrl(cleanBaseUrl);
-                    scanConfig.setOpenApiSpecUrl(specUrl);
-                    scanConfig.setBankBaseUrl(cleanBaseUrl);
-
-                    // Устанавливаем обязательные параметры для получения bank token
-                    if (!config.getCredentials().isEmpty()) {
-                        // Берем первого пользователя как основного
-                        ScanConfig.UserCredentials primaryCred = config.getCredentials().get(0);
-                        scanConfig.setClientId(primaryCred.getUsername());
-                        scanConfig.setClientSecret(primaryCred.getPassword());
-                        // Используем team172 как банк ID
-                        scanConfig.setBankId("team172");
-                    }
-
-                    // Получение всех токенов, включая bank token
-                    log("Получение всех токенов для сканирования...");
-                    Map<String, String> tokens = AuthManager.getTokensForScanning(scanConfig);
-
-                    // Устанавливаем токены в конфигурацию СНАЧАЛА
-                    scanConfig.setUserTokens(tokens);
-
-                    // Проверяем, получен ли bank token
-                    String bankToken = scanConfig.getBankToken();
-                    if (bankToken != null && !bankToken.isEmpty()) {
-                        log("✅ Bank token успешно получен и доступен");
-                    } else {
-                        log("⚠️ Bank token не получен, возможно, проблема с аутентификацией");
-                    }
-
-                    log("Получено токенов: " + tokens.size());
-                    for (String key : tokens.keySet()) {
-                        log("   - " + key + ": ***");
-                    }
-
-                    if (tokens.isEmpty()) {
-                        log("❌ Не удалось получить токены для сканирования. Пропускаем банк.");
-                        failedBanks.add(cleanBaseUrl);
-                        continue;
-                    }
-
-                    List<Vulnerability> allVulnerabilities = new ArrayList<>();
-
-                    // Запуск сканеров - передаем загруженную спецификацию
-                    for (SecurityScanner scanner : securityScanners) {
-                        log("\nЗапуск сканера: " + scanner.getName());
-                        webServer.broadcastMessage("scanner_start", "Запуск: " + scanner.getName());
-
-                        try {
-                            List<Vulnerability> scannerResults = scanner.scan(openApiSpec, scanConfig, new HttpApiClient());
-                            allVulnerabilities.addAll(scannerResults);
-
-                            // Сохранение результатов в реальном времени
-                            for (Vulnerability vuln : scannerResults) {
-                                saveVulnerabilityToDatabase(vuln, cleanBaseUrl, scanner.getName());
-
-                                // Отправка уведомления о новой уязвимости
-                                Map<String, Object> vulnData = new HashMap<>();
-                                vulnData.put("bankName", cleanBaseUrl);
-                                vulnData.put("title", vuln.getTitle());
-                                vulnData.put("severity", vuln.getSeverity().toString());
-                                vulnData.put("category", vuln.getCategory().toString());
-                                vulnData.put("scanner", scanner.getName());
-                                webServer.broadcastMessage("new_vulnerability", vulnData);
-                            }
-
-                            log("Сканер " + scanner.getName() + " завершен. Найдено: " + scannerResults.size());
-                            webServer.broadcastMessage("scanner_complete",
-                                    scanner.getName() + " завершен: " + scannerResults.size() + " уязвимостей");
-
-                        } catch (Exception e) {
-                            log("Ошибка в сканере " + scanner.getName() + ": " + e.getMessage());
-                            webServer.broadcastMessage("scanner_error",
-                                    "Ошибка в " + scanner.getName() + ": " + e.getMessage());
-                        }
-
-                        try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
-                    }
-
-                    totalScannedBanks++;
-                    currentBankVulnerabilities = allVulnerabilities.size();
-                    totalVulnerabilities += currentBankVulnerabilities;
-                    bankVulnerabilities.put(cleanBaseUrl, currentBankVulnerabilities);
-
-                    log("\nРезультаты сканирования " + cleanBaseUrl + ":");
-                    log("   Статус: ЗАВЕРШЕНО");
-                    log("   Уязвимостей: " + currentBankVulnerabilities);
-
-                    // Отправка итогов по банку
-                    Map<String, Object> bankResult = new HashMap<>();
-                    bankResult.put("bank", cleanBaseUrl);
-                    bankResult.put("vulnerabilities", currentBankVulnerabilities);
-                    webServer.broadcastMessage("bank_complete", bankResult);
-
-                } catch (Exception e) {
-                    log("Ошибка при сканировании банка " + cleanBaseUrl + ": " + e.getMessage());
-                    failedBanks.add(cleanBaseUrl);
-                    webServer.broadcastMessage("bank_error", "Ошибка сканирования " + cleanBaseUrl);
-                }
-
-                try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+            // Запускаем сканирование через ScannerService
+            boolean started = scannerService.startScan();
+            if (!started) {
+                log("❌ Не удалось запустить сканирование");
+                webServer.broadcastMessage("scan_error", "Не удалось запустить сканирование");
             }
-
-            // Финальная сводка
-            log("\n" + "=".repeat(50));
-            log("СКАНИРОВАНИЕ ЗАВЕРШЕНО");
-            log("=".repeat(50));
-            log("   Просканировано банков: " + totalScannedBanks + "/" + config.getBanks().size());
-            log("   Всего уязвимостей: " + totalVulnerabilities);
-
-            // Отправка финальных результатов
-            Map<String, Object> finalResults = new HashMap<>();
-            finalResults.put("totalBanks", totalScannedBanks);
-            finalResults.put("totalVulnerabilities", totalVulnerabilities);
-            finalResults.put("failedBanks", failedBanks.size());
-            webServer.broadcastMessage("scan_complete", finalResults);
 
         } catch (Exception e) {
             log("Критическая ошибка в сканировании: " + e.getMessage());
@@ -532,6 +371,7 @@ public class Main implements core.ScanLauncher {
         }
         return null;
     }
+
     // Метод для сохранения уязвимости в PostgreSQL
     private static void saveVulnerabilityToDatabase(Vulnerability vuln, String bankName, String scannerName) {
         if (webServer != null) {

@@ -6,16 +6,20 @@ import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+import java.text.SimpleDateFormat;
 
 public class ScannerService {
     private final WebServer webServer;
+    private final PostgresManager databaseManager;
     private final ExecutorService executor;
     private boolean isScanning = false;
     private Consumer<String> messageListener;
     private ScanConfig config;
+    private String currentSessionId;
 
-    public ScannerService(WebServer webServer) {
+    public ScannerService(WebServer webServer, PostgresManager dbManager) {
         this.webServer = webServer;
+        this.databaseManager = dbManager;
         this.executor = Executors.newSingleThreadExecutor();
     }
 
@@ -54,7 +58,19 @@ public class ScannerService {
     }
 
     private void runScan() throws Exception {
+        // Создаем сессию сканирования
+        currentSessionId = databaseManager.createSession(
+                "Сканирование " + new SimpleDateFormat("dd.MM.yyyy HH:mm").format(new Date()),
+                configToJson(config)
+        );
+
+        if (currentSessionId == null) {
+            notifyMessage("error", "Не удалось создать сессию сканирования");
+            return;
+        }
+
         notifyMessage("info", "Зарегистрировано сканеров: 10");
+        notifyMessage("info", "Идентификатор сессии: " + currentSessionId);
 
         // Создаём сканеры
         List<SecurityScanner> securityScanners = Arrays.asList(
@@ -71,6 +87,7 @@ public class ScannerService {
         );
 
         int totalVulnerabilities = 0;
+        int totalScannedBanks = 0;
 
         // Используем банки из конфигурации UI вместо хардкода
         for (ScanConfig.BankConfig bankConfig : config.getBanks()) {
@@ -114,7 +131,7 @@ public class ScannerService {
                     List<Vulnerability> scannerResults = scanner.scan(null, bankScanConfig, new HttpApiClient());
                     allVulnerabilities.addAll(scannerResults);
 
-                    // Сохранение результатов в реальном времени
+                    // Сохранение результатов в реальном времени с sessionId
                     for (Vulnerability vuln : scannerResults) {
                         String proof = extractProofFromVulnerability(vuln);
                         String recommendation = extractRecommendationFromVulnerability(vuln);
@@ -126,7 +143,8 @@ public class ScannerService {
                                 "200",
                                 proof,
                                 recommendation,
-                                scanner.getName()
+                                scanner.getName(),
+                                currentSessionId  // Передаем sessionId
                         );
                         // Отправка уведомления о новой уязвимости
                         notifyNewVulnerability(vuln, cleanBaseUrl, scanner.getName());
@@ -140,15 +158,40 @@ public class ScannerService {
                 Thread.sleep(2000);
             }
 
+            totalScannedBanks++;
             totalVulnerabilities += allVulnerabilities.size();
             notifyMessage("info", "Банк " + cleanBaseUrl + " завершен. Найдено уязвимостей: " + allVulnerabilities.size());
+
             // Задержка между банками
             Thread.sleep(3000);
         }
 
+        // Завершаем сессию
+        databaseManager.completeSession(currentSessionId, totalScannedBanks, totalVulnerabilities);
+
         notifyMessage("info", "=".repeat(50));
         notifyMessage("info", "СКАНИРОВАНИЕ ЗАВЕРШЕНО");
         notifyMessage("info", "Всего уязвимостей: " + totalVulnerabilities);
+        notifyMessage("info", "Идентификатор сессии: " + currentSessionId);
+    }
+
+    private String configToJson(ScanConfig config) {
+        // Простая сериализация конфигурации в JSON
+        try {
+            StringBuilder json = new StringBuilder("{");
+            json.append("\"banks\":").append(config.getBanks().size()).append(",");
+            json.append("\"credentials\":").append(config.getCredentials().size()).append(",");
+            json.append("\"bankUrls\":[");
+
+            for (int i = 0; i < config.getBanks().size(); i++) {
+                if (i > 0) json.append(",");
+                json.append("\"").append(config.getBanks().get(i).getBaseUrl()).append("\"");
+            }
+            json.append("]}");
+            return json.toString();
+        } catch (Exception e) {
+            return "{\"banks\":0,\"credentials\":0}";
+        }
     }
 
     private String extractProofFromVulnerability(Vulnerability vuln) {
@@ -213,6 +256,7 @@ public class ScannerService {
         data.put("proof", extractProofFromVulnerability(vuln));
         data.put("recommendation", extractRecommendationFromVulnerability(vuln));
         data.put("scannerName", scannerName);
+        data.put("sessionId", currentSessionId);
         notifyMessage("new_vulnerability", data);
     }
 
