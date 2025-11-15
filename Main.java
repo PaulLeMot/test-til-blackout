@@ -6,6 +6,7 @@ import java.io.*;
 import java.text.SimpleDateFormat;
 
 // Исправленный JSON парсер для конфигурации
+// В классе ConfigParser в Main.java добавляем парсинг bankId
 class ConfigParser {
     public static ScanConfig parseConfig(String json) {
         ScanConfig config = new ScanConfig();
@@ -18,6 +19,13 @@ class ConfigParser {
 
             if (json.startsWith("{") && json.endsWith("}")) {
                 json = json.substring(1, json.length() - 1).trim();
+
+                // Парсим bankId
+                String bankId = extractValueFromObject(json, "bankId");
+                if (bankId != null) {
+                    config.setBankId(bankId.trim());
+                    log("Parsed bankId: " + bankId);
+                }
 
                 List<ScanConfig.BankConfig> banks = new ArrayList<>();
                 List<ScanConfig.UserCredentials> credentials = new ArrayList<>();
@@ -84,6 +92,7 @@ class ConfigParser {
         return config;
     }
 
+    // Остальные методы ConfigParser остаются без изменений...
     private static String extractPart(String json, String key) {
         String searchKey = "\"" + key + "\":";
         int start = json.indexOf(searchKey);
@@ -213,7 +222,6 @@ class ConfigParser {
         System.out.println(logMessage);
     }
 }
-
 // Реализуем интерфейс ScanLauncher
 public class Main implements core.ScanLauncher {
     private static PrintWriter logWriter;

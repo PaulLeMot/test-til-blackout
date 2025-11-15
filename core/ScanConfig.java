@@ -23,6 +23,9 @@ public class ScanConfig {
     private List<BankConfig> banks = new ArrayList<>();
     private List<UserCredentials> credentials = new ArrayList<>();
 
+    // Добавляем поле для bankId из UI
+    private String bankId;
+
     public ScanConfig() {}
 
     // Getters and Setters
@@ -82,12 +85,7 @@ public class ScanConfig {
         return this.userTokens.size() >= 2;
     }
 
-    // Новое поле для хранения bankId
-    private String bankId;
-
-    /**
-     * Получает ID банка. Для sandbox среды использует team172
-     */
+    // Геттер и сеттер для bankId
     public String getBankId() {
         if (bankId == null || bankId.isEmpty()) {
             // Для sandbox среды используем только префикс team172
@@ -96,7 +94,7 @@ public class ScanConfig {
             }
             // Для других случаев - стандартная логика
             if (clientId != null && clientId.contains("-")) {
-                return clientId.split("-")[0]; // Например, team172-8 -> team172
+                return clientId.split("-")[0];
             }
             return "default-bank"; // Дефолтное значение
         }

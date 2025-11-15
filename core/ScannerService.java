@@ -119,7 +119,11 @@ public class ScannerService {
                 ScanConfig.UserCredentials primaryCred = config.getCredentials().get(0);
                 bankScanConfig.setClientId(primaryCred.getUsername());
                 bankScanConfig.setClientSecret(primaryCred.getPassword());
-                bankScanConfig.setBankId("team172"); // Используем префикс команды
+
+                // ИСПРАВЛЕНИЕ: Используем bankId из конфигурации вместо хардкода
+                bankScanConfig.setBankId(config.getBankId());
+
+                notifyMessage("info", "Используется Bank ID: " + config.getBankId());
             }
 
             // Получение токенов для пользователей из UI
@@ -220,6 +224,7 @@ public class ScannerService {
         // Простая сериализация конфигурации в JSON
         try {
             StringBuilder json = new StringBuilder("{");
+            json.append("\"bankId\":\"").append(config.getBankId()).append("\",");
             json.append("\"banks\":").append(config.getBanks().size()).append(",");
             json.append("\"credentials\":").append(config.getCredentials().size()).append(",");
             json.append("\"bankUrls\":[");
@@ -231,7 +236,7 @@ public class ScannerService {
             json.append("]}");
             return json.toString();
         } catch (Exception e) {
-            return "{\"banks\":0,\"credentials\":0}";
+            return "{\"bankId\":\"unknown\",\"banks\":0,\"credentials\":0}";
         }
     }
 
