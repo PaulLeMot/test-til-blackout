@@ -24,6 +24,8 @@ public class API3_BOScanner implements SecurityScanner {
             "bypass_risk_check", "auto_approved", "special_conditions", "vip_status"
     );
 
+    private ScanConfig config;
+
     @Override
     public String getName() {
         return "API3_BOPLA_Scanner";
@@ -31,6 +33,7 @@ public class API3_BOScanner implements SecurityScanner {
 
     @Override
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
+        this.config = config;
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         ObjectMapper mapper = new ObjectMapper();
 
@@ -39,8 +42,8 @@ public class API3_BOScanner implements SecurityScanner {
 
             System.out.println("API3_BOScanner: Starting comprehensive Mass Assignment tests for " + baseUrl);
 
-            // Получаем свежие токены с разными методами
-            Map<String, String> tokens = getAllTokens(baseUrl, config);
+            // Получаем токены через AuthManager
+            Map<String, String> tokens = AuthManager.getTokensForScanning(config);
 
             if (tokens.isEmpty()) {
                 System.out.println("API3_BOScanner: No tokens obtained, skipping scan");
@@ -58,196 +61,6 @@ public class API3_BOScanner implements SecurityScanner {
         }
 
         return vulnerabilities;
-    }
-
-    /**
-     * ПОЛУЧАЕМ ВСЕ ВОЗМОЖНЫЕ ТОКЕНЫ РАЗНЫМИ СПОСОБАМИ
-     */
-    private Map<String, String> getAllTokens(String baseUrl, ScanConfig config) {
-        Map<String, String> tokens = new HashMap<>();
-
-        try {
-            // Получаем учетные данные из конфигурации
-            String username = "team172-1";
-            String password = "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
-
-            if (!config.getCredentials().isEmpty()) {
-                username = config.getCredentials().get(0).getUsername();
-                password = config.getCredentials().get(0).getPassword();
-            }
-
-            System.out.println("API3: Getting ALL tokens for: " + username);
-
-            // 1. Client token через /auth/login (основной)
-            String clientToken1 = getTokenViaLogin(baseUrl, username, password);
-            if (clientToken1 != null) {
-                tokens.put("client_login", clientToken1);
-                System.out.println("API3: Client token (login) obtained");
-            }
-
-            // 2. Bank token через /auth/bank-token (основной)
-            String bankToken1 = getTokenViaBankToken(baseUrl, "team172", password);
-            if (bankToken1 != null) {
-                tokens.put("bank_token", bankToken1);
-                System.out.println("API3: Bank token (bank-token) obtained");
-            }
-
-            // 3. Bank token через /auth/bank-token с client token
-            if (clientToken1 != null) {
-                String bankToken2 = getTokenViaBankTokenWithAuth(baseUrl, "team172", password, clientToken1);
-                if (bankToken2 != null) {
-                    tokens.put("bank_token_auth", bankToken2);
-                    System.out.println("API3: Bank token (with auth) obtained");
-                }
-            }
-
-            // 4. Пробуем другие пользователи
-            for (int i = 2; i <= 3; i++) {
-                String altUser = "team172-" + i;
-                String altToken = getTokenViaLogin(baseUrl, altUser, password);
-                if (altToken != null) {
-                    tokens.put("client_" + altUser, altToken);
-                    System.out.println("API3: Token for " + altUser + " obtained");
-                }
-            }
-
-            System.out.println("API3: Total tokens obtained: " + tokens.size());
-
-        } catch (Exception e) {
-            System.err.println("API3: Error getting tokens: " + e.getMessage());
-        }
-
-        return tokens;
-    }
-
-    private String getTokenViaLogin(String baseUrl, String username, String password) {
-        try {
-            String loginUrl = baseUrl + "/auth/login";
-
-            Map<String, String> requestBody = new HashMap<>();
-            requestBody.put("username", username);
-            requestBody.put("password", password);
-
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .build();
-
-            String jsonBody = new ObjectMapper().writeValueAsString(requestBody);
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(loginUrl))
-                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/json")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .timeout(Duration.ofSeconds(10))
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            System.out.println("API3: Login response for " + username + ": " + response.statusCode());
-
-            if (response.statusCode() == 200) {
-                return extractTokenFromResponse(response.body());
-            }
-
-        } catch (Exception e) {
-            System.err.println("API3: Error in getTokenViaLogin: " + e.getMessage());
-        }
-        return null;
-    }
-
-    private String getTokenViaBankToken(String baseUrl, String clientId, String clientSecret) {
-        try {
-            String authUrl = baseUrl + "/auth/bank-token?client_id=" + clientId +
-                    "&client_secret=" + clientSecret + "&grant_type=client_credentials";
-
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .build();
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(authUrl))
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Accept", "application/json")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .timeout(Duration.ofSeconds(10))
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            System.out.println("API3: Bank token response: " + response.statusCode());
-
-            if (response.statusCode() == 200) {
-                return extractTokenFromResponse(response.body());
-            }
-
-        } catch (Exception e) {
-            System.err.println("API3: Error in getTokenViaBankToken: " + e.getMessage());
-        }
-        return null;
-    }
-
-    private String getTokenViaBankTokenWithAuth(String baseUrl, String clientId, String clientSecret, String authToken) {
-        try {
-            String authUrl = baseUrl + "/auth/bank-token?client_id=" + clientId +
-                    "&client_secret=" + clientSecret + "&grant_type=client_credentials";
-
-            HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
-                    .build();
-
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(authUrl))
-                    .POST(HttpRequest.BodyPublishers.noBody())
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Accept", "application/json")
-                    .header("Authorization", "Bearer " + authToken)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                    .timeout(Duration.ofSeconds(10))
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-            System.out.println("API3: Bank token with auth response: " + response.statusCode());
-
-            if (response.statusCode() == 200) {
-                return extractTokenFromResponse(response.body());
-            }
-
-        } catch (Exception e) {
-            System.err.println("API3: Error in getTokenViaBankTokenWithAuth: " + e.getMessage());
-        }
-        return null;
-    }
-
-    private String extractTokenFromResponse(String responseBody) {
-        try {
-            if (responseBody == null) return null;
-
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode json = mapper.readTree(responseBody);
-
-            if (json.has("access_token")) {
-                return json.get("access_token").asText();
-            }
-            if (json.has("token")) {
-                return json.get("token").asText();
-            }
-
-            // Fallback: поиск в тексте
-            if (responseBody.contains("access_token")) {
-                String[] parts = responseBody.split("\"access_token\"\\s*:\\s*\"");
-                if (parts.length > 1) {
-                    return parts[1].split("\"")[0];
-                }
-            }
-
-        } catch (Exception e) {
-            System.err.println("API3: Error extracting token: " + e.getMessage());
-        }
-        return null;
     }
 
     /**
@@ -400,13 +213,13 @@ public class API3_BOScanner implements SecurityScanner {
 
             // Тест Account Consent с Mass Assignment (полная версия)
             Map<String, Object> accountConsentPayload = new HashMap<>();
-            accountConsentPayload.put("client_id", "team172-1");
+            accountConsentPayload.put("client_id", config.getClientId());
             accountConsentPayload.put("permissions", Arrays.asList(
                     "ReadAccountsDetail", "ReadBalances", "ReadTransactionsDetail",
                     "AdminAccess", "WriteAccess", "DeleteAccess", "SystemOverride", "BypassLimits"
             ));
             accountConsentPayload.put("reason", "Mass Assignment Test");
-            accountConsentPayload.put("requesting_bank", "team172");
+            accountConsentPayload.put("requesting_bank", config.getBankId());
             accountConsentPayload.put("requesting_bank_name", "Security Test");
             accountConsentPayload.put("max_access_level", "super_admin");
             accountConsentPayload.put("unlimited_duration", true);
@@ -425,8 +238,8 @@ public class API3_BOScanner implements SecurityScanner {
 
             // Тест Payment Consent с Mass Assignment (полная версия)
             Map<String, Object> paymentConsentPayload = new HashMap<>();
-            paymentConsentPayload.put("requesting_bank", "team172");
-            paymentConsentPayload.put("client_id", "team172-1");
+            paymentConsentPayload.put("requesting_bank", config.getBankId());
+            paymentConsentPayload.put("client_id", config.getClientId());
             paymentConsentPayload.put("debtor_account", "4084fcf5c6cfb514fe");
             paymentConsentPayload.put("consent_type", "multi_use");
             paymentConsentPayload.put("max_uses", 999);
@@ -555,8 +368,8 @@ public class API3_BOScanner implements SecurityScanner {
     private String createSimpleConsent(String baseUrl, String token, ApiClient apiClient, ObjectMapper mapper) {
         try {
             Map<String, Object> consentPayload = new HashMap<>();
-            consentPayload.put("requesting_bank", "team172");
-            consentPayload.put("client_id", "team172-1");
+            consentPayload.put("requesting_bank", config.getBankId());
+            consentPayload.put("client_id", config.getClientId());
             consentPayload.put("debtor_account", "4084fcf5c6cfb514fe");
             consentPayload.put("consent_type", "single_use");
             consentPayload.put("max_amount_per_payment", 1000.00);
@@ -648,7 +461,7 @@ public class API3_BOScanner implements SecurityScanner {
         Map<String, String> headers = new HashMap<>();
         headers.put("Authorization", "Bearer " + token);
         headers.put("Content-Type", "application/json");
-        headers.put("X-Requesting-Bank", "team172");
+        headers.put("X-Requesting-Bank", config.getBankId());
         headers.put("Accept", "application/json");
         headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
         return headers;
