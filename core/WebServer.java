@@ -10,8 +10,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
-import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
+
+// Добавляем импорты для PDF
+import com.itextpdf.text.*;
+import com.itextpdf.text.pdf.*;
 
 public class WebServer {
     private HttpServer server;
@@ -40,6 +45,7 @@ public class WebServer {
         server.createContext("/api/scan/results", new ScanResultsHandler());
         server.createContext("/api/scan/stats", new ScanStatsHandler());
         server.createContext("/api/scan/clear", new ClearResultsHandler());
+        server.createContext("/api/scan/export/pdf", new ExportPdfHandler()); // Новый endpoint для PDF
 
         // Новые endpoints для работы с сессиями
         server.createContext("/api/sessions/list", new SessionsListHandler());
@@ -79,6 +85,216 @@ public class WebServer {
     }
 
     static class WebSocketConnection {
+    }
+
+    // Новый обработчик для экспорта PDF
+    class ExportPdfHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("GET".equals(exchange.getRequestMethod())) {
+                try {
+                    String query = exchange.getRequestURI().getQuery();
+                    String severityFilter = null;
+                    String categoryFilter = null;
+                    String bankFilter = null;
+                    String sessionFilter = null;
+
+                    if (query != null) {
+                        for (String pair : query.split("&")) {
+                            String[] keyValue = pair.split("=");
+                            if (keyValue.length == 2) {
+                                String key = URLDecoder.decode(keyValue[0], StandardCharsets.UTF_8);
+                                String value = URLDecoder.decode(keyValue[1], StandardCharsets.UTF_8);
+
+                                switch (key) {
+                                    case "severity":
+                                        severityFilter = value;
+                                        break;
+                                    case "category":
+                                        categoryFilter = value;
+                                        break;
+                                    case "bank":
+                                        bankFilter = value;
+                                        break;
+                                    case "session":
+                                        sessionFilter = value;
+                                        break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Получаем отфильтрованные результаты
+                    List<Map<String, Object>> results = databaseManager.getScanResults(
+                            severityFilter, categoryFilter, bankFilter, sessionFilter
+                    );
+
+                    // Создаем PDF документ
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    Document document = new Document(PageSize.A4.rotate()); // Альбомная ориентация для таблицы
+
+                    try {
+                        PdfWriter writer = PdfWriter.getInstance(document, baos);
+                        document.open();
+
+                        // Создаем шрифт с поддержкой кириллицы
+                        BaseFont baseFont = BaseFont.createFont(
+                                "c:/windows/fonts/arial.ttf", // Путь к шрифту Arial в Windows
+                                BaseFont.IDENTITY_H,
+                                BaseFont.EMBEDDED
+                        );
+
+                        // Альтернативные пути к шрифтам для разных ОС
+                        if (!new File("c:/windows/fonts/arial.ttf").exists()) {
+                            try {
+                                baseFont = BaseFont.createFont(
+                                        "/usr/share/fonts/truetype/freefont/FreeSans.ttf", // Linux
+                                        BaseFont.IDENTITY_H,
+                                        BaseFont.EMBEDDED
+                                );
+                            } catch (Exception e) {
+                                // Если шрифты не найдены, используем стандартный без поддержки кириллицы
+                                baseFont = BaseFont.createFont(BaseFont.HELVETICA, BaseFont.WINANSI, BaseFont.EMBEDDED);
+                            }
+                        }
+
+                        Font titleFont = new Font(baseFont, 16, Font.BOLD);
+                        Font headerFont = new Font(baseFont, 10, Font.BOLD);
+                        Font normalFont = new Font(baseFont, 8, Font.NORMAL);
+                        Font boldFont = new Font(baseFont, 8, Font.BOLD);
+
+                        // Заголовок
+                        Paragraph title = new Paragraph("Отчет о сканировании безопасности", titleFont);
+                        title.setAlignment(Element.ALIGN_CENTER);
+                        title.setSpacingAfter(20);
+                        document.add(title);
+
+                        // Дата генерации
+                        Paragraph date = new Paragraph(
+                                "Сгенерировано: " + new java.util.Date().toString(),
+                                normalFont
+                        );
+                        date.setSpacingAfter(10);
+                        document.add(date);
+
+                        // Информация о фильтрах
+                        if (severityFilter != null || categoryFilter != null || bankFilter != null) {
+                            StringBuilder filterInfo = new StringBuilder("Примененные фильтры: ");
+                            if (severityFilter != null) filterInfo.append("Уровень: ").append(severityFilter).append("; ");
+                            if (categoryFilter != null) filterInfo.append("Категория: ").append(categoryFilter).append("; ");
+                            if (bankFilter != null) filterInfo.append("Банк: ").append(bankFilter).append("; ");
+
+                            Paragraph filters = new Paragraph(filterInfo.toString(), normalFont);
+                            filters.setSpacingAfter(10);
+                            document.add(filters);
+                        }
+
+                        // Статистика
+                        Map<String, Object> stats = databaseManager.getStats();
+                        Paragraph statsTitle = new Paragraph("Статистика:", boldFont);
+                        statsTitle.setSpacingAfter(5);
+                        document.add(statsTitle);
+
+                        document.add(new Paragraph("Всего уязвимостей: " + stats.get("total"), normalFont));
+                        document.add(new Paragraph("Критические: " + stats.get("critical"), normalFont));
+                        document.add(new Paragraph("Высокие: " + stats.get("high"), normalFont));
+                        document.add(new Paragraph("Средние: " + stats.get("medium"), normalFont));
+                        document.add(new Paragraph("Низкие: " + stats.get("low"), normalFont));
+
+                        document.add(new Paragraph(" "));
+                        document.add(new Paragraph(" "));
+
+                        // Таблица с уязвимостями
+                        if (!results.isEmpty()) {
+                            Paragraph tableTitle = new Paragraph("Детали уязвимостей:", boldFont);
+                            tableTitle.setSpacingAfter(10);
+                            document.add(tableTitle);
+
+                            PdfPTable table = new PdfPTable(6);
+                            table.setWidthPercentage(100);
+                            table.setSpacingBefore(10);
+
+                            // Устанавливаем ширины колонок
+                            float[] columnWidths = {2f, 3f, 1.5f, 2f, 1f, 1.5f};
+                            table.setWidths(columnWidths);
+
+                            // Заголовки таблицы
+                            String[] headers = {"Банк", "Уязвимость", "Уровень", "Категория", "Статус", "Дата"};
+                            for (String header : headers) {
+                                PdfPCell cell = new PdfPCell(new Phrase(header, headerFont));
+                                cell.setBackgroundColor(BaseColor.LIGHT_GRAY);
+                                cell.setHorizontalAlignment(Element.ALIGN_CENTER);
+                                cell.setPadding(5);
+                                table.addCell(cell);
+                            }
+
+                            // Данные таблицы
+                            for (Map<String, Object> result : results) {
+                                addTableCell(table, getStringValue(result.get("bankName")), normalFont);
+                                addTableCell(table, getStringValue(result.get("vulnerabilityTitle")), normalFont);
+
+                                // Цвета для уровней серьезности
+                                String severity = getStringValue(result.get("severity"));
+                                Font severityFont = normalFont;
+                                if ("CRITICAL".equals(severity)) {
+                                    severityFont = new Font(baseFont, 8, Font.BOLD, BaseColor.RED);
+                                } else if ("HIGH".equals(severity)) {
+                                    severityFont = new Font(baseFont, 8, Font.BOLD, BaseColor.ORANGE);
+                                }
+                                addTableCell(table, severity, severityFont);
+
+                                addTableCell(table, getStringValue(result.get("category")), normalFont);
+                                addTableCell(table, getStringValue(result.get("statusCode")), normalFont);
+                                addTableCell(table, getStringValue(result.get("scanDate")), normalFont);
+                            }
+
+                            document.add(table);
+                        } else {
+                            document.add(new Paragraph("Нет данных для отображения", normalFont));
+                        }
+
+                        document.close();
+
+                        // Отправляем PDF
+                        exchange.getResponseHeaders().set("Content-Type", "application/pdf");
+                        exchange.getResponseHeaders().set("Content-Disposition",
+                                "attachment; filename=security_scan_report_" +
+                                        System.currentTimeMillis() + ".pdf");
+                        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                        exchange.sendResponseHeaders(200, baos.size());
+
+                        try (OutputStream os = exchange.getResponseBody()) {
+                            baos.writeTo(os);
+                        }
+
+                    } catch (DocumentException e) {
+                        throw new IOException("PDF generation error: " + e.getMessage(), e);
+                    }
+
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    String response = "{\"error\": \"Failed to generate PDF: " + e.getMessage() + "\"}";
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.sendResponseHeaders(500, response.getBytes().length);
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(response.getBytes());
+                    }
+                }
+            } else {
+                exchange.sendResponseHeaders(405, -1);
+            }
+        }
+
+        private void addTableCell(PdfPTable table, String text, Font font) {
+            PdfPCell cell = new PdfPCell(new Phrase(text, font));
+            cell.setPadding(4);
+            cell.setHorizontalAlignment(Element.ALIGN_LEFT);
+            table.addCell(cell);
+        }
+
+        private String getStringValue(Object value) {
+            return value != null ? value.toString() : "N/A";
+        }
     }
 
     class StaticFileHandler implements HttpHandler {

@@ -48,6 +48,11 @@ class SecurityDashboard {
             this.exportToCsv();
         });
 
+        // НОВЫЙ ОБРАБОТЧИК ДЛЯ PDF
+        document.getElementById('exportPdf').addEventListener('click', () => {
+            this.exportToPdf();
+        });
+
         document.querySelector('.close').addEventListener('click', () => {
             this.closeModal();
         });
@@ -100,14 +105,14 @@ class SecurityDashboard {
         }
 
         try {
-            this.showNotification('🔄 Очистка базы данных...', 'info');
+            this.showNotification('Очистка базы данных...', 'info');
 
             const response = await fetch('/api/scan/clear', {
                 method: 'POST'
             });
 
             if (response.ok) {
-                this.showNotification('✅ База данных успешно очищена', 'success');
+                this.showNotification('База данных успешно очищена', 'success');
                 // Обновляем данные на странице
                 this.currentData = [];
                 this.filteredData = [];
@@ -119,7 +124,7 @@ class SecurityDashboard {
             }
         } catch (error) {
             console.error('Error clearing database:', error);
-            this.showNotification('❌ Ошибка при очистке базы данных', 'error');
+            this.showNotification('Ошибка при очистке базы данных', 'error');
         }
     }
 
@@ -358,7 +363,7 @@ class SecurityDashboard {
         try {
             this.isScanning = true;
             this.updateScanButton(true);
-            this.showNotification('🔄 Запущено расширенное сканирование с новыми типами атак', 'success');
+            this.showNotification('Запущено расширенное сканирование с новыми типами атак', 'success');
             this.lastDataCount = this.currentData.length;
 
             const response = await fetch('/api/scan/start', {
@@ -373,7 +378,7 @@ class SecurityDashboard {
                 throw new Error('Server error');
             }
 
-            this.showNotification('🔍 Сканирование запущено. Ожидайте первые результаты...', 'info');
+            this.showNotification('Сканирование запущено. Ожидайте первые результаты...', 'info');
 
         } catch (error) {
             console.error('Error starting scan:', error);
@@ -389,7 +394,7 @@ class SecurityDashboard {
             btn.innerHTML = '<span class="scanning-indicator"><span class="pulse">⏳</span> Расширенное сканирование...</span>';
             btn.disabled = true;
         } else {
-            btn.innerHTML = '🚀 Запустить расширенное сканирование';
+            btn.innerHTML = 'Запустить расширенное сканирование';
             btn.disabled = false;
         }
         this.updateConnectionStatus();
@@ -400,10 +405,10 @@ class SecurityDashboard {
         if (statusElement) {
             if (this.isScanning) {
                 statusElement.className = 'status-connecting';
-                statusElement.textContent = '● Расширенное сканирование...';
+                statusElement.textContent = 'Расширенное сканирование...';
             } else {
                 statusElement.className = 'status-online';
-                statusElement.textContent = '● Online';
+                statusElement.textContent = 'Online';
             }
         }
     }
@@ -673,7 +678,7 @@ class SecurityDashboard {
             <td>${new Date(item.scanDate).toLocaleDateString('ru-RU')}</td>
             <td>
                 <button class="btn btn-outline btn-sm view-details" data-id="${item.id}">
-                    👁️ Подробнее
+                    Подробнее
                 </button>
             </td>
         `;
@@ -817,6 +822,36 @@ class SecurityDashboard {
         this.showNotification('Данные экспортированы в CSV', 'success');
     }
 
+    // НОВЫЙ МЕТОД ДЛЯ ЭКСПОРТА В PDF
+    exportToPdf() {
+        if (this.filteredData.length === 0) {
+            this.showNotification('Нет данных для экспорта', 'error');
+            return;
+        }
+
+        this.showNotification('Генерация PDF отчета...', 'info');
+
+        // Создаем URL с параметрами фильтров
+        const params = new URLSearchParams();
+        if (this.filters.severity) params.append('severity', this.filters.severity);
+        if (this.filters.category) params.append('category', this.filters.category);
+        if (this.filters.bank) params.append('bank', this.filters.bank);
+
+        const url = `/api/scan/export/pdf?${params.toString()}`;
+
+        // Создаем временную ссылку для скачивания
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `security_scan_${new Date().toISOString().split('T')[0]}.pdf`;
+        link.style.visibility = 'hidden';
+
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        this.showNotification('PDF отчет успешно сгенерирован', 'success');
+    }
+
     formatProof(text) {
         try {
             const obj = JSON.parse(text);
@@ -883,63 +918,63 @@ class SecurityDashboard {
     }
 
     // Заполнение выпадающих списков сессиями
-// Заполнение выпадающих списков сессиями
-async populateSessionSelects(sessions) {
-    const session1Select = document.getElementById('session1Select');
-    const session2Select = document.getElementById('session2Select');
+    async populateSessionSelects(sessions) {
+        const session1Select = document.getElementById('session1Select');
+        const session2Select = document.getElementById('session2Select');
 
-    // Очищаем существующие опции (кроме первой)
-    while (session1Select.children.length > 1) session1Select.removeChild(session1Select.lastChild);
-    while (session2Select.children.length > 1) session2Select.removeChild(session2Select.lastChild);
+        // Очищаем существующие опции (кроме первой)
+        while (session1Select.children.length > 1) session1Select.removeChild(session1Select.lastChild);
+        while (session2Select.children.length > 1) session2Select.removeChild(session2Select.lastChild);
 
-    // Сортируем сессии по дате (новые сначала)
-    sessions.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+        // Сортируем сессии по дате (новые сначала)
+        sessions.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
 
-    // Для каждой сессии получаем реальное количество уязвимостей
-    const sessionsWithRealCounts = await Promise.all(
-        sessions.map(async (session) => {
-            try {
-                const response = await fetch(`/api/scan/results?session=${session.sessionId}`);
-                if (response.ok) {
-                    const vulnerabilities = await response.json();
-                    return {
-                        ...session,
-                        realVulnerabilitiesCount: vulnerabilities.length
-                    };
+        // Для каждой сессии получаем реальное количество уязвимостей
+        const sessionsWithRealCounts = await Promise.all(
+            sessions.map(async (session) => {
+                try {
+                    const response = await fetch(`/api/scan/results?session=${session.sessionId}`);
+                    if (response.ok) {
+                        const vulnerabilities = await response.json();
+                        return {
+                            ...session,
+                            realVulnerabilitiesCount: vulnerabilities.length
+                        };
+                    }
+                } catch (error) {
+                    console.error(`Error getting vulnerabilities for session ${session.sessionId}:`, error);
                 }
-            } catch (error) {
-                console.error(`Error getting vulnerabilities for session ${session.sessionId}:`, error);
-            }
-            return {
-                ...session,
-                realVulnerabilitiesCount: session.vulnerabilitiesCount || 0
-            };
-        })
-    );
+                return {
+                    ...session,
+                    realVulnerabilitiesCount: session.vulnerabilitiesCount || 0
+                };
+            })
+        );
 
-    sessionsWithRealCounts.forEach(session => {
-        const option1 = document.createElement('option');
-        const option2 = document.createElement('option');
+        sessionsWithRealCounts.forEach(session => {
+            const option1 = document.createElement('option');
+            const option2 = document.createElement('option');
 
-        const sessionDate = new Date(session.startTime).toLocaleDateString('ru-RU');
-        const sessionTime = new Date(session.startTime).toLocaleTimeString('ru-RU', {
-            hour: '2-digit',
-            minute: '2-digit'
+            const sessionDate = new Date(session.startTime).toLocaleDateString('ru-RU');
+            const sessionTime = new Date(session.startTime).toLocaleTimeString('ru-RU', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            // Используем реальное количество уязвимостей
+            const vulnCount = session.realVulnerabilitiesCount || session.vulnerabilitiesCount || 0;
+
+            option1.value = session.sessionId;
+            option1.textContent = `${session.sessionName} (${sessionDate} ${sessionTime}) - ${vulnCount} уязвимостей`;
+
+            option2.value = session.sessionId;
+            option2.textContent = `${session.sessionName} (${sessionDate} ${sessionTime}) - ${vulnCount} уязвимостей`;
+
+            session1Select.appendChild(option1);
+            session2Select.appendChild(option2);
         });
+    }
 
-        // Используем реальное количество уязвимостей
-        const vulnCount = session.realVulnerabilitiesCount || session.vulnerabilitiesCount || 0;
-
-        option1.value = session.sessionId;
-        option1.textContent = `${session.sessionName} (${sessionDate} ${sessionTime}) - ${vulnCount} уязвимостей`;
-
-        option2.value = session.sessionId;
-        option2.textContent = `${session.sessionName} (${sessionDate} ${sessionTime}) - ${vulnCount} уязвимостей`;
-
-        session1Select.appendChild(option1);
-        session2Select.appendChild(option2);
-    });
-}
     // Основной метод сравнения сессий
     async compareSessions() {
         const session1Id = document.getElementById('session1Select').value;
@@ -956,7 +991,7 @@ async populateSessionSelects(sessions) {
         }
 
         try {
-            this.showNotification('🔄 Сравниваю сессии...', 'info');
+            this.showNotification('Сравниваю сессии...', 'info');
 
             const response = await fetch(`/api/sessions/compare?session1=${session1Id}&session2=${session2Id}`);
             if (response.ok) {
@@ -980,7 +1015,7 @@ async populateSessionSelects(sessions) {
         // Прокрутка к результатам
         resultsContainer.scrollIntoView({ behavior: 'smooth' });
 
-        this.showNotification('✅ Сравнение завершено', 'success');
+        this.showNotification('Сравнение завершено', 'success');
     }
 
     // Генерация HTML для результатов сравнения
@@ -995,7 +1030,7 @@ async populateSessionSelects(sessions) {
 
         return `
             <div class="comparison-results">
-                <h4>📊 Результаты сравнения сессий сканирования</h4>
+                <h4>Результаты сравнения сессий сканирования</h4>
 
                 <!-- Сводная статистика -->
                 <div class="comparison-stats">
@@ -1048,7 +1083,7 @@ async populateSessionSelects(sessions) {
                 <!-- Новые уязвимости -->
                 ${comparison.newVulnerabilities && comparison.newVulnerabilities.length > 0 ? `
                 <div class="comparison-vulnerabilities">
-                    <h5>🆕 Новые уязвимости (${comparison.newCount})</h5>
+                    <h5>Новые уязвимости (${comparison.newCount})</h5>
                     <div class="vulnerability-change-list">
                         ${comparison.newVulnerabilities.map(vuln => `
                             <div class="vulnerability-change-item">
@@ -1068,7 +1103,7 @@ async populateSessionSelects(sessions) {
                 <!-- Исправленные уязвимости -->
                 ${comparison.fixedVulnerabilities && comparison.fixedVulnerabilities.length > 0 ? `
                 <div class="comparison-vulnerabilities">
-                    <h5>✅ Исправленные уязвимости (${comparison.fixedCount})</h5>
+                    <h5>Исправленные уязвимости (${comparison.fixedCount})</h5>
                     <div class="vulnerability-change-list">
                         ${comparison.fixedVulnerabilities.map(vuln => `
                             <div class="vulnerability-change-item">

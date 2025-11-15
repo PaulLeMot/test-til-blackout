@@ -48,6 +48,11 @@ class SecurityDashboard {
             this.exportToCsv();
         });
 
+        // НОВЫЙ ОБРАБОТЧИК ДЛЯ PDF
+        document.getElementById('exportPdf').addEventListener('click', () => {
+            this.exportToPdf();
+        });
+
         document.querySelector('.close').addEventListener('click', () => {
             this.closeModal();
         });
@@ -817,6 +822,36 @@ class SecurityDashboard {
         this.showNotification('Данные экспортированы в CSV', 'success');
     }
 
+    // НОВЫЙ МЕТОД ДЛЯ ЭКСПОРТА В PDF
+    exportToPdf() {
+        if (this.filteredData.length === 0) {
+            this.showNotification('Нет данных для экспорта', 'error');
+            return;
+        }
+
+        this.showNotification('Генерация PDF отчета...', 'info');
+
+        // Создаем URL с параметрами фильтров
+        const params = new URLSearchParams();
+        if (this.filters.severity) params.append('severity', this.filters.severity);
+        if (this.filters.category) params.append('category', this.filters.category);
+        if (this.filters.bank) params.append('bank', this.filters.bank);
+
+        const url = `/api/scan/export/pdf?${params.toString()}`;
+
+        // Создаем временную ссылку для скачивания
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `security_scan_${new Date().toISOString().split('T')[0]}.pdf`;
+        link.style.visibility = 'hidden';
+
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        this.showNotification('PDF отчет успешно сгенерирован', 'success');
+    }
+
     formatProof(text) {
         try {
             const obj = JSON.parse(text);
@@ -883,63 +918,63 @@ class SecurityDashboard {
     }
 
     // Заполнение выпадающих списков сессиями
-// Заполнение выпадающих списков сессиями
-async populateSessionSelects(sessions) {
-    const session1Select = document.getElementById('session1Select');
-    const session2Select = document.getElementById('session2Select');
+    async populateSessionSelects(sessions) {
+        const session1Select = document.getElementById('session1Select');
+        const session2Select = document.getElementById('session2Select');
 
-    // Очищаем существующие опции (кроме первой)
-    while (session1Select.children.length > 1) session1Select.removeChild(session1Select.lastChild);
-    while (session2Select.children.length > 1) session2Select.removeChild(session2Select.lastChild);
+        // Очищаем существующие опции (кроме первой)
+        while (session1Select.children.length > 1) session1Select.removeChild(session1Select.lastChild);
+        while (session2Select.children.length > 1) session2Select.removeChild(session2Select.lastChild);
 
-    // Сортируем сессии по дате (новые сначала)
-    sessions.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+        // Сортируем сессии по дате (новые сначала)
+        sessions.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
 
-    // Для каждой сессии получаем реальное количество уязвимостей
-    const sessionsWithRealCounts = await Promise.all(
-        sessions.map(async (session) => {
-            try {
-                const response = await fetch(`/api/scan/results?session=${session.sessionId}`);
-                if (response.ok) {
-                    const vulnerabilities = await response.json();
-                    return {
-                        ...session,
-                        realVulnerabilitiesCount: vulnerabilities.length
-                    };
+        // Для каждой сессии получаем реальное количество уязвимостей
+        const sessionsWithRealCounts = await Promise.all(
+            sessions.map(async (session) => {
+                try {
+                    const response = await fetch(`/api/scan/results?session=${session.sessionId}`);
+                    if (response.ok) {
+                        const vulnerabilities = await response.json();
+                        return {
+                            ...session,
+                            realVulnerabilitiesCount: vulnerabilities.length
+                        };
+                    }
+                } catch (error) {
+                    console.error(`Error getting vulnerabilities for session ${session.sessionId}:`, error);
                 }
-            } catch (error) {
-                console.error(`Error getting vulnerabilities for session ${session.sessionId}:`, error);
-            }
-            return {
-                ...session,
-                realVulnerabilitiesCount: session.vulnerabilitiesCount || 0
-            };
-        })
-    );
+                return {
+                    ...session,
+                    realVulnerabilitiesCount: session.vulnerabilitiesCount || 0
+                };
+            })
+        );
 
-    sessionsWithRealCounts.forEach(session => {
-        const option1 = document.createElement('option');
-        const option2 = document.createElement('option');
+        sessionsWithRealCounts.forEach(session => {
+            const option1 = document.createElement('option');
+            const option2 = document.createElement('option');
 
-        const sessionDate = new Date(session.startTime).toLocaleDateString('ru-RU');
-        const sessionTime = new Date(session.startTime).toLocaleTimeString('ru-RU', {
-            hour: '2-digit',
-            minute: '2-digit'
+            const sessionDate = new Date(session.startTime).toLocaleDateString('ru-RU');
+            const sessionTime = new Date(session.startTime).toLocaleTimeString('ru-RU', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            // Используем реальное количество уязвимостей
+            const vulnCount = session.realVulnerabilitiesCount || session.vulnerabilitiesCount || 0;
+
+            option1.value = session.sessionId;
+            option1.textContent = `${session.sessionName} (${sessionDate} ${sessionTime}) - ${vulnCount} уязвимостей`;
+
+            option2.value = session.sessionId;
+            option2.textContent = `${session.sessionName} (${sessionDate} ${sessionTime}) - ${vulnCount} уязвимостей`;
+
+            session1Select.appendChild(option1);
+            session2Select.appendChild(option2);
         });
+    }
 
-        // Используем реальное количество уязвимостей
-        const vulnCount = session.realVulnerabilitiesCount || session.vulnerabilitiesCount || 0;
-
-        option1.value = session.sessionId;
-        option1.textContent = `${session.sessionName} (${sessionDate} ${sessionTime}) - ${vulnCount} уязвимостей`;
-
-        option2.value = session.sessionId;
-        option2.textContent = `${session.sessionName} (${sessionDate} ${sessionTime}) - ${vulnCount} уязвимостей`;
-
-        session1Select.appendChild(option1);
-        session2Select.appendChild(option2);
-    });
-}
     // Основной метод сравнения сессий
     async compareSessions() {
         const session1Id = document.getElementById('session1Select').value;
