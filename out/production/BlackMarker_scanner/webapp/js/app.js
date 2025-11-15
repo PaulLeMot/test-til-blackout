@@ -11,6 +11,7 @@ class SecurityDashboard {
         };
         this.isScanning = false;
         this.lastDataCount = 0;
+        this.sessions = [];
         this.init();
     }
 
@@ -57,6 +58,19 @@ class SecurityDashboard {
             }
         });
 
+        // Новые обработчики для сравнения
+        document.getElementById('showComparison').addEventListener('click', () => {
+            this.showComparisonSection();
+        });
+
+        document.getElementById('compareSessions').addEventListener('click', () => {
+            this.compareSessions();
+        });
+
+        document.getElementById('closeComparison').addEventListener('click', () => {
+            this.hideComparisonSection();
+        });
+
         // Сохраняем состояние при закрытии страницы
         window.addEventListener('beforeunload', () => {
             this.saveState();
@@ -72,8 +86,41 @@ class SecurityDashboard {
             this.loadDefaultConfiguration();
         });
 
+        document.getElementById('clearDatabase').addEventListener('click', () => {
+            this.clearDatabase();
+        });
+
         // Загружаем сохраненные настройки при инициализации
         this.loadSavedConfiguration();
+    }
+
+    async clearDatabase() {
+        if (!confirm('Вы уверены, что хотите полностью очистить базу данных? Это действие нельзя отменить.')) {
+            return;
+        }
+
+        try {
+            this.showNotification('🔄 Очистка базы данных...', 'info');
+
+            const response = await fetch('/api/scan/clear', {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                this.showNotification('✅ База данных успешно очищена', 'success');
+                // Обновляем данные на странице
+                this.currentData = [];
+                this.filteredData = [];
+                this.currentPage = 1;
+                this.renderTable();
+                this.updateStats();
+            } else {
+                throw new Error('Server error');
+            }
+        } catch (error) {
+            console.error('Error clearing database:', error);
+            this.showNotification('❌ Ошибка при очистке базы данных', 'error');
+        }
     }
 
     saveConfiguration() {
@@ -220,7 +267,7 @@ class SecurityDashboard {
         }, 2000);
     }
 
-    // Добавляем метод для сохранения состояния
+    // Метод для сохранения состояния
     saveState() {
         const state = {
             filters: this.filters,
@@ -230,7 +277,7 @@ class SecurityDashboard {
         localStorage.setItem('dashboardState', JSON.stringify(state));
     }
 
-    // Добавляем метод для восстановления состояния
+    // Метод для восстановления состояния
     restoreState() {
         try {
             const saved = localStorage.getItem('dashboardState');
@@ -800,6 +847,312 @@ class SecurityDashboard {
             .replace(/>/g, "&gt;")
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#039;");
+    }
+
+    // Методы для сравнения сессий
+
+    // Метод для показа секции сравнения
+    async showComparisonSection() {
+        document.getElementById('comparisonSection').style.display = 'block';
+        document.querySelector('.dashboard').style.display = 'none';
+
+        await this.loadSessionsList();
+        this.showNotification('Выберите две сессии для сравнения', 'info');
+    }
+
+    // Метод для скрытия секции сравнения
+    hideComparisonSection() {
+        document.getElementById('comparisonSection').style.display = 'none';
+        document.querySelector('.dashboard').style.display = 'block';
+        document.getElementById('comparisonResults').style.display = 'none';
+    }
+
+    // Загрузка списка сессий
+    async loadSessionsList() {
+        try {
+            const response = await fetch('/api/sessions/list');
+            if (response.ok) {
+                const sessions = await response.json();
+                this.sessions = sessions;
+                this.populateSessionSelects(sessions);
+            }
+        } catch (error) {
+            console.error('Error loading sessions:', error);
+            this.showNotification('Ошибка загрузки списка сессий', 'error');
+        }
+    }
+
+    // Заполнение выпадающих списков сессиями
+// Заполнение выпадающих списков сессиями
+async populateSessionSelects(sessions) {
+    const session1Select = document.getElementById('session1Select');
+    const session2Select = document.getElementById('session2Select');
+
+    // Очищаем существующие опции (кроме первой)
+    while (session1Select.children.length > 1) session1Select.removeChild(session1Select.lastChild);
+    while (session2Select.children.length > 1) session2Select.removeChild(session2Select.lastChild);
+
+    // Сортируем сессии по дате (новые сначала)
+    sessions.sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+
+    // Для каждой сессии получаем реальное количество уязвимостей
+    const sessionsWithRealCounts = await Promise.all(
+        sessions.map(async (session) => {
+            try {
+                const response = await fetch(`/api/scan/results?session=${session.sessionId}`);
+                if (response.ok) {
+                    const vulnerabilities = await response.json();
+                    return {
+                        ...session,
+                        realVulnerabilitiesCount: vulnerabilities.length
+                    };
+                }
+            } catch (error) {
+                console.error(`Error getting vulnerabilities for session ${session.sessionId}:`, error);
+            }
+            return {
+                ...session,
+                realVulnerabilitiesCount: session.vulnerabilitiesCount || 0
+            };
+        })
+    );
+
+    sessionsWithRealCounts.forEach(session => {
+        const option1 = document.createElement('option');
+        const option2 = document.createElement('option');
+
+        const sessionDate = new Date(session.startTime).toLocaleDateString('ru-RU');
+        const sessionTime = new Date(session.startTime).toLocaleTimeString('ru-RU', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        // Используем реальное количество уязвимостей
+        const vulnCount = session.realVulnerabilitiesCount || session.vulnerabilitiesCount || 0;
+
+        option1.value = session.sessionId;
+        option1.textContent = `${session.sessionName} (${sessionDate} ${sessionTime}) - ${vulnCount} уязвимостей`;
+
+        option2.value = session.sessionId;
+        option2.textContent = `${session.sessionName} (${sessionDate} ${sessionTime}) - ${vulnCount} уязвимостей`;
+
+        session1Select.appendChild(option1);
+        session2Select.appendChild(option2);
+    });
+}
+    // Основной метод сравнения сессий
+    async compareSessions() {
+        const session1Id = document.getElementById('session1Select').value;
+        const session2Id = document.getElementById('session2Select').value;
+
+        if (!session1Id || !session2Id) {
+            this.showNotification('Выберите обе сессии для сравнения', 'error');
+            return;
+        }
+
+        if (session1Id === session2Id) {
+            this.showNotification('Выберите разные сессии для сравнения', 'error');
+            return;
+        }
+
+        try {
+            this.showNotification('🔄 Сравниваю сессии...', 'info');
+
+            const response = await fetch(`/api/sessions/compare?session1=${session1Id}&session2=${session2Id}`);
+            if (response.ok) {
+                const comparisonData = await response.json();
+                this.displayComparisonResults(comparisonData, session1Id, session2Id);
+            } else {
+                throw new Error('Server error');
+            }
+        } catch (error) {
+            console.error('Error comparing sessions:', error);
+            this.showNotification('Ошибка при сравнении сессий', 'error');
+        }
+    }
+
+    // Отображение результатов сравнения
+    displayComparisonResults(comparison, session1Id, session2Id) {
+        const resultsContainer = document.getElementById('comparisonResults');
+        resultsContainer.style.display = 'block';
+        resultsContainer.innerHTML = this.generateComparisonHTML(comparison, session1Id, session2Id);
+
+        // Прокрутка к результатам
+        resultsContainer.scrollIntoView({ behavior: 'smooth' });
+
+        this.showNotification('✅ Сравнение завершено', 'success');
+    }
+
+    // Генерация HTML для результатов сравнения
+    generateComparisonHTML(comparison, session1Id, session2Id) {
+        const session1Name = document.getElementById('session1Select').selectedOptions[0].text;
+        const session2Name = document.getElementById('session2Select').selectedOptions[0].text;
+
+        // Вычисляем общее количество уязвимостей для каждой сессии
+        const session1Total = Object.values(comparison.session1Stats || {}).reduce((sum, val) => sum + val, 0);
+        const session2Total = Object.values(comparison.session2Stats || {}).reduce((sum, val) => sum + val, 0);
+        const totalDiff = session2Total - session1Total;
+
+        return `
+            <div class="comparison-results">
+                <h4>📊 Результаты сравнения сессий сканирования</h4>
+
+                <!-- Сводная статистика -->
+                <div class="comparison-stats">
+                    <div class="comparison-stat-card">
+                        <div class="comparison-stat-label">Новые уязвимости</div>
+                        <div class="comparison-stat-value comparison-diff-positive">+${comparison.newCount || 0}</div>
+                        <div>Появились во второй сессии</div>
+                    </div>
+
+                    <div class="comparison-stat-card">
+                        <div class="comparison-stat-label">Исправленные уязвимости</div>
+                        <div class="comparison-stat-value comparison-diff-negative">-${comparison.fixedCount || 0}</div>
+                        <div>Устранены во второй сессии</div>
+                    </div>
+
+                    <div class="comparison-stat-card">
+                        <div class="comparison-stat-label">Критические уязвимости</div>
+                        <div class="comparison-stat-value ${this.getDiffClass((comparison.session2Stats?.CRITICAL || 0) - (comparison.session1Stats?.CRITICAL || 0))}">
+                            ${this.formatDiff((comparison.session2Stats?.CRITICAL || 0) - (comparison.session1Stats?.CRITICAL || 0))}
+                        </div>
+                        <div>${comparison.session1Stats?.CRITICAL || 0} → ${comparison.session2Stats?.CRITICAL || 0}</div>
+                    </div>
+
+                    <div class="comparison-stat-card">
+                        <div class="comparison-stat-label">Общее изменение</div>
+                        <div class="comparison-stat-value ${this.getDiffClass(totalDiff)}">
+                            ${this.formatDiff(totalDiff)}
+                        </div>
+                        <div>${session1Total} → ${session2Total}</div>
+                    </div>
+                </div>
+
+                <!-- Графики сравнения -->
+                <div class="comparison-charts">
+                    <div class="chart-wrapper">
+                        <h5>${this.shortenSessionName(session1Name)}</h5>
+                        <div class="chart">
+                            ${this.generateSeverityComparisonChart(comparison.session1Stats)}
+                        </div>
+                    </div>
+
+                    <div class="chart-wrapper">
+                        <h5>${this.shortenSessionName(session2Name)}</h5>
+                        <div class="chart">
+                            ${this.generateSeverityComparisonChart(comparison.session2Stats)}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Новые уязвимости -->
+                ${comparison.newVulnerabilities && comparison.newVulnerabilities.length > 0 ? `
+                <div class="comparison-vulnerabilities">
+                    <h5>🆕 Новые уязвимости (${comparison.newCount})</h5>
+                    <div class="vulnerability-change-list">
+                        ${comparison.newVulnerabilities.map(vuln => `
+                            <div class="vulnerability-change-item">
+                                <div class="vulnerability-change-info">
+                                    <div class="vulnerability-change-title">${this.escapeHtml(vuln.vulnerabilityTitle)}</div>
+                                    <div class="vulnerability-change-meta">
+                                        ${this.escapeHtml(vuln.bankName)} • ${vuln.category} • ${vuln.severity} • ${new Date(vuln.scanDate).toLocaleDateString('ru-RU')}
+                                    </div>
+                                </div>
+                                <span class="change-badge change-new">НОВАЯ</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : ''}
+
+                <!-- Исправленные уязвимости -->
+                ${comparison.fixedVulnerabilities && comparison.fixedVulnerabilities.length > 0 ? `
+                <div class="comparison-vulnerabilities">
+                    <h5>✅ Исправленные уязвимости (${comparison.fixedCount})</h5>
+                    <div class="vulnerability-change-list">
+                        ${comparison.fixedVulnerabilities.map(vuln => `
+                            <div class="vulnerability-change-item">
+                                <div class="vulnerability-change-info">
+                                    <div class="vulnerability-change-title">${this.escapeHtml(vuln.vulnerabilityTitle)}</div>
+                                    <div class="vulnerability-change-meta">
+                                        ${this.escapeHtml(vuln.bankName)} • ${vuln.category} • ${vuln.severity} • ${new Date(vuln.scanDate).toLocaleDateString('ru-RU')}
+                                    </div>
+                                </div>
+                                <span class="change-badge change-fixed">ИСПРАВЛЕНА</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : ''}
+
+                ${(!comparison.newVulnerabilities || comparison.newVulnerabilities.length === 0) &&
+                  (!comparison.fixedVulnerabilities || comparison.fixedVulnerabilities.length === 0) ? `
+                    <div class="no-data" style="text-align: center; padding: 2rem;">
+                        Нет изменений между выбранными сессиями
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    // Вспомогательные методы для сравнения
+    shortenSessionName(fullName) {
+        return fullName.length > 50 ? fullName.substring(0, 50) + '...' : fullName;
+    }
+
+    getDiffClass(diff) {
+        if (diff > 0) return 'comparison-diff-positive';
+        if (diff < 0) return 'comparison-diff-negative';
+        return 'comparison-diff-neutral';
+    }
+
+    formatDiff(diff) {
+        if (diff > 0) return `+${diff}`;
+        if (diff < 0) return `${diff}`;
+        return '0';
+    }
+
+    generateSeverityComparisonChart(stats) {
+        if (!stats || Object.keys(stats).length === 0) {
+            return '<div class="chart-placeholder">Нет данных</div>';
+        }
+
+        const total = Object.values(stats).reduce((sum, val) => sum + val, 0) || 1;
+        const severities = [
+            { label: 'Критические', key: 'CRITICAL', color: '#ef4444' },
+            { label: 'Высокие', key: 'HIGH', color: '#f59e0b' },
+            { label: 'Средние', key: 'MEDIUM', color: '#eab308' },
+            { label: 'Низкие', key: 'LOW', color: '#10b981' }
+        ];
+
+        const chartData = severities
+            .map(sev => ({
+                ...sev,
+                value: stats[sev.key] || 0,
+                percent: ((stats[sev.key] || 0) / total * 100)
+            }))
+            .filter(item => item.value > 0);
+
+        if (chartData.length === 0) {
+            return '<div class="chart-placeholder">Нет данных</div>';
+        }
+
+        return `
+            <div class="simple-chart">
+                ${chartData.map(item => `
+                    <div class="chart-item">
+                        <div class="chart-bar-container">
+                            <div class="chart-bar" style="width: ${item.percent}%; background: ${item.color};"></div>
+                            <span class="chart-value">${item.value}</span>
+                        </div>
+                        <div class="chart-label">
+                            <span class="chart-color" style="background: ${item.color}"></span>
+                            ${item.label} (${item.percent.toFixed(1)}%)
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
     }
 }
 

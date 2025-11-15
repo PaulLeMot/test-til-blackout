@@ -34,6 +34,7 @@ services:
       DB_SUPER_PASSWORD: admin
     ports:
       - "8081:8081"
+      - "8082:8081"  # добавим второй порт на всякий случай
     depends_on:
       postgres:
         condition: service_healthy
