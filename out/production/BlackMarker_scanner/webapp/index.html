@@ -20,6 +20,7 @@
                 <button id="startScanBtn" class="btn btn-primary">
                     🚀 Запустить сканирование
                 </button>
+                <button id="showComparison" class="btn btn-secondary">📊 Сравнить сканирования</button>
                 <div class="connection-status">
                     <span id="connectionStatus" class="status-offline">● Offline</span>
                 </div>
@@ -245,6 +246,39 @@
             </div>
         </section>
     </main>
+
+    <!-- Comparison -->
+    <section id="comparisonSection" class="config-section" style="display: none;">
+        <div class="config-panel">
+            <h3>📊 Сравнение сканирований</h3>
+
+            <div class="comparison-controls">
+                <div class="comparison-selectors">
+                    <div class="input-group">
+                        <label>Первая сессия:</label>
+                        <select id="session1Select" class="config-input">
+                            <option value="">Выберите сессию...</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Вторая сессия:</label>
+                        <select id="session2Select" class="config-input">
+                            <option value="">Выберите сессию...</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="comparison-actions">
+                    <button id="compareSessions" class="btn btn-primary">Сравнить сессии</button>
+                    <button id="closeComparison" class="btn btn-outline">Закрыть</button>
+                </div>
+            </div>
+
+            <div id="comparisonResults" style="display: none;">
+                <!-- Результаты сравнения будут здесь -->
+            </div>
+        </div>
+    </section>
 
     <!-- Real-time notifications -->
     <div id="notifications" class="notifications"></div>

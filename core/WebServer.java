@@ -175,7 +175,11 @@ public class WebServer {
         public void handle(HttpExchange exchange) throws IOException {
             if ("GET".equals(exchange.getRequestMethod())) {
                 String query = exchange.getRequestURI().getQuery();
-                String severityFilter = null, categoryFilter = null, bankFilter = null;
+                // Объявляем переменные в начале метода
+                String severityFilter = null;
+                String categoryFilter = null;
+                String bankFilter = null;
+                String sessionFilter = null; // Добавляем sessionFilter
 
                 if (query != null) {
                     for (String pair : query.split("&")) {
@@ -185,15 +189,28 @@ public class WebServer {
                             String value = URLDecoder.decode(keyValue[1], StandardCharsets.UTF_8);
 
                             switch (key) {
-                                case "severity": severityFilter = value; break;
-                                case "category": categoryFilter = value; break;
-                                case "bank": bankFilter = value; break;
+                                case "severity":
+                                    severityFilter = value;
+                                    break;
+                                case "category":
+                                    categoryFilter = value;
+                                    break;
+                                case "bank":
+                                    bankFilter = value;
+                                    break;
+                                case "session":
+                                    sessionFilter = value; // Устанавливаем значение
+                                    break;
                             }
                         }
                     }
                 }
 
-                List<Map<String, Object>> results = databaseManager.getScanResults(severityFilter, categoryFilter, bankFilter);
+                // Теперь sessionFilter доступна здесь, даже если query был null
+                List<Map<String, Object>> results = databaseManager.getScanResults(
+                        severityFilter, categoryFilter, bankFilter, sessionFilter
+                );
+
                 String response = convertResultsToJson(results);
 
                 exchange.getResponseHeaders().set("Content-Type", "application/json");

@@ -301,15 +301,15 @@ public class PostgresManager {
         }
     }
 
-    public List<Map<String, Object>> getScanResults(String severityFilter, String categoryFilter, String bankFilter) {
+    public List<Map<String, Object>> getScanResults(String severityFilter, String categoryFilter, String bankFilter, String sessionFilter) {
         List<Map<String, Object>> results = new ArrayList<>();
 
         StringBuilder sql = new StringBuilder("""
-            SELECT id, bank_name, vulnerability_title, severity, category, 
-                   status_code, proof, recommendation, scanner_name, scan_date, scan_session_id
-            FROM scan_results 
-            WHERE 1=1
-        """);
+        SELECT id, bank_name, vulnerability_title, severity, category, 
+               status_code, proof, recommendation, scanner_name, scan_date, scan_session_id
+        FROM scan_results 
+        WHERE 1=1
+    """);
 
         if (severityFilter != null && !severityFilter.isEmpty()) {
             sql.append(" AND severity = ?");
@@ -319,6 +319,9 @@ public class PostgresManager {
         }
         if (bankFilter != null && !bankFilter.isEmpty()) {
             sql.append(" AND bank_name = ?");
+        }
+        if (sessionFilter != null && !sessionFilter.isEmpty()) {
+            sql.append(" AND scan_session_id = ?");
         }
 
         sql.append(" ORDER BY scan_date DESC");
@@ -332,7 +335,10 @@ public class PostgresManager {
                 pstmt.setString(paramIndex++, categoryFilter);
             }
             if (bankFilter != null && !bankFilter.isEmpty()) {
-                pstmt.setString(paramIndex, bankFilter);
+                pstmt.setString(paramIndex++, bankFilter);
+            }
+            if (sessionFilter != null && !sessionFilter.isEmpty()) {
+                pstmt.setString(paramIndex, sessionFilter);
             }
 
             ResultSet rs = pstmt.executeQuery();
