@@ -1,0 +1,15 @@
+{
+  "bankId": "team172",
+  "banks": [
+    {
+      "baseUrl": "https://vbank.open.bankingapi.ru",
+      "specUrl": "https://vbank.open.bankingapi.ru/openapi.jsonn"
+    }
+  ],
+  "credentials": [
+    {
+      "username": "team172-1",
+      "password": "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY"
+    }
+  ]
+}

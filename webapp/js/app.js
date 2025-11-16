@@ -130,6 +130,7 @@ class SecurityDashboard {
 
     saveConfiguration() {
         const config = {
+            bankId: document.getElementById('bankId').value.trim(), // добавляем bankId
             banks: [
                 {
                     baseUrl: document.getElementById('bank1Url').value.trim(),
@@ -180,6 +181,7 @@ class SecurityDashboard {
 
     loadDefaultConfiguration() {
         const defaultConfig = {
+            bankId: "team172", // добавляем bankId по умолчанию
             banks: [
                 {
                     baseUrl: "https://vbank.open.bankingapi.ru",
@@ -211,6 +213,9 @@ class SecurityDashboard {
     }
 
     applyConfiguration(config) {
+        // Устанавливаем bankId
+        document.getElementById('bankId').value = config.bankId || 'team172';
+
         // Применяем настройки к форме
         config.banks.forEach((bank, index) => {
             document.getElementById(`bank${index + 1}Url`).value = bank.baseUrl;
@@ -224,6 +229,12 @@ class SecurityDashboard {
     }
 
     validateConfiguration(config) {
+        // Проверяем bankId
+        if (!config.bankId || config.bankId.trim() === '') {
+            this.showNotification('Введите Bank ID (Team ID)', 'error');
+            return false;
+        }
+
         // Проверяем URL банков
         for (let bank of config.banks) {
             if (!bank.baseUrl || !bank.specUrl) {
