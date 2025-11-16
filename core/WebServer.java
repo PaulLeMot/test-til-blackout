@@ -24,6 +24,7 @@ public class WebServer {
     private PostgresManager databaseManager;
     private final Set<WebSocketConnection> webSocketConnections = new CopyOnWriteArraySet<>();
     private ScanLauncher scanLauncher;
+    private ApiController apiController; // ДОБАВЛЕНО: ApiController для CI/CD
 
     public WebServer(int port) {
         this.port = port;
@@ -37,6 +38,12 @@ public class WebServer {
     public void start() throws IOException {
         server = HttpServer.create(new InetSocketAddress(port), 0);
 
+        // ДОБАВЛЕНО: Инициализация ApiController
+        this.apiController = new ApiController(
+                new ScannerService(this, databaseManager),
+                databaseManager
+        );
+
         // Статические файлы из папки webapp
         server.createContext("/", new StaticFileHandler());
 
@@ -45,15 +52,24 @@ public class WebServer {
         server.createContext("/api/scan/results", new ScanResultsHandler());
         server.createContext("/api/scan/stats", new ScanStatsHandler());
         server.createContext("/api/scan/clear", new ClearResultsHandler());
-        server.createContext("/api/scan/export/pdf", new ExportPdfHandler()); // Новый endpoint для PDF
+        server.createContext("/api/scan/export/pdf", new ExportPdfHandler());
 
         // Новые endpoints для работы с сессиями
         server.createContext("/api/sessions/list", new SessionsListHandler());
         server.createContext("/api/sessions/compare", new SessionsCompareHandler());
 
+        // ДОБАВЛЕНО: API endpoints для CI/CD интеграции
+        server.createContext("/api/v1/scan", apiController.createScanHandler());
+        server.createContext("/api/v1/status", apiController.createStatusHandler());
+        server.createContext("/api/v1/results", apiController.createResultsHandler());
+
         server.setExecutor(null);
         server.start();
         System.out.println("✅ Web server started on http://localhost:" + port);
+        System.out.println("🔌 API endpoints available:");
+        System.out.println("   - POST /api/v1/scan     - Start security scan");
+        System.out.println("   - GET  /api/v1/status   - Check scan status");
+        System.out.println("   - GET  /api/v1/results  - Get scan results");
     }
 
     public void stop() {

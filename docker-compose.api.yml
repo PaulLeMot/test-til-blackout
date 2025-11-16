@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: security_scanner_db
+    environment:
+      POSTGRES_DB: security_scanner
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - security-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d security_scanner"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  security-scanner-api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: security_scanner_api
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: security_scanner
+      DB_USER: admin
+      DB_PASSWORD: admin
+      DB_SUPER_USER: postgres
+      DB_SUPER_PASSWORD: admin
+      SCANNER_MODE: "API"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+      - ./configs:/app/configs
+    networks:
+      - security-network
+    restart: unless-stopped
+    command: ["java", "-cp", ".:libs/*", "core.CLI", "--config", "/app/configs/api_config.json"]
+
+volumes:
+  postgres_data:
+
+networks:
+  security-network:
+    driver: bridge
