@@ -1,0 +1,107 @@
+name: black Marker scanner
+
+#Если настроены секреты в настройках репозитория
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * *'  # Каждый день в 2:00
+  workflow_dispatch:  # Ручной запуск
+
+# on: [workflow_dispatch]  # <-Только ручной запуск
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: security_scanner
+          POSTGRES_USER: admin
+          POSTGRES_PASSWORD: admin
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup project structure
+        run: |
+          mkdir -p logs
+          mkdir -p webapp
+          # Копируем веб-интерфейс если нужно
+          cp -r src/main/webapp/* webapp/ || true
+
+      - name: Compile project
+        run: |
+          find . -name "*.java" > sources.txt
+          javac -cp "lib/*" -d build @sources.txt
+
+      - name: Create scan configuration
+        run: |
+          mkdir -p configs
+          cat > configs/ci_scan.json << EOF
+          {
+            "bankId": "${{ secrets.BANK_ID }}",
+            "banks": [
+              {
+                "baseUrl": "${{ secrets.SCAN_BASE_URL }}",
+                "specUrl": "${{ secrets.SCAN_SPEC_URL }}"
+              }
+            ],
+            "credentials": [
+              {
+                "username": "${{ secrets.SCAN_USERNAME }}",
+                "password": "${{ secrets.SCAN_PASSWORD }}"
+              }
+            ]
+          }
+          EOF
+
+      - name: Run security scan
+        run: |
+          cd build
+          java -cp ".:../lib/*" core.CLI \
+            --config ../configs/ci_scan.json \
+            --output scan_report \
+            --format json \
+            --fail-on HIGH \
+            --timeout 1800
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: security_scanner
+          DB_USER: admin
+          DB_PASSWORD: admin
+
+      - name: Upload scan report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-scan-report
+          path: build/scan_report.json
+          retention-days: 30
+
+      - name: Check scan results
+        if: always()
+        run: |
+          if [ -f build/scan_report.json ]; then
+            echo "Scan completed. Report saved as artifact."
+          else
+            echo "Scan failed or no report generated"
+          fi
