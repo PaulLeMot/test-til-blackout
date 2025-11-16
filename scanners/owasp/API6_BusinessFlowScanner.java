@@ -38,18 +38,18 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         this.config = config;
         this.testParameters = initializeTestParameters();
 
-        System.out.println("(API-6) 🚀 Запуск сканирования Unrestricted Access to Sensitive Business Flows...");
+        System.out.println("(API-6) Запуск сканирования Unrestricted Access to Sensitive Business Flows...");
         List<Vulnerability> vulnerabilities = new ArrayList<>();
 
         // ПРОВЕРЯЕМ, ЧТО OPENAPI ОБЪЕКТ ДОСТУПЕН
         if (openApiObj == null) {
-            System.out.println("(API-6) ⚠️ OpenAPI спецификация недоступна, выполняется базовое сканирование бизнес-процессов");
+            System.out.println("(API-6) OpenAPI спецификация недоступна, выполняется базовое сканирование бизнес-процессов");
             // Выполняем базовое сканирование без OpenAPI спецификации
             return performBasicBusinessFlowScan(config, apiClient);
         }
 
         if (!(openApiObj instanceof OpenAPI)) {
-            System.err.println("(API-6) ❌ Ошибка: передан не OpenAPI объект, выполняется базовое сканирование");
+            System.err.println("(API-6) Ошибка: передан не OpenAPI объект, выполняется базовое сканирование");
             return performBasicBusinessFlowScan(config, apiClient);
         }
 
@@ -58,74 +58,74 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
         try {
             // Используем AuthManager для получения токенов
-            System.out.println("(API-6) 🔑 Получение токенов через AuthManager...");
+            System.out.println("(API-6) Получение токенов через AuthManager...");
             Map<String, String> tokens = AuthManager.getTokensForScanning(config);
 
             if (tokens.isEmpty()) {
-                System.err.println("(API-6) ❌ Не удалось получить токены");
+                System.err.println("(API-6) Не удалось получить токены");
                 return vulnerabilities;
             }
 
-            System.out.println("(API-6) ✅ Получено токенов: " + tokens.size());
+            System.out.println("(API-6) Получено токенов: " + tokens.size());
 
             // Проверяем права доступа токенов
             String token = tokens.get("bank_token");
             if (token == null) {
                 // Если нет банковского токена, берем первый доступный
                 token = tokens.values().iterator().next();
-                System.out.println("(API-6) ⚠️ Используется клиентский токен (банковский не найден)");
+                System.out.println("(API-6) Используется клиентский токен (банковский не найден)");
             } else {
-                System.out.println("(API-6) ✅ Используется банковский токен");
+                System.out.println("(API-6) Используется банковский токен");
             }
 
             // Проверяем права доступа токена
             if (!checkTokenPermissions(baseUrl, token, apiClient)) {
-                System.err.println("(API-6) ❌ Токен не имеет достаточных прав доступа");
+                System.err.println("(API-6) Токен не имеет достаточных прав доступа");
                 // Продолжаем сканирование, но логируем проблему
             }
 
             // Создаем необходимые согласия перед тестированием
-            System.out.println("(API-6) 📋 Создание необходимых согласий...");
+            System.out.println("(API-6) Создание необходимых согласий...");
             Map<String, String> consents = createNecessaryConsents(baseUrl, tokens, apiClient);
 
             // 1. Идентификация ключевых бизнес-процессов из OpenAPI
-            System.out.println("(API-6) 🔍 Идентификация бизнес-процессов из OpenAPI спецификации...");
+            System.out.println("(API-6) Идентификация бизнес-процессов из OpenAPI спецификации...");
             Map<String, BusinessFlowEndpoint> businessEndpoints = identifyBusinessEndpointsFromSpec(openAPI);
 
             if (businessEndpoints.isEmpty()) {
-                System.out.println("(API-6) ⚠️ Бизнес-процессы не идентифицированы, выполняется базовое сканирование");
+                System.out.println("(API-6) Бизнес-процессы не идентифицированы, выполняется базовое сканирование");
                 vulnerabilities.addAll(performBasicBusinessFlowScan(config, apiClient));
                 return vulnerabilities;
             }
 
-            System.out.println("(API-6) ✅ Найдено бизнес-процессов: " + businessEndpoints.size());
+            System.out.println("(API-6) Найдено бизнес-процессов: " + businessEndpoints.size());
 
             // 2. Тестирование возможности автоматизации (с согласиями)
-            System.out.println("(API-6) ⚡ Тестирование автоматизации операций...");
+            System.out.println("(API-6) Тестирование автоматизации операций...");
             testAutomationCapabilities(baseUrl, token, consents, apiClient, businessEndpoints, vulnerabilities);
 
             // 3. Проверка ограничений на частоту
-            System.out.println("(API-6) 📊 Проверка ограничений частоты...");
+            System.out.println("(API-6) Проверка ограничений частоты...");
             testRateLimiting(baseUrl, token, consents, apiClient, businessEndpoints, vulnerabilities);
 
             // 4. Анализ защиты от автоматизации
-            System.out.println("(API-6) 🛡️ Анализ защиты от автоматизации...");
+            System.out.println("(API-6) Анализ защиты от автоматизации...");
             testAutomationProtection(baseUrl, token, consents, apiClient, businessEndpoints, vulnerabilities);
 
             // 5. Тестирование обходов бизнес-логики
-            System.out.println("(API-6) 🔄 Тестирование обходов бизнес-логики...");
+            System.out.println("(API-6) Тестирование обходов бизнес-логики...");
             testBusinessLogicBypass(baseUrl, token, consents, apiClient, businessEndpoints, vulnerabilities);
 
             // 6. Проверка целостности бизнес-процессов
-            System.out.println("(API-6) 🔗 Проверка целостности процессов...");
+            System.out.println("(API-6) Проверка целостности процессов...");
             testProcessIntegrity(baseUrl, token, consents, apiClient, businessEndpoints, vulnerabilities);
 
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка в Business Flow сканере: " + e.getMessage());
+            System.err.println("(API-6) Ошибка в Business Flow сканере: " + e.getMessage());
             e.printStackTrace();
         }
 
-        System.out.println("(API-6) ✅ Business Flow сканирование завершено. Найдено уязвимостей: " + vulnerabilities.size());
+        System.out.println("(API-6) Business Flow сканирование завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
     }
 
@@ -137,11 +137,11 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         String baseUrl = config.getTargetBaseUrl();
 
         try {
-            System.out.println("(API-6) 🔑 Получение токенов через AuthManager...");
+            System.out.println("(API-6) Получение токенов через AuthManager...");
             Map<String, String> tokens = AuthManager.getTokensForScanning(config);
 
             if (tokens.isEmpty()) {
-                System.err.println("(API-6) ❌ Не удалось получить токены");
+                System.err.println("(API-6) Не удалось получить токены");
                 return vulnerabilities;
             }
 
@@ -156,7 +156,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             vulnerabilities.addAll(testBusinessLogicBypassBasic(baseUrl, token, apiClient));
 
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка в базовом сканировании: " + e.getMessage());
+            System.err.println("(API-6) Ошибка в базовом сканировании: " + e.getMessage());
         }
 
         return vulnerabilities;
@@ -182,7 +182,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             Map<String, String> headers = createAuthHeaders(token);
 
             for (String endpoint : businessEndpoints) {
-                System.out.println("(API-6) 🧪 Тестирование бизнес-эндпоинта: " + endpoint);
+                System.out.println("(API-6) Тестирование бизнес-эндпоинта: " + endpoint);
 
                 // Тестируем доступность эндпоинта
                 Object response = apiClient.executeRequest("GET", baseUrl + endpoint, null, headers);
@@ -192,7 +192,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 }
             }
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка тестирования бизнес-эндпоинтов: " + e.getMessage());
+            System.err.println("(API-6) Ошибка тестирования бизнес-эндпоинтов: " + e.getMessage());
         }
 
         return vulnerabilities;
@@ -232,7 +232,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 vulnerabilities.add(vuln);
             }
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка тестирования автоматизации: " + e.getMessage());
+            System.err.println("(API-6) Ошибка тестирования автоматизации: " + e.getMessage());
         }
 
         return vulnerabilities;
@@ -265,7 +265,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             String[] criticalEndpoints = {"/payments", "/payment-consents/request"};
 
             for (String endpoint : criticalEndpoints) {
-                System.out.println("(API-6) 📈 Базовый тест rate limiting для: " + endpoint);
+                System.out.println("(API-6) Базовый тест rate limiting для: " + endpoint);
 
                 List<Integer> responseCodes = new ArrayList<>();
                 for (int i = 0; i < 5; i++) {
@@ -294,7 +294,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 }
             }
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка базового тестирования rate limiting: " + e.getMessage());
+            System.err.println("(API-6) Ошибка базового тестирования rate limiting: " + e.getMessage());
         }
 
         return vulnerabilities;
@@ -322,7 +322,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             }
 
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка базового тестирования бизнес-логики: " + e.getMessage());
+            System.err.println("(API-6) Ошибка базового тестирования бизнес-логики: " + e.getMessage());
         }
 
         return vulnerabilities;
@@ -360,10 +360,10 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             if (response instanceof core.HttpApiClient.ApiResponse) {
                 core.HttpApiClient.ApiResponse apiResponse = (core.HttpApiClient.ApiResponse) response;
                 if (apiResponse.getStatusCode() == 200) {
-                    System.out.println("(API-6) ✅ Токен имеет достаточные права доступа");
+                    System.out.println("(API-6) Токен имеет достаточные права доступа");
                     return true;
                 } else {
-                    System.out.println("(API-6) ❌ Токен не имеет прав доступа: " + apiResponse.getStatusCode());
+                    System.out.println("(API-6) Токен не имеет прав доступа: " + apiResponse.getStatusCode());
                     // Анализируем тело ответа для лучшей диагностики
                     if (apiResponse.getBody() != null) {
                         String bodyPreview = apiResponse.getBody().length() > 200 ?
@@ -378,7 +378,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 }
             }
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка проверки прав токена: " + e.getMessage());
+            System.err.println("(API-6) Ошибка проверки прав токена: " + e.getMessage());
         }
         return false;
     }
@@ -393,7 +393,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         try {
             String token = tokens.get("bank_token");
             if (token == null) {
-                System.out.println("(API-6) ⚠️ Bank token не найден, пропускаем создание согласий");
+                System.out.println("(API-6) Bank token не найден, пропускаем создание согласий");
                 return consents;
             }
 
@@ -415,9 +415,9 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             String accountConsentId = extractConsentIdFromResponse(extractResponseBody(accountResponse), mapper);
             if (accountConsentId != null) {
                 consents.put("account_consent", accountConsentId);
-                System.out.println("(API-6) ✅ Account consent создан: " + accountConsentId);
+                System.out.println("(API-6) Account consent создан: " + accountConsentId);
             } else {
-                System.out.println("(API-6) ❌ Не удалось создать account consent");
+                System.out.println("(API-6) Не удалось создать account consent");
                 logResponseDetails(accountResponse);
             }
 
@@ -432,21 +432,21 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             String paymentConsentStr = mapper.writeValueAsString(paymentConsentPayload);
 
-            System.out.println("(API-6) 💳 Создание payment consent...");
+            System.out.println("(API-6) Создание payment consent...");
             Object paymentResponse = apiClient.executeRequest("POST",
                     baseUrl + "/payment-consents/request", paymentConsentStr, headers);
 
             String paymentConsentId = extractConsentIdFromResponse(extractResponseBody(paymentResponse), mapper);
             if (paymentConsentId != null) {
                 consents.put("payment_consent", paymentConsentId);
-                System.out.println("(API-6) ✅ Payment consent создан: " + paymentConsentId);
+                System.out.println("(API-6) Payment consent создан: " + paymentConsentId);
             } else {
-                System.out.println("(API-6) ❌ Не удалось создать payment consent");
+                System.out.println("(API-6) Не удалось создать payment consent");
                 logResponseDetails(paymentResponse);
             }
 
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка создания согласий: " + e.getMessage());
+            System.err.println("(API-6) Ошибка создания согласий: " + e.getMessage());
         }
 
         return consents;
@@ -456,15 +456,15 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         try {
             if (response instanceof core.HttpApiClient.ApiResponse) {
                 core.HttpApiClient.ApiResponse apiResponse = (core.HttpApiClient.ApiResponse) response;
-                System.out.println("(API-6) 📊 Статус код: " + apiResponse.getStatusCode());
+                System.out.println("(API-6) Статус код: " + apiResponse.getStatusCode());
                 if (apiResponse.getBody() != null) {
                     String body = apiResponse.getBody();
-                    System.out.println("(API-6) 📄 Тело ответа: " +
+                    System.out.println("(API-6) Тело ответа: " +
                             (body.length() > 500 ? body.substring(0, 500) + "..." : body));
                 }
             }
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка логирования ответа: " + e.getMessage());
+            System.err.println("(API-6) Ошибка логирования ответа: " + e.getMessage());
         }
     }
 
@@ -474,7 +474,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             // Проверяем, не является ли ответ HTML страницей с ошибкой
             if (responseBody.trim().startsWith("<")) {
-                System.out.println("(API-6) ⚠️ Получен HTML ответ вместо JSON");
+                System.out.println("(API-6) Получен HTML ответ вместо JSON");
                 return null;
             }
 
@@ -487,11 +487,11 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 return json.get("data").get("consentId").asText();
             }
             if (json.has("status")) {
-                System.out.println("(API-6) 📊 Статус согласия: " + json.get("status").asText());
+                System.out.println("(API-6) Статус согласия: " + json.get("status").asText());
             }
 
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка извлечения consent ID: " + e.getMessage());
+            System.err.println("(API-6) Ошибка извлечения consent ID: " + e.getMessage());
         }
         return null;
     }
@@ -504,11 +504,11 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         Map<String, PathItem> paths = openAPI.getPaths();
 
         if (paths == null) {
-            System.err.println("(API-6) ❌ В OpenAPI спецификации не найдены пути");
+            System.err.println("(API-6) В OpenAPI спецификации не найдены пути");
             return businessEndpoints;
         }
 
-        System.out.println("(API-6) 📁 Анализ путей API: " + paths.size());
+        System.out.println("(API-6) Анализ путей API: " + paths.size());
 
         for (Map.Entry<String, PathItem> pathEntry : paths.entrySet()) {
             String path = pathEntry.getKey();
@@ -516,7 +516,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             // Пропускаем технические эндпоинты
             if (isTechnicalEndpoint(path)) {
-                System.out.println("(API-6) ⏭️ Пропущен технический эндпоинт: " + path);
+                System.out.println("(API-6) Пропущен технический эндпоинт: " + path);
                 continue;
             }
 
@@ -529,10 +529,10 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                     BusinessFlowEndpoint endpoint = createBusinessFlowEndpoint(path, httpMethod.name(), operation);
                     String endpointKey = path + ":" + httpMethod.name();
                     businessEndpoints.put(endpointKey, endpoint);
-                    System.out.println("(API-6) ✅ Бизнес-процесс: " + httpMethod.name() + " " + path +
+                    System.out.println("(API-6) Бизнес-процесс: " + httpMethod.name() + " " + path +
                             " - " + endpoint.getDescription() + " [Критичность: " + endpoint.getCriticality() + "]");
                 } else {
-                    System.out.println("(API-6) ❌ Не чувствительный: " + httpMethod.name() + " " + path);
+                    System.out.println("(API-6) Не чувствительный: " + httpMethod.name() + " " + path);
                 }
             }
         }
@@ -624,7 +624,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 .filter(e -> CRITICAL_OPERATIONS.contains(e.getMethod()))
                 .collect(Collectors.toList());
 
-        System.out.println("(API-6) 🔄 Тестирование автоматизации для " + testableEndpoints.size() + " эндпоинтов");
+        System.out.println("(API-6) Тестирование автоматизации для " + testableEndpoints.size() + " эндпоинтов");
 
         for (BusinessFlowEndpoint endpoint : testableEndpoints) {
             testEndpointAutomation(baseUrl, token, consents, apiClient, endpoint, vulnerabilities);
@@ -639,13 +639,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             String testPayload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
-            System.out.println("(API-6) 🧪 Тестирование автоматизации: " + endpoint.getMethod() + " " + url);
+            System.out.println("(API-6) Тестирование автоматизации: " + endpoint.getMethod() + " " + url);
 
             int successfulCalls = 0;
             int totalCalls = 3;
 
             for (int i = 0; i < totalCalls; i++) {
-                System.out.println("(API-6) 🔁 Попытка " + (i+1) + "/" + totalCalls);
+                System.out.println("(API-6) Попытка " + (i+1) + "/" + totalCalls);
 
                 try {
                     Object response = apiClient.executeRequest(endpoint.getMethod(), url, testPayload, headers);
@@ -659,31 +659,31 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                             String responseBody = apiResponse.getBody();
                             if (responseBody != null) {
                                 if (responseBody.contains("CONSENT_REQUIRED") || responseBody.contains("consent")) {
-                                    System.out.println("(API-6) ⚠️ Требуется согласие для доступа к эндпоинту");
+                                    System.out.println("(API-6) Требуется согласие для доступа к эндпоинту");
                                     // Это может быть нормальным поведением безопасности
                                 } else if (responseBody.contains("Forbidden")) {
-                                    System.out.println("(API-6) ❌ Доступ запрещен - недостаточно прав");
+                                    System.out.println("(API-6) Доступ запрещен - недостаточно прав");
                                 } else if (responseBody.contains("rate limit") || responseBody.contains("limit")) {
-                                    System.out.println("(API-6) ⚠️ Сработало ограничение частоты запросов");
+                                    System.out.println("(API-6) Сработало ограничение частоты запросов");
                                 }
                             }
-                            System.out.println("(API-6) ❌ Неуспешный запрос: код " + statusCode + " (Forbidden)");
+                            System.out.println("(API-6) Неуспешный запрос: код " + statusCode + " (Forbidden)");
                         } else if (statusCode >= 200 && statusCode < 300) {
                             successfulCalls++;
-                            System.out.println("(API-6) ✅ Успешный запрос: код " + statusCode);
+                            System.out.println("(API-6) Успешный запрос: код " + statusCode);
                         } else if (statusCode == 429) {
-                            System.out.println("(API-6) ⚠️ Rate limiting сработал: код 429");
+                            System.out.println("(API-6) Rate limiting сработал: код 429");
                         } else {
-                            System.out.println("(API-6) ❌ Неуспешный запрос: код " + statusCode);
+                            System.out.println("(API-6) Неуспешный запрос: код " + statusCode);
                             if (apiResponse.getBody() != null) {
                                 String bodyPreview = apiResponse.getBody().length() > 100 ?
                                         apiResponse.getBody().substring(0, 100) + "..." : apiResponse.getBody();
-                                System.out.println("(API-6) 📄 Тело ответа: " + bodyPreview);
+                                System.out.println("(API-6) Тело ответа: " + bodyPreview);
                             }
                         }
                     }
                 } catch (Exception e) {
-                    System.err.println("(API-6) 💥 Ошибка выполнения запроса: " + e.getMessage());
+                    System.err.println("(API-6) Ошибка выполнения запроса: " + e.getMessage());
                 }
 
                 try {
@@ -706,15 +706,15 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         Vulnerability.Severity.HIGH
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-6) 🚨 УЯЗВИМОСТЬ: Обнаружена возможность автоматизации " + endpoint.getPath());
+                System.out.println("(API-6) УЯЗВИМОСТЬ: Обнаружена возможность автоматизации " + endpoint.getPath());
             } else if (successfulCalls > 0) {
-                System.out.println("(API-6) ⚠️ Частичная автоматизация: " + successfulCalls + "/" + totalCalls);
+                System.out.println("(API-6) Частичная автоматизация: " + successfulCalls + "/" + totalCalls);
             } else {
-                System.out.println("(API-6) ℹ️ Автоматизация невозможна: все запросы завершились ошибкой");
+                System.out.println("(API-6) ️ Автоматизация невозможна: все запросы завершились ошибкой");
             }
 
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка при тестировании автоматизации " + endpoint.getPath() + ": " + e.getMessage());
+            System.err.println("(API-6)  Ошибка при тестировании автоматизации " + endpoint.getPath() + ": " + e.getMessage());
         }
     }
 
@@ -729,7 +729,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 .limit(3) // Ограничиваем количество тестируемых эндпоинтов
                 .collect(Collectors.toList());
 
-        System.out.println("(API-6) 📊 Rate limiting тест для " + testableEndpoints.size() + " эндпоинтов");
+        System.out.println("(API-6)  Rate limiting тест для " + testableEndpoints.size() + " эндпоинтов");
 
         for (BusinessFlowEndpoint endpoint : testableEndpoints) {
             testEndpointRateLimiting(baseUrl, token, consents, apiClient, endpoint, vulnerabilities);
@@ -747,7 +747,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             List<Integer> responseCodes = new ArrayList<>();
             int rapidRequests = 5;
 
-            System.out.println("(API-6) 📈 Rate limiting тест для: " + endpoint.getMethod() + " " + url);
+            System.out.println("(API-6) Rate limiting тест для: " + endpoint.getMethod() + " " + url);
 
             for (int i = 0; i < rapidRequests; i++) {
                 try {
@@ -755,16 +755,16 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                     if (response instanceof core.HttpApiClient.ApiResponse) {
                         core.HttpApiClient.ApiResponse apiResponse = (core.HttpApiClient.ApiResponse) response;
                         responseCodes.add(apiResponse.getStatusCode());
-                        System.out.println("(API-6) 📊 Rate limiting тест " + (i+1) + "/" + rapidRequests + ": " + apiResponse.getStatusCode());
+                        System.out.println("(API-6)  Rate limiting тест " + (i+1) + "/" + rapidRequests + ": " + apiResponse.getStatusCode());
 
                         // Если получили 429, прерываем тест
                         if (apiResponse.getStatusCode() == 429) {
-                            System.out.println("(API-6) ✅ Rate limiting обнаружен на запросе " + (i+1));
+                            System.out.println("(API-6) Rate limiting обнаружен на запросе " + (i+1));
                             break;
                         }
                     }
                 } catch (Exception e) {
-                    System.err.println("(API-6) 💥 Ошибка в rate limiting тесте: " + e.getMessage());
+                    System.err.println("(API-6) Ошибка в rate limiting тесте: " + e.getMessage());
                     responseCodes.add(500); // Добавляем код ошибки
                 }
 
@@ -793,14 +793,14 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         successCount >= 3 ? Vulnerability.Severity.HIGH : Vulnerability.Severity.MEDIUM
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-6) 🚨 УЯЗВИМОСТЬ: Отсутствие rate limiting для " + endpoint.getPath());
+                System.out.println("(API-6) УЯЗВИМОСТЬ: Отсутствие rate limiting для " + endpoint.getPath());
             } else if (hasRateLimiting) {
-                System.out.println("(API-6) ✅ Rate limiting присутствует для " + endpoint.getPath());
+                System.out.println("(API-6) Rate limiting присутствует для " + endpoint.getPath());
             } else {
-                System.out.println("(API-6) ℹ️ Rate limiting тест не показал результатов (все запросы завершились ошибкой)");
+                System.out.println("(API-6) Rate limiting тест не показал результатов (все запросы завершились ошибкой)");
             }
         } catch (Exception e) {
-            System.err.println("(API-6) ❌ Ошибка при тестировании rate limiting " + endpoint.getPath() + ": " + e.getMessage());
+            System.err.println("(API-6) Ошибка при тестировании rate limiting " + endpoint.getPath() + ": " + e.getMessage());
         }
     }
 
@@ -847,9 +847,9 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                     Vulnerability.Severity.LOW
             );
             vulnerabilities.add(vuln);
-            System.out.println("(API-6) 🚨 УЯЗВИМОСТЬ: Недостаточная документация защиты для " + endpoint.getPath());
+            System.out.println("(API-6) УЯЗВИМОСТЬ: Недостаточная документация защиты для " + endpoint.getPath());
         } else {
-            System.out.println("(API-6) ✅ Документация защиты присутствует для " + endpoint.getPath());
+            System.out.println("(API-6) Документация защиты присутствует для " + endpoint.getPath());
         }
     }
 
@@ -862,7 +862,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             String testPayload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
-            System.out.println("(API-6) 🔄 Тестирование идемпотентности для: " + endpoint.getMethod() + " " + url);
+            System.out.println("(API-6) Тестирование идемпотентности для: " + endpoint.getMethod() + " " + url);
 
             // Первый запрос
             Object response1 = apiClient.executeRequest(endpoint.getMethod(), url, testPayload, headers);
@@ -883,15 +883,15 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         Vulnerability.Severity.MEDIUM
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-6) 🚨 УЯЗВИМОСТЬ: Отсутствие защиты от повторных операций для " + endpoint.getPath());
+                System.out.println("(API-6) УЯЗВИМОСТЬ: Отсутствие защиты от повторных операций для " + endpoint.getPath());
             } else if (firstSuccess && !secondSuccess) {
-                System.out.println("(API-6) ✅ Идемпотентность присутствует для " + endpoint.getPath());
+                System.out.println("(API-6) Идемпотентность присутствует для " + endpoint.getPath());
             } else {
-                System.out.println("(API-6) ℹ️ Тест идемпотентности не выполнен (первый запрос неуспешен)");
+                System.out.println("(API-6) Тест идемпотентности не выполнен (первый запрос неуспешен)");
             }
         } catch (Exception e) {
             // Игнорируем ошибки - это нормально для тестовых запросов
-            System.out.println("(API-6) ⚠️ Ошибка при тестировании идемпотентности: " + e.getMessage());
+            System.out.println("(API-6) Ошибка при тестировании идемпотентности: " + e.getMessage());
         }
     }
 
@@ -905,7 +905,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 .filter(e -> CRITICAL_OPERATIONS.contains(e.getMethod()))
                 .collect(Collectors.toList());
 
-        System.out.println("(API-6) 🔄 Тестирование обходов бизнес-логики для " + testableEndpoints.size() + " эндпоинтов");
+        System.out.println("(API-6) Тестирование обходов бизнес-логики для " + testableEndpoints.size() + " эндпоинтов");
 
         for (BusinessFlowEndpoint endpoint : testableEndpoints) {
             testBusinessLogicValidation(baseUrl, token, consents, apiClient, endpoint, vulnerabilities);
@@ -943,13 +943,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         Vulnerability.Severity.HIGH
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-6) 🚨 УЯЗВИМОСТЬ: Обход валидации отрицательных значений в " + endpoint.getPath());
+                System.out.println("(API-6) УЯЗВИМОСТЬ: Обход валидации отрицательных значений в " + endpoint.getPath());
             } else {
-                System.out.println("(API-6) ✅ Валидация отрицательных значений присутствует для " + endpoint.getPath());
+                System.out.println("(API-6) Валидация отрицательных значений присутствует для " + endpoint.getPath());
             }
         } catch (Exception e) {
             // Ожидаемое поведение - должна быть ошибка валидации
-            System.out.println("(API-6) ✅ Валидация отрицательных значений работает для " + endpoint.getPath());
+            System.out.println("(API-6) Валидация отрицательных значений работает для " + endpoint.getPath());
         }
     }
 
@@ -961,7 +961,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             String boundaryPayload = createBoundaryValuePayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
-            System.out.println("(API-6) 📏 Тестирование граничных значений: " + endpoint.getMethod() + " " + url);
+            System.out.println("(API-6) Тестирование граничных значений: " + endpoint.getMethod() + " " + url);
 
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, boundaryPayload, headers);
             if (isSuccessfulResponse(response)) {
@@ -974,13 +974,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         Vulnerability.Severity.HIGH
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-6) 🚨 УЯЗВИМОСТЬ: Обход проверки граничных значений в " + endpoint.getPath());
+                System.out.println("(API-6) УЯЗВИМОСТЬ: Обход проверки граничных значений в " + endpoint.getPath());
             } else {
-                System.out.println("(API-6) ✅ Валидация граничных значений присутствует для " + endpoint.getPath());
+                System.out.println("(API-6) Валидация граничных значений присутствует для " + endpoint.getPath());
             }
         } catch (Exception e) {
             // Ожидаемое поведение
-            System.out.println("(API-6) ✅ Валидация граничных значений работает для " + endpoint.getPath());
+            System.out.println("(API-6) Валидация граничных значений работает для " + endpoint.getPath());
         }
     }
 
@@ -992,7 +992,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             String invalidTypePayload = createInvalidDataTypePayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
-            System.out.println("(API-6) 🔤 Тестирование неверных типов данных: " + endpoint.getMethod() + " " + url);
+            System.out.println("(API-6) Тестирование неверных типов данных: " + endpoint.getMethod() + " " + url);
 
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, invalidTypePayload, headers);
             if (isSuccessfulResponse(response)) {
@@ -1005,13 +1005,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         Vulnerability.Severity.MEDIUM
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-6) 🚨 УЯЗВИМОСТЬ: Обход валидации типов данных в " + endpoint.getPath());
+                System.out.println("(API-6) УЯЗВИМОСТЬ: Обход валидации типов данных в " + endpoint.getPath());
             } else {
-                System.out.println("(API-6) ✅ Валидация типов данных присутствует для " + endpoint.getPath());
+                System.out.println("(API-6) Валидация типов данных присутствует для " + endpoint.getPath());
             }
         } catch (Exception e) {
             // Ожидаемое поведение
-            System.out.println("(API-6) ✅ Валидация типов данных работает для " + endpoint.getPath());
+            System.out.println("(API-6) Валидация типов данных работает для " + endpoint.getPath());
         }
     }
 
@@ -1023,7 +1023,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             String minimalPayload = createMinimalPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
-            System.out.println("(API-6) ❓ Тестирование отсутствующих полей: " + endpoint.getMethod() + " " + url);
+            System.out.println("(API-6) Тестирование отсутствующих полей: " + endpoint.getMethod() + " " + url);
 
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, minimalPayload, headers);
             if (isSuccessfulResponse(response)) {
@@ -1036,13 +1036,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         Vulnerability.Severity.MEDIUM
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-6) 🚨 УЯЗВИМОСТЬ: Обход проверки обязательных полей в " + endpoint.getPath());
+                System.out.println("(API-6) УЯЗВИМОСТЬ: Обход проверки обязательных полей в " + endpoint.getPath());
             } else {
-                System.out.println("(API-6) ✅ Проверка обязательных полей присутствует для " + endpoint.getPath());
+                System.out.println("(API-6) Проверка обязательных полей присутствует для " + endpoint.getPath());
             }
         } catch (Exception e) {
             // Ожидаемое поведение
-            System.out.println("(API-6) ✅ Проверка обязательных полей работает для " + endpoint.getPath());
+            System.out.println("(API-6) Проверка обязательных полей работает для " + endpoint.getPath());
         }
     }
 
@@ -1074,9 +1074,9 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                     Vulnerability.Severity.MEDIUM
             );
             vulnerabilities.add(vuln);
-            System.out.println("(API-6) 🚨 УЯЗВИМОСТЬ: Возможное нарушение целостности процесса платежей");
+            System.out.println("(API-6) УЯЗВИМОСТЬ: Возможное нарушение целостности процесса платежей");
         } else if (hasPaymentEndpoint && hasPaymentConsentEndpoint) {
-            System.out.println("(API-6) ✅ Последовательность платежей документирована");
+            System.out.println("(API-6) Последовательность платежей документирована");
         }
     }
 
@@ -1104,7 +1104,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             String paymentPayload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
-            System.out.println("(API-6) 💸 Тестирование платежа без согласия: " + endpoint.getMethod() + " " + url);
+            System.out.println("(API-6) Тестирование платежа без согласия: " + endpoint.getMethod() + " " + url);
 
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, paymentPayload, headers);
             if (isSuccessfulResponse(response)) {
@@ -1117,13 +1117,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         Vulnerability.Severity.HIGH
                 );
                 vulnerabilities.add(vuln);
-                System.out.println("(API-6) 🚨 УЯЗВИМОСТЬ: Нарушение целостности процесса платежей");
+                System.out.println("(API-6) УЯЗВИМОСТЬ: Нарушение целостности процесса платежей");
             } else {
-                System.out.println("(API-6) ✅ Целостность процесса платежей соблюдается");
+                System.out.println("(API-6) Целостность процесса платежей соблюдается");
             }
         } catch (Exception e) {
             // Ожидаемое поведение - должна быть ошибка из-за отсутствия согласия
-            System.out.println("(API-6) ✅ Целостность процесса платежей соблюдается (ошибка ожидаема)");
+            System.out.println("(API-6) Целостность процесса платежей соблюдается (ошибка ожидаема)");
         }
     }
 
@@ -1136,7 +1136,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 .filter(e -> CRITICAL_OPERATIONS.contains(e.getMethod()))
                 .collect(Collectors.toList());
 
-        System.out.println("(API-6) 🔓 Тестирование прямого доступа для " + criticalEndpoints.size() + " эндпоинтов");
+        System.out.println("(API-6) Тестирование прямого доступа для " + criticalEndpoints.size() + " эндпоинтов");
 
         for (BusinessFlowEndpoint endpoint : criticalEndpoints) {
             testDirectEndpointAccess(baseUrl, token, consents, apiClient, endpoint, vulnerabilities);
@@ -1151,12 +1151,12 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             String payload = createSpecificTestPayload(endpoint);
             String url = buildTestUrl(baseUrl, endpoint.getPath());
 
-            System.out.println("(API-6) 🎯 Тестирование прямого доступа: " + endpoint.getMethod() + " " + url);
+            System.out.println("(API-6) Тестирование прямого доступа: " + endpoint.getMethod() + " " + url);
 
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, payload, headers);
             if (isSuccessfulResponse(response)) {
                 // Если операция выполняется без дополнительных проверок - возможна проблема
-                System.out.println("(API-6) ⚠️ Прямой доступ возможен: " + endpoint.getMethod() + " " + url);
+                System.out.println("(API-6) Прямой доступ возможен: " + endpoint.getMethod() + " " + url);
                 // Для особо критичных операций создаем уязвимость
                 if (endpoint.getPath().contains("/payments") && "POST".equals(endpoint.getMethod())) {
                     Vulnerability vuln = createBusinessFlowVulnerability(
@@ -1167,14 +1167,14 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                             Vulnerability.Severity.MEDIUM
                     );
                     vulnerabilities.add(vuln);
-                    System.out.println("(API-6) 🚨 УЯЗВИМОСТЬ: Прямой доступ к критичным операциям");
+                    System.out.println("(API-6) УЯЗВИМОСТЬ: Прямой доступ к критичным операциям");
                 }
             } else {
-                System.out.println("(API-6) ✅ Прямой доступ ограничен для " + endpoint.getPath());
+                System.out.println("(API-6) Прямой доступ ограничен для " + endpoint.getPath());
             }
         } catch (Exception e) {
             // Ожидаемое поведение для некоторых операций
-            System.out.println("(API-6) ✅ Прямой доступ ограничен (ошибка ожидаема) для " + endpoint.getPath());
+            System.out.println("(API-6) Прямой доступ ограничен (ошибка ожидаема) для " + endpoint.getPath());
         }
     }
 
@@ -1188,12 +1188,12 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             String paramPlaceholder = "{" + param.getKey() + "}";
             if (resolvedPath.contains(paramPlaceholder)) {
                 resolvedPath = resolvedPath.replace(paramPlaceholder, param.getValue());
-                System.out.println("(API-6) 🔄 Замена параметра " + paramPlaceholder + " -> " + param.getValue());
+                System.out.println("(API-6) Замена параметра " + paramPlaceholder + " -> " + param.getValue());
             }
         }
 
         String fullUrl = baseUrl + resolvedPath;
-        System.out.println("(API-6) 🌐 Построен URL: " + fullUrl);
+        System.out.println("(API-6) Построен URL: " + fullUrl);
         return fullUrl;
     }
 
@@ -1204,7 +1204,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         headers.put("Accept", "application/json");
         headers.put("X-Requesting-Bank", config.getBankId());
 
-        System.out.println("(API-6) 🔑 Заголовки: Authorization=Bearer ***, X-Requesting-Bank=" + config.getBankId());
+        System.out.println("(API-6) Заголовки: Authorization=Bearer ***, X-Requesting-Bank=" + config.getBankId());
         return headers;
     }
 
@@ -1219,7 +1219,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             headers.put("X-Payment-Consent-Id", consents.get("payment_consent"));
         }
 
-        System.out.println("(API-6) 📋 Заголовки с согласиями: " + headers.keySet());
+        System.out.println("(API-6) Заголовки с согласиями: " + headers.keySet());
         return headers;
     }
 
@@ -1250,7 +1250,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         String path = endpoint.getPath();
         String method = endpoint.getMethod();
 
-        System.out.println("(API-6) 🎯 Создание payload для: " + method + " " + path);
+        System.out.println("(API-6) Создание payload для: " + method + " " + path);
 
         // Реальные payload из спецификации API с использованием данных из конфигурации
         if (path.contains("/payment-consents/request") && "POST".equals(method)) {
@@ -1266,7 +1266,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         } else if (path.contains("/cards") && "POST".equals(method)) {
             return "{\"card_type\":\"debit\",\"account_id\":\"acc-1010\"}";
         } else {
-            System.out.println("(API-6) ⚠️ Используется пустой payload для неподдерживаемого эндпоинта");
+            System.out.println("(API-6) Используется пустой payload для неподдерживаемого эндпоинта");
             return "{}";
         }
     }
@@ -1331,7 +1331,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         );
         vuln.setRecommendations(recommendations);
 
-        System.out.println("(API-6) 📝 Создана уязвимость: " + title);
+        System.out.println("(API-6) Создана уязвимость: " + title);
         return vuln;
     }
 
