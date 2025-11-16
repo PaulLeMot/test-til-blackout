@@ -32,9 +32,10 @@ services:
       DB_PASSWORD: admin
       DB_SUPER_USER: postgres
       DB_SUPER_PASSWORD: admin
+      GOST_SERVICE_URL: http://localhost:8080
     ports:
       - "8081:8081"
-      - "8082:8081"  # добавим второй порт на всякий случай
+      - "8082:8081"
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,6 +44,16 @@ services:
       - ./webapp:/app/webapp
     networks:
       - security-network
+    restart: unless-stopped
+
+  # GOST сервис для криптографических операций
+  gost-service:
+    image: rnix/openssl-gost
+    container_name: gost_service
+    command: ["tail", "-f", "/dev/null"]
+    network_mode: "host"
+    volumes:
+      - ./gost:/app/gost  # ✅ Добавляем папку с сертификатами
     restart: unless-stopped
 
 volumes:

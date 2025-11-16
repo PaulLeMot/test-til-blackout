@@ -1,13 +1,8 @@
-FROM eclipse-temurin:17-jdk
+FROM eclipse-temurin:21-jdk
 
 WORKDIR /app
 
-# Устанавливаем необходимые пакеты
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Копируем исходный код
+# Копируем ВСЕ включая библиотеки
 COPY . .
 
 # Создаем необходимые папки
