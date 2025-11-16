@@ -1,5 +1,4 @@
-
-        package scanners.owasp;
+package scanners.owasp;
 
 import scanners.SecurityScanner;
 import core.ScanConfig;
@@ -511,7 +510,7 @@ public class Validation implements SecurityScanner {
                 String bankToken = config.getBankToken();
                 if (bankToken != null) {
                     headers.put("Authorization", "Bearer " + bankToken);
-                    headers.put("X-Requesting-Bank", "team172");
+                    headers.put("X-Requesting-Bank", config.getBankId());
 
                     // Добавляем client_id в query параметры для межбанковского запроса
                     String interbankAccountsUrl = accountsUrl + "?client_id=" + config.getClientId();
@@ -569,13 +568,13 @@ public class Validation implements SecurityScanner {
             String bankToken = config.getBankToken();
             if (bankToken != null) {
                 headers.put("Authorization", "Bearer " + bankToken);
-                headers.put("X-Requesting-Bank", "team172");
+                headers.put("X-Requesting-Bank", config.getBankId());
 
                 String requestBody = "{" +
                         "\"client_id\": \"" + config.getClientId() + "\"," +
                         "\"permissions\": [\"ReadAccountsDetail\", \"ReadBalances\", \"ReadTransactionsDetail\"]," +
                         "\"reason\": \"Security testing for contract validation\"," +
-                        "\"requesting_bank\": \"team172\"," +
+                        "\"requesting_bank\": \"" + config.getBankId() + "\"," +
                         "\"requesting_bank_name\": \"Security Scanner\"" +
                         "}";
 
@@ -762,13 +761,13 @@ public class Validation implements SecurityScanner {
 
         // Получаем правильный токен для endpoint
         String authToken = getAppropriateAuthToken(config, operation, path, testData);
-        Map<String, String> headers = buildCorrectHeaders(operation, path, testData, authToken);
+        Map<String, String> headers = buildCorrectHeaders(operation, path, testData, authToken, config);
 
         try {
             logDebug("Testing documented endpoint: " + method + " " + resolvedPath +
                     (authToken != null ? " (with auth)" : " (without auth)"));
 
-            String requestBody = buildCorrectRequestBody(operation, path, testData);
+            String requestBody = buildCorrectRequestBody(operation, path, testData, config);
             Object response = apiClient.executeRequest(method, fullUrl, requestBody, headers);
 
             if (response instanceof HttpApiClient.ApiResponse) {
@@ -890,16 +889,16 @@ public class Validation implements SecurityScanner {
         return baseUrl;
     }
 
-    private String buildCorrectRequestBody(Operation operation, String path, Map<String, Object> testData) {
+    private String buildCorrectRequestBody(Operation operation, String path, Map<String, Object> testData, ScanConfig config) {
         // Create appropriate request body using real data
         if (operation.getRequestBody() != null && operation.getRequestBody().getContent() != null) {
 
             if (path.equals("/account-consents/request")) {
                 return "{\n" +
-                        "  \"client_id\": \"" + testData.getOrDefault("client_id", "team172-1") + "\",\n" +
+                        "  \"client_id\": \"" + config.getClientId() + "\",\n" +
                         "  \"permissions\": [\"ReadAccountsDetail\", \"ReadBalances\", \"ReadTransactionsDetail\"],\n" +
                         "  \"reason\": \"Security testing\",\n" +
-                        "  \"requesting_bank\": \"team172\",\n" +
+                        "  \"requesting_bank\": \"" + config.getBankId() + "\",\n" +
                         "  \"requesting_bank_name\": \"Security Scanner\"\n" +
                         "}";
             }
@@ -926,8 +925,8 @@ public class Validation implements SecurityScanner {
             if (path.equals("/payment-consents/request")) {
                 String accountId = (String) testData.get("account_id");
                 return "{\n" +
-                        "  \"requesting_bank\": \"team172\",\n" +
-                        "  \"client_id\": \"" + testData.getOrDefault("client_id", "team172-1") + "\",\n" +
+                        "  \"requesting_bank\": \"" + config.getBankId() + "\",\n" +
+                        "  \"client_id\": \"" + config.getClientId() + "\",\n" +
                         "  \"consent_type\": \"single_use\",\n" +
                         "  \"amount\": 100.00,\n" +
                         "  \"currency\": \"RUB\",\n" +
@@ -976,10 +975,10 @@ public class Validation implements SecurityScanner {
                 String productId = (String) testData.get("product_id");
                 return "{\n" +
                         "  \"product_id\": \"" + (productId != null ? productId : "prod-test-001") + "\",\n" +
-                        "  \"client_id\": \"" + testData.getOrDefault("client_id", "team172-1") + "\",\n" +
+                        "  \"client_id\": \"" + config.getClientId() + "\",\n" +
                         "  \"permissions\": [\"ReadProductDetails\", \"ManageProduct\"],\n" +
                         "  \"reason\": \"Security testing\",\n" +
-                        "  \"requesting_bank\": \"team172\"\n" +
+                        "  \"requesting_bank\": \"" + config.getBankId() + "\"\n" +
                         "}";
             }
 
@@ -989,7 +988,7 @@ public class Validation implements SecurityScanner {
         return null;
     }
 
-    private Map<String, String> buildCorrectHeaders(Operation operation, String path, Map<String, Object> testData, String authToken) {
+    private Map<String, String> buildCorrectHeaders(Operation operation, String path, Map<String, Object> testData, String authToken, ScanConfig config) {
         Map<String, String> headers = new HashMap<>();
         headers.put("User-Agent", "curl/7.68.0");
         headers.put("Accept", "application/json");
@@ -1000,7 +999,7 @@ public class Validation implements SecurityScanner {
 
         // Межбанковые заголовки ТОЛЬКО для создания согласий
         if (path.contains("/consents/request")) {
-            headers.put("X-Requesting-Bank", "team172");
+            headers.put("X-Requesting-Bank", config.getBankId());
         }
 
         // Для POST/PUT/PATCH добавляем Content-Type
@@ -1017,7 +1016,8 @@ public class Validation implements SecurityScanner {
         String paramName = param.getName().toLowerCase();
 
         if (paramName.contains("client_id")) {
-            return "team172-1"; // Используем реальный client_id
+            // ИСПРАВЛЕНИЕ: не возвращаем client_id, так как он должен быть в конфигурации
+            return null;
         } else if (paramName.contains("client_secret")) {
             return null; // Не передаем client_secret в query параметрах
         } else if (paramName.contains("account_id") && testData.containsKey("account_id")) {

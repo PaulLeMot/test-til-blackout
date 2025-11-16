@@ -24,6 +24,7 @@ public class WebServer {
     private PostgresManager databaseManager;
     private final Set<WebSocketConnection> webSocketConnections = new CopyOnWriteArraySet<>();
     private ScanLauncher scanLauncher;
+    private ApiController apiController; // ДОБАВЛЕНО: ApiController для CI/CD
 
     public WebServer(int port) {
         this.port = port;
@@ -37,6 +38,12 @@ public class WebServer {
     public void start() throws IOException {
         server = HttpServer.create(new InetSocketAddress(port), 0);
 
+        // ДОБАВЛЕНО: Инициализация ApiController
+        this.apiController = new ApiController(
+                new ScannerService(this, databaseManager),
+                databaseManager
+        );
+
         // Статические файлы из папки webapp
         server.createContext("/", new StaticFileHandler());
 
@@ -45,15 +52,24 @@ public class WebServer {
         server.createContext("/api/scan/results", new ScanResultsHandler());
         server.createContext("/api/scan/stats", new ScanStatsHandler());
         server.createContext("/api/scan/clear", new ClearResultsHandler());
-        server.createContext("/api/scan/export/pdf", new ExportPdfHandler()); // Новый endpoint для PDF
+        server.createContext("/api/scan/export/pdf", new ExportPdfHandler());
 
         // Новые endpoints для работы с сессиями
         server.createContext("/api/sessions/list", new SessionsListHandler());
         server.createContext("/api/sessions/compare", new SessionsCompareHandler());
 
+        // ДОБАВЛЕНО: API endpoints для CI/CD интеграции
+        server.createContext("/api/v1/scan", apiController.createScanHandler());
+        server.createContext("/api/v1/status", apiController.createStatusHandler());
+        server.createContext("/api/v1/results", apiController.createResultsHandler());
+
         server.setExecutor(null);
         server.start();
         System.out.println("✅ Web server started on http://localhost:" + port);
+        System.out.println("🔌 API endpoints available:");
+        System.out.println("   - POST /api/v1/scan     - Start security scan");
+        System.out.println("   - GET  /api/v1/status   - Check scan status");
+        System.out.println("   - GET  /api/v1/results  - Get scan results");
     }
 
     public void stop() {
@@ -131,37 +147,19 @@ public class WebServer {
 
                     // Создаем PDF документ
                     ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    Document document = new Document(PageSize.A4.rotate()); // Альбомная ориентация для таблицы
+                    Document document = new Document(PageSize.A4);
 
                     try {
                         PdfWriter writer = PdfWriter.getInstance(document, baos);
                         document.open();
 
                         // Создаем шрифт с поддержкой кириллицы
-                        BaseFont baseFont = BaseFont.createFont(
-                                "c:/windows/fonts/arial.ttf", // Путь к шрифту Arial в Windows
-                                BaseFont.IDENTITY_H,
-                                BaseFont.EMBEDDED
-                        );
-
-                        // Альтернативные пути к шрифтам для разных ОС
-                        if (!new File("c:/windows/fonts/arial.ttf").exists()) {
-                            try {
-                                baseFont = BaseFont.createFont(
-                                        "/usr/share/fonts/truetype/freefont/FreeSans.ttf", // Linux
-                                        BaseFont.IDENTITY_H,
-                                        BaseFont.EMBEDDED
-                                );
-                            } catch (Exception e) {
-                                // Если шрифты не найдены, используем стандартный без поддержки кириллицы
-                                baseFont = BaseFont.createFont(BaseFont.HELVETICA, BaseFont.WINANSI, BaseFont.EMBEDDED);
-                            }
-                        }
-
+                        BaseFont baseFont = getBaseFont();
                         Font titleFont = new Font(baseFont, 16, Font.BOLD);
-                        Font headerFont = new Font(baseFont, 10, Font.BOLD);
-                        Font normalFont = new Font(baseFont, 8, Font.NORMAL);
-                        Font boldFont = new Font(baseFont, 8, Font.BOLD);
+                        Font headerFont = new Font(baseFont, 12, Font.BOLD);
+                        Font normalFont = new Font(baseFont, 10, Font.NORMAL);
+                        Font boldFont = new Font(baseFont, 10, Font.BOLD);
+                        Font smallFont = new Font(baseFont, 9, Font.NORMAL);
 
                         // Заголовок
                         Paragraph title = new Paragraph("Отчет о сканировании безопасности", titleFont);
@@ -191,7 +189,7 @@ public class WebServer {
 
                         // Статистика
                         Map<String, Object> stats = databaseManager.getStats();
-                        Paragraph statsTitle = new Paragraph("Статистика:", boldFont);
+                        Paragraph statsTitle = new Paragraph("Статистика:", headerFont);
                         statsTitle.setSpacingAfter(5);
                         document.add(statsTitle);
 
@@ -204,51 +202,23 @@ public class WebServer {
                         document.add(new Paragraph(" "));
                         document.add(new Paragraph(" "));
 
-                        // Таблица с уязвимостями
+                        // Детальная информация по уязвимостям
                         if (!results.isEmpty()) {
-                            Paragraph tableTitle = new Paragraph("Детали уязвимостей:", boldFont);
-                            tableTitle.setSpacingAfter(10);
-                            document.add(tableTitle);
+                            Paragraph detailsTitle = new Paragraph("Детали уязвимостей:", headerFont);
+                            detailsTitle.setSpacingAfter(15);
+                            document.add(detailsTitle);
 
-                            PdfPTable table = new PdfPTable(6);
-                            table.setWidthPercentage(100);
-                            table.setSpacingBefore(10);
+                            for (int i = 0; i < results.size(); i++) {
+                                Map<String, Object> result = results.get(i);
 
-                            // Устанавливаем ширины колонок
-                            float[] columnWidths = {2f, 3f, 1.5f, 2f, 1f, 1.5f};
-                            table.setWidths(columnWidths);
+                                // Создаем раздел для каждой уязвимости
+                                addVulnerabilitySection(document, result, i + 1, baseFont);
 
-                            // Заголовки таблицы
-                            String[] headers = {"Банк", "Уязвимость", "Уровень", "Категория", "Статус", "Дата"};
-                            for (String header : headers) {
-                                PdfPCell cell = new PdfPCell(new Phrase(header, headerFont));
-                                cell.setBackgroundColor(BaseColor.LIGHT_GRAY);
-                                cell.setHorizontalAlignment(Element.ALIGN_CENTER);
-                                cell.setPadding(5);
-                                table.addCell(cell);
-                            }
-
-                            // Данные таблицы
-                            for (Map<String, Object> result : results) {
-                                addTableCell(table, getStringValue(result.get("bankName")), normalFont);
-                                addTableCell(table, getStringValue(result.get("vulnerabilityTitle")), normalFont);
-
-                                // Цвета для уровней серьезности
-                                String severity = getStringValue(result.get("severity"));
-                                Font severityFont = normalFont;
-                                if ("CRITICAL".equals(severity)) {
-                                    severityFont = new Font(baseFont, 8, Font.BOLD, BaseColor.RED);
-                                } else if ("HIGH".equals(severity)) {
-                                    severityFont = new Font(baseFont, 8, Font.BOLD, BaseColor.ORANGE);
+                                // Добавляем разрыв страницы после каждой 3-й уязвимости для лучшей читаемости
+                                if ((i + 1) % 3 == 0 && i < results.size() - 1) {
+                                    document.newPage();
                                 }
-                                addTableCell(table, severity, severityFont);
-
-                                addTableCell(table, getStringValue(result.get("category")), normalFont);
-                                addTableCell(table, getStringValue(result.get("statusCode")), normalFont);
-                                addTableCell(table, getStringValue(result.get("scanDate")), normalFont);
                             }
-
-                            document.add(table);
                         } else {
                             document.add(new Paragraph("Нет данных для отображения", normalFont));
                         }
@@ -285,18 +255,140 @@ public class WebServer {
             }
         }
 
-        private void addTableCell(PdfPTable table, String text, Font font) {
-            PdfPCell cell = new PdfPCell(new Phrase(text, font));
-            cell.setPadding(4);
-            cell.setHorizontalAlignment(Element.ALIGN_LEFT);
-            table.addCell(cell);
+        private BaseFont getBaseFont() throws DocumentException, IOException {
+            try {
+                // Попробуем разные пути к шрифтам
+                String[] fontPaths = {
+                        "c:/windows/fonts/arial.ttf",
+                        "c:/windows/fonts/tahoma.ttf",
+                        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+                        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+                };
+
+                for (String fontPath : fontPaths) {
+                    if (new File(fontPath).exists()) {
+                        return BaseFont.createFont(fontPath, BaseFont.IDENTITY_H, BaseFont.EMBEDDED);
+                    }
+                }
+
+                // Если шрифты не найдены, используем стандартный
+                return BaseFont.createFont(BaseFont.HELVETICA, BaseFont.WINANSI, BaseFont.EMBEDDED);
+            } catch (Exception e) {
+                return BaseFont.createFont(BaseFont.HELVETICA, BaseFont.WINANSI, BaseFont.EMBEDDED);
+            }
+        }
+
+        private void addVulnerabilitySection(Document document, Map<String, Object> result, int index, BaseFont baseFont)
+                throws DocumentException {
+
+            Font headerFont = new Font(baseFont, 12, Font.BOLD, BaseColor.DARK_GRAY);
+            Font labelFont = new Font(baseFont, 10, Font.BOLD);
+            Font normalFont = new Font(baseFont, 10, Font.NORMAL);
+            Font proofFont = new Font(baseFont, 9, Font.NORMAL, BaseColor.DARK_GRAY);
+            Font recommendationFont = new Font(baseFont, 10, Font.NORMAL, new BaseColor(0, 100, 0)); // Темно-зеленый
+
+            // Заголовок уязвимости с номером
+            Paragraph vulnHeader = new Paragraph(index + ". " + getStringValue(result.get("vulnerabilityTitle")), headerFont);
+            vulnHeader.setSpacingAfter(8);
+            document.add(vulnHeader);
+
+            // Основная информация в таблице
+            PdfPTable infoTable = new PdfPTable(2);
+            infoTable.setWidthPercentage(100);
+            infoTable.setSpacingBefore(5);
+            infoTable.setSpacingAfter(10);
+
+            // Настройка ширины колонок
+            float[] columnWidths = {30f, 70f};
+            infoTable.setWidths(columnWidths);
+
+            addInfoRow(infoTable, "Банк:", getStringValue(result.get("bankName")), labelFont, normalFont);
+
+            String severity = getStringValue(result.get("severity"));
+            Font severityFont = getSeverityFont(baseFont, severity);
+            addInfoRow(infoTable, "Уровень критичности:", severity, labelFont, severityFont);
+
+            addInfoRow(infoTable, "Категория:", getStringValue(result.get("category")), labelFont, normalFont);
+            addInfoRow(infoTable, "Статус код:", getStringValue(result.get("statusCode")), labelFont, normalFont);
+            addInfoRow(infoTable, "Сканер:", getStringValue(result.get("scannerName")), labelFont, normalFont);
+            addInfoRow(infoTable, "Дата обнаружения:", getStringValue(result.get("scanDate")), labelFont, normalFont);
+
+            document.add(infoTable);
+
+            // Раздел с доказательством
+            String proof = getStringValue(result.get("proof"));
+            if (!proof.isEmpty() && !proof.equals("N/A") && !proof.equals("Нет информации")) {
+                Paragraph proofTitle = new Paragraph("Доказательство:", labelFont);
+                proofTitle.setSpacingAfter(3);
+                document.add(proofTitle);
+
+                // Обрабатываем доказательство для лучшего отображения
+                String formattedProof = formatProofText(proof);
+                Paragraph proofContent = new Paragraph(formattedProof, proofFont);
+                proofContent.setSpacingAfter(10);
+                document.add(proofContent);
+            }
+
+            // Раздел с рекомендациями
+            String recommendation = getStringValue(result.get("recommendation"));
+            if (!recommendation.isEmpty() && !recommendation.equals("N/A") && !recommendation.equals("Нет рекомендаций")) {
+                Paragraph recTitle = new Paragraph("Рекомендации по устранению:", labelFont);
+                recTitle.setSpacingAfter(3);
+                document.add(recTitle);
+
+                Paragraph recContent = new Paragraph(recommendation, recommendationFont);
+                recContent.setSpacingAfter(15);
+                document.add(recContent);
+            }
+
+            // Разделительная линия между уязвимостями
+            Paragraph separator = new Paragraph("_________________________________________________________________________");
+            separator.setSpacingBefore(5);
+            separator.setSpacingAfter(15);
+            document.add(separator);
+        }
+
+        private void addInfoRow(PdfPTable table, String label, String value, Font labelFont, Font valueFont) {
+            PdfPCell labelCell = new PdfPCell(new Phrase(label, labelFont));
+            labelCell.setBorderWidth(0);
+            labelCell.setPadding(3);
+            labelCell.setBackgroundColor(new BaseColor(240, 240, 240));
+
+            PdfPCell valueCell = new PdfPCell(new Phrase(value, valueFont));
+            valueCell.setBorderWidth(0);
+            valueCell.setPadding(3);
+
+            table.addCell(labelCell);
+            table.addCell(valueCell);
+        }
+
+        private Font getSeverityFont(BaseFont baseFont, String severity) {
+            switch (severity.toUpperCase()) {
+                case "CRITICAL":
+                    return new Font(baseFont, 10, Font.BOLD, BaseColor.RED);
+                case "HIGH":
+                    return new Font(baseFont, 10, Font.BOLD, new BaseColor(255, 140, 0)); // Orange
+                case "MEDIUM":
+                    return new Font(baseFont, 10, Font.BOLD, BaseColor.ORANGE);
+                case "LOW":
+                    return new Font(baseFont, 10, Font.NORMAL, new BaseColor(0, 128, 0)); // Green
+                default:
+                    return new Font(baseFont, 10, Font.NORMAL, BaseColor.BLACK);
+            }
+        }
+
+        private String formatProofText(String proof) {
+            // Упрощаем текст доказательства для лучшей читаемости в PDF
+            if (proof.length() > 500) {
+                proof = proof.substring(0, 500) + "... [сокращено]";
+            }
+            return proof.replace("\n", " ").replace("  ", " ");
         }
 
         private String getStringValue(Object value) {
             return value != null ? value.toString() : "N/A";
         }
     }
-
     class StaticFileHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {

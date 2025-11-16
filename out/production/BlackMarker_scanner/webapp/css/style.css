@@ -278,9 +278,7 @@ body {
     border-left-color: #10b981;
 }
 
-.stat-icon {
-    font-size: 2rem;
-}
+
 
 .stat-info h3 {
     font-size: 0.875rem;
@@ -913,4 +911,29 @@ body {
     .comparison-actions {
         flex-direction: column;
     }
+}
+
+.credential-group {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    border: 1px solid #1e293b;
+    border-radius: 0.5rem;
+    background: #1e293b;
+}
+
+.credential-group .input-group {
+    margin-bottom: 0.5rem;
+}
+
+.credential-group .input-group:last-child {
+    margin-bottom: 0;
+}
+
+.credential-group label {
+    font-weight: 500;
+    color: #94a3b8;
+}
+
+.credential-pairs {
+    margin-top: 1rem;
 }
