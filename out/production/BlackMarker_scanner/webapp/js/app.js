@@ -129,43 +129,43 @@ class SecurityDashboard {
     }
 
     saveConfiguration() {
-        const config = {
-            bankId: document.getElementById('bankId').value.trim(), // добавляем bankId
-            banks: [
-                {
-                    baseUrl: document.getElementById('bank1Url').value.trim(),
-                    specUrl: document.getElementById('bank1Spec').value.trim()
-                },
-                {
-                    baseUrl: document.getElementById('bank2Url').value.trim(),
-                    specUrl: document.getElementById('bank2Spec').value.trim()
-                },
-                {
-                    baseUrl: document.getElementById('bank3Url').value.trim(),
-                    specUrl: document.getElementById('bank3Spec').value.trim()
-                }
-            ],
-            credentials: [
-                {
-                    username: document.getElementById('user1').value.trim(),
-                    password: document.getElementById('password1').value
-                },
-                {
-                    username: document.getElementById('user2').value.trim(),
-                    password: document.getElementById('password2').value
-                }
-            ]
-        };
+    const config = {
+        bankId: document.getElementById('bankId').value.trim(),
+        banks: [
+            {
+                baseUrl: document.getElementById('bank1Url').value.trim(),
+                specUrl: document.getElementById('bank1Spec').value.trim()
+            },
+            {
+                baseUrl: document.getElementById('bank2Url').value.trim(),
+                specUrl: document.getElementById('bank2Spec').value.trim()
+            },
+            {
+                baseUrl: document.getElementById('bank3Url').value.trim(),
+                specUrl: document.getElementById('bank3Spec').value.trim()
+            }
+        ],
+        credentials: [
+            {
+                username: document.getElementById('user1').value.trim(),
+                password: document.getElementById('password1').value
+            },
+            {
+                username: document.getElementById('user2').value.trim(),
+                password: document.getElementById('password2').value
+            }
+        ]
+    };
 
-        // Валидация
-        if (!this.validateConfiguration(config)) {
-            return;
-        }
-
-        // Сохраняем в localStorage
-        localStorage.setItem('scanConfig', JSON.stringify(config));
-        this.showNotification('Настройки сохранены', 'success');
+    // Валидация
+    if (!this.validateConfiguration(config)) {
+        return;
     }
+
+    // Сохраняем в localStorage
+    localStorage.setItem('scanConfig', JSON.stringify(config));
+    this.showNotification('Настройки сохранены', 'success');
+}
 
     loadSavedConfiguration() {
         try {

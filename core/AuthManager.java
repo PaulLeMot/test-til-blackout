@@ -71,8 +71,8 @@ public class AuthManager {
                     "&client_secret=" + clientSecret +
                     "&grant_type=client_credentials";
 
-            logger.info("🔐 Получение bank token для: " + bankId);
-            logger.info("📤 URL: " + authUrl);
+            logger.info("Получение bank token для: " + bankId);
+            logger.info("URL: " + authUrl);
 
             HttpClient client = HttpClient.newBuilder()
                     .version(HttpClient.Version.HTTP_1_1)
@@ -95,17 +95,17 @@ public class AuthManager {
             if (response.statusCode() == 200) {
                 String bankToken = extractAccessTokenFromJson(response.body());
                 if (bankToken != null && isTokenValid(bankToken)) {
-                    logger.info("✅ Bank token успешно получен");
+                    logger.info("Bank token успешно получен");
                     return bankToken;
                 } else {
-                    logger.warning("⚠️ Bank token получен, но невалиден");
+                    logger.warning("Bank token получен, но невалиден");
                 }
             } else {
-                logger.warning("❌ Ошибка получения bank token. Status: " + response.statusCode());
-                logger.warning("❌ Response body: " + response.body());
+                logger.warning("Ошибка получения bank token. Status: " + response.statusCode());
+                logger.warning("Response body: " + response.body());
             }
         } catch (Exception e) {
-            logger.severe("❌ Ошибка получения bank token: " + e.getMessage());
+            logger.severe("Ошибка получения bank token: " + e.getMessage());
         }
         return null;
     }
@@ -120,8 +120,8 @@ public class AuthManager {
                     "&client_secret=" + clientSecret +
                     "&grant_type=client_credentials";
 
-            logger.info("🔐 Прямое получение bank token для: " + bankId);
-            logger.info("📤 URL: " + authUrl);
+            logger.info("Прямое получение bank token для: " + bankId);
+            logger.info("URL: " + authUrl);
 
             HttpClient client = HttpClient.newBuilder()
                     .version(HttpClient.Version.HTTP_1_1)
@@ -143,17 +143,17 @@ public class AuthManager {
             if (response.statusCode() == 200) {
                 String bankToken = extractAccessTokenFromJson(response.body());
                 if (bankToken != null && isTokenValid(bankToken)) {
-                    logger.info("✅ Bank token успешно получен напрямую");
+                    logger.info("Bank token успешно получен напрямую");
                     return bankToken;
                 } else {
-                    logger.warning("⚠️ Bank token получен, но невалиден");
+                    logger.warning("Bank token получен, но невалиден");
                 }
             } else {
-                logger.warning("❌ Ошибка получения bank token. Status: " + response.statusCode());
-                logger.warning("❌ Response body: " + response.body());
+                logger.warning("Ошибка получения bank token. Status: " + response.statusCode());
+                logger.warning("Response body: " + response.body());
             }
         } catch (Exception e) {
-            logger.severe("❌ Ошибка получения bank token напрямую: " + e.getMessage());
+            logger.severe("Ошибка получения bank token напрямую: " + e.getMessage());
         }
         return null;
     }
@@ -230,80 +230,100 @@ public class AuthManager {
     public static Map<String, String> getTokensForScanning(ScanConfig config) {
         Map<String, String> tokens = new HashMap<>();
         String baseUrl = config.getBankBaseUrl();
-        String password = config.getClientSecret();
-        String clientId = config.getClientId();
         String bankId = config.getBankId();
+        String clientId = config.getClientId();
 
-        logger.info("🎯 Начало получения токенов для сканирования");
-        logger.info("🏦 Bank Base URL: " + baseUrl);
-        logger.info("🆔 Bank ID: " + bankId);
-        logger.info("👤 Client ID: " + clientId);
+        logger.info("Начало получения токенов для сканирования");
+        logger.info("Bank Base URL: " + baseUrl);
+        logger.info("Bank ID: " + bankId);
+        logger.info("Client ID: " + clientId);
 
-        // 1. Получаем токен команды через /auth/login
-        logger.info("\n--- Шаг 1: Получение токена команды ---");
-        String teamToken = getTeamToken(baseUrl, clientId, password);
-        if (teamToken != null) {
-            tokens.put("default", teamToken);
-            tokens.put(clientId, teamToken);
-            logger.info("✅ Токен команды сохранен");
-        } else {
-            logger.severe("❌ Не удалось получить токен команды. Проверьте учетные данные.");
-            return tokens;
-        }
+        // Получаем токены для всех пользователей из конфигурации
+        if (config.getCredentials() != null && !config.getCredentials().isEmpty()) {
+            logger.info("Получение токенов для всех пользователей из конфигурации");
 
-        // 2. Получаем bank token для межбанковских запросов (обновленный метод)
-        logger.info("\n--- Шаг 2: Получение bank token ---");
-        String bankToken = getBankToken(baseUrl, teamToken, bankId, password);
+            for (int i = 0; i < config.getCredentials().size(); i++) {
+                ScanConfig.UserCredentials credential = config.getCredentials().get(i); // ИСПРАВЛЕНО: UserCredentials вместо Credential
+                String username = credential.getUsername();
+                String password = credential.getPassword();
 
-        // Если не удалось получить bank token с team token, пробуем напрямую
-        if (bankToken == null) {
-            logger.info("🔄 Попытка прямого получения bank token...");
-            bankToken = getBankTokenDirect(baseUrl, bankId, password);
-        }
-
-        if (bankToken != null) {
-            tokens.put("bank", bankToken);
-            tokens.put(bankId, bankToken);
-            logger.info("✅ Bank token сохранен");
-        } else {
-            logger.warning("❌ Не удалось получить bank token. Продолжаем без него.");
-        }
-
-        // 3. Создаем согласие для межбанковских запросов
-        if (bankToken != null) {
-            logger.info("\n--- Шаг 3: Создание согласия ---");
-            String consentId = createConsent(baseUrl, bankToken, bankId, clientId);
-            if (consentId != null) {
-                config.setConsentId(consentId);
-                logger.info("✅ Consent ID сохранен в конфигурацию");
-            } else {
-                logger.warning("❌ Не удалось создать согласие. Некоторые сканы могут не работать.");
-            }
-        }
-
-        // 4. Дополнительные токены для BOLA тестирования
-        logger.info("\n--- Шаг 4: Получение дополнительных токенов ---");
-        for (int i = 8; i <= 9; i++) {
-            String altUsername = "team172-" + i;
-            if (!altUsername.equals(clientId)) {
-                try {
-                    logger.info("🔄 Попытка получить токен для: " + altUsername);
-                    String altToken = getTeamToken(baseUrl, altUsername, password);
-                    if (altToken != null) {
-                        tokens.put(altUsername, altToken);
-                        logger.info("✅ Токен получен для: " + altUsername);
+                logger.info("Получение токена для: " + username);
+                String userToken = getTeamToken(baseUrl, username, password);
+                if (userToken != null) {
+                    tokens.put(username, userToken);
+                    // Первого пользователя также сохраняем как default и clientId
+                    if (i == 0) {
+                        tokens.put("default", userToken);
+                        tokens.put(clientId, userToken);
                     }
+                    logger.info("Токен получен для: " + username);
+                } else {
+                    logger.warning("Не удалось получить токен для: " + username);
+                }
+
+                // Небольшая задержка между запросами
+                try {
                     Thread.sleep(1000);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
             }
+        } else {
+            // Старая логика для обратной совместимости
+            logger.info("Получение токена команды");
+            String password = config.getClientSecret();
+            String teamToken = getTeamToken(baseUrl, clientId, password);
+            if (teamToken != null) {
+                tokens.put("default", teamToken);
+                tokens.put(clientId, teamToken);
+                logger.info("Токен команды сохранен");
+            } else {
+                logger.severe("Не удалось получить токен команды. Проверьте учетные данные.");
+                return tokens;
+            }
         }
 
-        logger.info("\n✅ Всего получено токенов: " + tokens.size());
+        // Получаем bank token для межбанковских запросов
+        if (!tokens.isEmpty()) {
+            logger.info("Получение bank token");
+            String defaultToken = tokens.get("default");
+            String password = config.getCredentials() != null && !config.getCredentials().isEmpty()
+                    ? config.getCredentials().get(0).getPassword()
+                    : config.getClientSecret();
+
+            String bankToken = getBankToken(baseUrl, defaultToken, bankId, password);
+
+            // Если не удалось получить bank token с team token, пробуем напрямую
+            if (bankToken == null) {
+                logger.info("Попытка прямого получения bank token...");
+                bankToken = getBankTokenDirect(baseUrl, bankId, password);
+            }
+
+            if (bankToken != null) {
+                tokens.put("bank", bankToken);
+                tokens.put(bankId, bankToken);
+                logger.info("Bank token сохранен");
+            } else {
+                logger.warning("Не удалось получить bank token. Продолжаем без него.");
+            }
+
+            // Создаем согласие для межбанковских запросов
+            if (bankToken != null) {
+                logger.info("Создание согласия");
+                String consentId = createConsent(baseUrl, bankToken, bankId, clientId);
+                if (consentId != null) {
+                    config.setConsentId(consentId);
+                    logger.info("Consent ID сохранен в конфигурацию");
+                } else {
+                    logger.warning("Не удалось создать согласие. Некоторые сканы могут не работать.");
+                }
+            }
+        }
+
+        logger.info("Всего получено токенов: " + tokens.size());
         for (String key : tokens.keySet()) {
             String token = tokens.get(key);
-            logger.info("🔑 " + key + ": " + (token != null ? token.substring(0, 20) + "..." : "null"));
+            logger.info(key + ": " + (token != null ? token.substring(0, Math.min(token.length(), 20)) + "..." : "null"));
         }
 
         return tokens;
