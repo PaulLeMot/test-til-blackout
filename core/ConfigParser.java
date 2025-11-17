@@ -44,6 +44,9 @@ public class ConfigParser {
                     config.getCredentials().add(userCred);
                     logger.info("[CONFIG_PARSER] Parsed credential - username: " + username + ", password: ***");
                 }
+            } else {
+                // Если credentials отсутствуют в JSON, создаем их из токенов
+                logger.info("[CONFIG_PARSER] No credentials in config, will use tokens directly");
             }
 
             // Устанавливаем bankId
@@ -52,7 +55,7 @@ public class ConfigParser {
                 config.setBankId(bankId);
                 logger.info("[CONFIG_PARSER] Set bankId from config: " + bankId);
             } else {
-                // Вычисляем bankId из первого пользователя
+                // Вычисляем bankId из первого пользователя или используем по умолчанию
                 if (!config.getCredentials().isEmpty()) {
                     String firstUsername = config.getCredentials().get(0).getUsername();
                     if (firstUsername != null && firstUsername.contains("-")) {
@@ -74,6 +77,9 @@ public class ConfigParser {
                 String firstUsername = config.getCredentials().get(0).getUsername();
                 config.setClientId(firstUsername);
                 logger.info("[CONFIG_PARSER] Set clientId from first user: " + firstUsername);
+            } else {
+                config.setClientId("team172-1"); // значение по умолчанию
+                logger.info("[CONFIG_PARSER] Set default clientId: team172-1");
             }
 
             // Устанавливаем clientSecret из первого пользователя
@@ -81,6 +87,9 @@ public class ConfigParser {
                 String firstPassword = config.getCredentials().get(0).getPassword();
                 config.setClientSecret(firstPassword);
                 logger.info("[CONFIG_PARSER] Set clientSecret from first user");
+            } else {
+                config.setClientSecret("password"); // значение по умолчанию
+                logger.info("[CONFIG_PARSER] Set default clientSecret");
             }
 
             // Устанавливаем базовый URL из первого банка

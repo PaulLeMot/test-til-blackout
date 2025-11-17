@@ -72,6 +72,19 @@ public class ScannerService {
         notifyMessage("info", "Зарегистрировано сканеров: 10");
         notifyMessage("info", "Идентификатор сессии: " + currentSessionId);
 
+        // Получение токенов для пользователей ДО запуска сканеров
+        notifyMessage("info", "Получение токенов для пользователей...");
+        Map<String, String> tokens = AuthManager.getTokensForScanning(config);
+
+        if (tokens == null || tokens.isEmpty()) {
+            notifyMessage("error", "Не удалось получить токены для сканирования");
+            return;
+        }
+
+        // Сохраняем токены в конфигурацию
+        config.setUserTokens(tokens);
+        notifyMessage("info", "Получено токенов: " + tokens.size());
+
         // Создаём сканеры
         List<SecurityScanner> securityScanners = Arrays.asList(
                 new API1_BOLAScanner(),
@@ -108,38 +121,19 @@ public class ScannerService {
                 notifyMessage("warning", "Не удалось загрузить OpenAPI спецификацию, некоторые сканеры будут пропущены");
             }
 
-            // Инициализация конфигурации для конкретного банка
+            // Создаем конфигурацию для конкретного банка с уже полученными токенами
             ScanConfig bankScanConfig = new ScanConfig();
             bankScanConfig.setTargetBaseUrl(cleanBaseUrl);
             bankScanConfig.setBankBaseUrl(cleanBaseUrl);
+            bankScanConfig.setBankId(config.getBankId());
+            bankScanConfig.setUserTokens(tokens); // Используем уже полученные токены
 
-            // Используем учетные данные из UI конфигурации
-            if (!config.getCredentials().isEmpty()) {
-                // Берем первого пользователя как основного
-                ScanConfig.UserCredentials primaryCred = config.getCredentials().get(0);
-                bankScanConfig.setClientId(primaryCred.getUsername());
-                bankScanConfig.setClientSecret(primaryCred.getPassword());
-
-                // ИСПРАВЛЕНИЕ: Используем bankId из конфигурации вместо хардкода
-                bankScanConfig.setBankId(config.getBankId());
-
-                notifyMessage("info", "Используется Bank ID: " + config.getBankId());
-            }
-
-            // Получение токенов для пользователей из UI
-            notifyMessage("info", "Получение токенов для пользователей...");
-            Map<String, String> tokens = AuthManager.getTokensForScanning(bankScanConfig);
-
-            bankScanConfig.setUserTokens(tokens);
-            notifyMessage("info", "Получено токенов: " + tokens.size());
-
-            // Запуск сканеров С ПЕРЕДАЧЕЙ OPENAPI СПЕЦИФИКАЦИИ
+            // Запуск сканеров С ПЕРЕДАЧЕЙ OPENAPI СПЕЦИФИКАЦИИ И ТОКЕНОВ
             List<Vulnerability> allVulnerabilities = new ArrayList<>();
             for (SecurityScanner scanner : securityScanners) {
                 notifyMessage("info", "-".repeat(40));
                 notifyMessage("info", "Запуск сканера: " + scanner.getName());
                 try {
-                    // ПЕРЕДАЕМ openApiSpec ВМЕСТО null
                     List<Vulnerability> scannerResults = scanner.scan(openApiSpec, bankScanConfig, new HttpApiClient());
                     allVulnerabilities.addAll(scannerResults);
 
@@ -147,16 +141,16 @@ public class ScannerService {
                     for (Vulnerability vuln : scannerResults) {
                         String proof = extractProofFromVulnerability(vuln);
                         String recommendation = extractRecommendationFromVulnerability(vuln);
-                        webServer.saveScanResult(
+                        databaseManager.saveVulnerability(
                                 cleanBaseUrl,
                                 vuln.getTitle(),
                                 vuln.getSeverity().toString(),
                                 vuln.getCategory().toString(),
-                                "200",
+                                String.valueOf(vuln.getStatusCode()),
                                 proof,
                                 recommendation,
                                 scanner.getName(),
-                                currentSessionId  // Передаем sessionId
+                                currentSessionId
                         );
                         // Отправка уведомления о новой уязвимости
                         notifyNewVulnerability(vuln, cleanBaseUrl, scanner.getName());
@@ -165,6 +159,7 @@ public class ScannerService {
                             " завершен. Найдено уязвимостей: " + scannerResults.size());
                 } catch (Exception e) {
                     notifyMessage("error", "Ошибка в сканере " + scanner.getName() + ": " + e.getMessage());
+                    e.printStackTrace();
                 }
                 // Задержка между сканерами
                 Thread.sleep(2000);
@@ -186,7 +181,6 @@ public class ScannerService {
         notifyMessage("info", "Всего уязвимостей: " + totalVulnerabilities);
         notifyMessage("info", "Идентификатор сессии: " + currentSessionId);
     }
-
     /**
      * Загружает OpenAPI спецификацию из URL
      */

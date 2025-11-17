@@ -843,8 +843,8 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
     private Map<String, String> createAuthHeaders(ScanConfig config) {
         Map<String, String> headers = new HashMap<>();
         headers.put("Content-Type", "application/json");
-        if (config.getAccessToken() != null && !config.getAccessToken().isEmpty()) {
-            headers.put("Authorization", "Bearer " + config.getAccessToken());
+        if (config.getFirstUserToken() != null && !config.getFirstUserToken().isEmpty()) {
+            headers.put("Authorization", "Bearer " + config.getFirstUserToken());
         }
         return headers;
     }
