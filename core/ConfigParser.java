@@ -78,8 +78,8 @@ public class ConfigParser {
                 config.setClientId(firstUsername);
                 logger.info("[CONFIG_PARSER] Set clientId from first user: " + firstUsername);
             } else {
-                config.setClientId("team172-1"); // значение по умолчанию
-                logger.info("[CONFIG_PARSER] Set default clientId: team172-1");
+                config.setClientId("default"); // значение по умолчанию
+                logger.info("[CONFIG_PARSER] Set default clientId: default");
             }
 
             // Устанавливаем clientSecret из первого пользователя
