@@ -87,11 +87,11 @@ public class ScannerService {
 
         // Создаём сканеры
         List<SecurityScanner> securityScanners = Arrays.asList(
-                new API1_BOLAScanner(),
-                new API2_BrokenAuthScanner(),
-                new API3_BOScanner(),
-                new API4_URCScanner(),
-                new API5_BrokenFunctionLevelAuthScanner(),
+//                new API1_BOLAScanner(),
+//                new API2_BrokenAuthScanner(),
+//                new API3_BOScanner(),
+//                new API4_URCScanner(),
+//                new API5_BrokenFunctionLevelAuthScanner(),
                 new API6_BusinessFlowScanner(),
                 new API7_SSRFScanner(),
                 new API8_SecurityConfigScanner(),
@@ -123,10 +123,20 @@ public class ScannerService {
 
             // Создаем конфигурацию для конкретного банка с уже полученными токенами
             ScanConfig bankScanConfig = new ScanConfig();
+
+            bankScanConfig.setBankId(config.getBankId());
+            bankScanConfig.setClientId(config.getClientId());
+            bankScanConfig.setClientSecret(config.getClientSecret());
             bankScanConfig.setTargetBaseUrl(cleanBaseUrl);
             bankScanConfig.setBankBaseUrl(cleanBaseUrl);
-            bankScanConfig.setBankId(config.getBankId());
+            bankScanConfig.setOpenApiSpecUrl(specUrl);
             bankScanConfig.setUserTokens(tokens); // Используем уже полученные токены
+            bankScanConfig.setCredentials(config.getCredentials()); // Копируем credentials
+            bankScanConfig.setConsentId(config.getConsentId()); // Копируем consentId если есть
+
+            System.out.println("(ScannerService) Создана конфигурация для банка: " + cleanBaseUrl);
+            System.out.println("(ScannerService) clientId: " + bankScanConfig.getClientId());
+            System.out.println("(ScannerService) bankId: " + bankScanConfig.getBankId());
 
             // Запуск сканеров С ПЕРЕДАЧЕЙ OPENAPI СПЕЦИФИКАЦИИ И ТОКЕНОВ
             List<Vulnerability> allVulnerabilities = new ArrayList<>();

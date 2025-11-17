@@ -36,6 +36,19 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
     @Override
     public List<Vulnerability> scan(Object openApiObj, ScanConfig config, ApiClient apiClient) {
         this.config = config;
+
+        // ДИАГНОСТИКА КОНФИГУРАЦИИ
+        System.out.println("(API-6) === ДИАГНОСТИКА КОНФИГУРАЦИИ ===");
+        System.out.println("(API-6) BankId: " + config.getBankId());
+        System.out.println("(API-6) ClientId: " + config.getClientId());
+        System.out.println("(API-6) TargetBaseUrl: " + config.getTargetBaseUrl());
+        System.out.println("(API-6) Credentials count: " + (config.getCredentials() != null ? config.getCredentials().size() : 0));
+        System.out.println("(API-6) UserTokens count: " + (config.getUserTokens() != null ? config.getUserTokens().size() : 0));
+        if (config.getUserTokens() != null) {
+            System.out.println("(API-6) UserTokens keys: " + String.join(", ", config.getUserTokens().keySet()));
+        }
+        System.out.println("(API-6) ================================");
+
         this.testParameters = initializeTestParameters();
 
         System.out.println("(API-6) Запуск сканирования Unrestricted Access to Sensitive Business Flows...");
@@ -55,7 +68,16 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         String token = tokens.get("bank");
         if (token == null) {
             System.err.println("(API-6) ОШИБКА: банковский токен не найден! Не могу создавать согласия.");
-            return vulnerabilities;
+            // Пробуем найти банковский токен по bankId
+            if (config.getBankId() != null) {
+                token = tokens.get(config.getBankId());
+                if (token != null) {
+                    System.out.println("(API-6) Найден банковский токен по bankId: " + config.getBankId());
+                }
+            }
+            if (token == null) {
+                return vulnerabilities;
+            }
         } else {
             System.out.println("(API-6) Используется банковский токен для создания согласий");
         }
@@ -116,10 +138,11 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         return vulnerabilities;
     }
 
-    // ИСПРАВЛЕННЫЙ МЕТОД: Получение client_id из конфигурации БЕЗ ХАРДКОДА
+    // ИСПРАВЛЕННЫЙ МЕТОД: Получение client_id из конфигурации
     private String getClientId() {
         // 1. Пробуем получить из явно заданного client_id в конфигурации
         if (config.getClientId() != null && !config.getClientId().isEmpty()) {
+            System.out.println("(API-6) Получен client_id из config.getClientId(): " + config.getClientId());
             return config.getClientId();
         }
 
@@ -131,13 +154,14 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             return clientId;
         }
 
-        // 3. Если ничего не помогло, логируем ошибку и используем логику из ConfigParser
-        System.err.println("(API-6) ВНИМАНИЕ: client_id не найден в конфигурации, используем логику ConfigParser");
+        // 3. Если ничего не помогло, логируем ошибку
+        System.err.println("(API-6) ВНИМАНИЕ: client_id не найден в конфигурации");
 
         // Последняя попытка - посмотреть есть ли какие-то токены
         if (config.getUserTokens() != null && !config.getUserTokens().isEmpty()) {
             for (String key : config.getUserTokens().keySet()) {
-                if (!key.equals("bank") && !key.equals("default") && !key.equals(config.getBankId())) {
+                if (!key.equals("bank") && !key.equals("default") &&
+                        (config.getBankId() == null || !key.equals(config.getBankId()))) {
                     System.out.println("(API-6) Используем client_id из ключа токена: " + key);
                     return key;
                 }
@@ -151,7 +175,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             return clientId;
         }
 
-        // Критическая ошибка - нет хардкода, только явное исключение
+        // Критическая ошибка
         System.err.println("(API-6) КРИТИЧЕСКАЯ ОШИБКА: Не удалось определить client_id");
         throw new RuntimeException("Client ID не найден в конфигурации. Убедитесь, что указаны учетные данные или bankId.");
     }
@@ -219,7 +243,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         }
     }
 
-    // ОБНОВЛЕННЫЙ МЕТОД: принимает напрямую токен, а не всю карту токенов
+    // ОБНОВЛЕННЫЙ МЕТОД: принимает напрямую токен
     private Map<String, String> createNecessaryConsents(String baseUrl, String bankToken, ApiClient apiClient, String clientId) {
         Map<String, String> consents = new HashMap<>();
         ObjectMapper mapper = new ObjectMapper();
@@ -794,8 +818,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         Map<String, String> headers = new HashMap<>();
         headers.put("Authorization", "Bearer " + token);
         headers.put("Content-Type", "application/json");
-        headers.put("User-Agent", "GOSTGuardian/1.0");
-        headers.put("Accept", "application/json");
+        headers.put("User-Agent", "curl/8.16.0"); // ИЗМЕНЕНО: curl User-Agent
+        headers.put("Accept", "*/*"); // ИЗМЕНЕНО: Accept как в curl
         return headers;
     }
 
