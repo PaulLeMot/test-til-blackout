@@ -39,6 +39,11 @@ public class API7_SSRFScanner implements SecurityScanner {
 
     private ObjectMapper mapper = new ObjectMapper();
     private ScanConfig config;
+    private int requestCount = 0;
+    private long lastRequestTime = 0;
+    private static final long MIN_REQUEST_INTERVAL = 1000; // 1 секунда между запросами
+    private static final int MAX_REQUESTS_PER_ENDPOINT = 20; // максимум запросов на эндпоинт
+    private static final long RATE_LIMIT_DELAY = 5000; // 5 секунд при rate limiting
 
     @Override
     public String getName() {
@@ -48,7 +53,7 @@ public class API7_SSRFScanner implements SecurityScanner {
     @Override
     public List<Vulnerability> scan(Object openApiObj, ScanConfig config, ApiClient apiClient) {
         this.config = config;
-        System.out.println("(API-7) Запуск SSRF сканирования с авторизацией...");
+        System.out.println("(API-7) Запуск SSRF сканирования с авторизацией и ограничением скорости...");
         List<Vulnerability> vulnerabilities = new ArrayList<>();
 
         if (!(openApiObj instanceof OpenAPI)) {
@@ -85,7 +90,19 @@ public class API7_SSRFScanner implements SecurityScanner {
 
         System.out.println("(API-7) Используется токен для SSRF сканирования");
 
-        for (String path : openAPI.getPaths().keySet()) {
+        // Ограничиваем количество тестируемых эндпоинтов для избежания rate limiting
+        List<String> paths = new ArrayList<>(openAPI.getPaths().keySet());
+        if (paths.size() > 10) {
+            System.out.println("(API-7) Слишком много путей (" + paths.size() + "), ограничиваем до 10");
+            paths = paths.subList(0, 10);
+        }
+
+        for (String path : paths) {
+            if (requestCount >= 100) { // Общее ограничение на все сканирование
+                System.out.println("(API-7) Достигнут лимит запросов (100), прекращаем сканирование");
+                break;
+            }
+
             PathItem pathItem = openAPI.getPaths().get(path);
 
             // Проверяем все методы, а не только POST
@@ -94,48 +111,156 @@ public class API7_SSRFScanner implements SecurityScanner {
                     String endpoint = smartPathReplace(path);
                     if (endpoint == null) continue;
 
-                    System.out.println("(API-7) Тестируем эндпоинт " + op + ": " + endpoint);
+                    System.out.println("(API-7) Тестируем эндпоинт " + getMethodFromOperation(op) + ": " + endpoint);
 
                     // 1. Blind SSRF: добавляем новые URL-поля с авторизацией
-                    for (String field : COMMON_SSRF_FIELDS) {
-                        for (String payload : SSRF_PAYLOADS) {
-                            try {
-                                Map<String, Object> body = new HashMap<>();
-                                body.put(field, payload);
-                                // Добавляем минимальный набор полей для валидности запроса
-                                body.put("test", "value");
-                                if (field.equals("amount") || field.equals("value")) {
-                                    body.put(field, 100.0); // для числовых полей
-                                }
-
-                                String jsonBody = toJson(body);
-                                Map<String, String> headers = createAuthHeaders(token);
-
-                                Object resp = apiClient.executeRequest("POST", config.getTargetBaseUrl() + endpoint, jsonBody, headers);
-
-                                if (resp instanceof HttpApiClient.ApiResponse) {
-                                    HttpApiClient.ApiResponse apiResp = (HttpApiClient.ApiResponse) resp;
-                                    System.out.println("(API-7) Ответ от " + endpoint + ": " + apiResp.getStatusCode());
-
-                                    if (isSSRFResponse(apiResp, payload)) {
-                                        vulnerabilities.add(createVuln(endpoint, field, payload, apiResp));
-                                        System.out.println("(API-7) НАЙДЕНА SSRF в " + endpoint + " через " + field);
-                                    }
-                                }
-                            } catch (Exception ex) {
-                                System.err.println("(API-7) Ошибка при тестировании " + field + ": " + ex.getMessage());
-                            }
-                        }
-                    }
+                    vulnerabilities.addAll(testEndpointWithSSRF(endpoint, config, apiClient, token));
 
                     // 2. Fuzz существующих строковых полей с авторизацией
-                    fuzzExistingStringFields(op, endpoint, config, apiClient, vulnerabilities, token);
+                    vulnerabilities.addAll(fuzzExistingStringFields(op, endpoint, config, apiClient, token));
                 }
             }
         }
 
         System.out.println("(API-7) Сканирование завершено. Найдено уязвимостей: " + vulnerabilities.size());
+        System.out.println("(API-7) Всего выполнено запросов: " + requestCount);
         return vulnerabilities;
+    }
+
+    private List<Vulnerability> testEndpointWithSSRF(String endpoint, ScanConfig config,
+                                                     ApiClient apiClient, String token) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+        int endpointRequestCount = 0;
+
+        for (String field : COMMON_SSRF_FIELDS) {
+            if (endpointRequestCount >= MAX_REQUESTS_PER_ENDPOINT) {
+                System.out.println("(API-7) Достигнут лимит запросов для эндпоинта " + endpoint);
+                break;
+            }
+
+            for (String payload : SSRF_PAYLOADS) {
+                if (endpointRequestCount >= MAX_REQUESTS_PER_ENDPOINT) {
+                    break;
+                }
+
+                try {
+                    // Ограничение скорости запросов
+                    enforceRateLimit();
+
+                    Map<String, Object> body = new HashMap<>();
+                    body.put(field, payload);
+                    // Добавляем минимальный набор полей для валидности запроса
+                    body.put("test", "value");
+                    if (field.equals("amount") || field.equals("value")) {
+                        body.put(field, 100.0); // для числовых полей
+                    }
+
+                    String jsonBody = toJson(body);
+                    Map<String, String> headers = createAuthHeaders(token);
+
+                    Object resp = apiClient.executeRequest("POST", config.getTargetBaseUrl() + endpoint, jsonBody, headers);
+                    endpointRequestCount++;
+                    requestCount++;
+
+                    if (resp instanceof HttpApiClient.ApiResponse) {
+                        HttpApiClient.ApiResponse apiResp = (HttpApiClient.ApiResponse) resp;
+                        System.out.println("(API-7) Ответ от " + endpoint + ": " + apiResp.getStatusCode());
+
+                        // Обработка rate limiting
+                        if (apiResp.getStatusCode() == 429) {
+                            System.out.println("(API-7) Обнаружен rate limiting, ждем " + RATE_LIMIT_DELAY + "мс");
+                            Thread.sleep(RATE_LIMIT_DELAY);
+                            continue; // Пропускаем этот payload при rate limiting
+                        }
+
+                        if (isSSRFResponse(apiResp, payload)) {
+                            vulnerabilities.add(createVuln(endpoint, field, payload, apiResp));
+                            System.out.println("(API-7) НАЙДЕНА SSRF в " + endpoint + " через " + field);
+                        }
+                    }
+                } catch (Exception ex) {
+                    System.err.println("(API-7) Ошибка при тестировании " + field + ": " + ex.getMessage());
+                }
+            }
+        }
+        return vulnerabilities;
+    }
+
+    private List<Vulnerability> fuzzExistingStringFields(Operation op, String endpoint, ScanConfig config,
+                                                         ApiClient apiClient, String token) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+        MediaType mediaType = op.getRequestBody().getContent().get("application/json");
+        if (mediaType == null || mediaType.getSchema() == null) return vulnerabilities;
+
+        Schema<?> schema = mediaType.getSchema();
+        List<String> stringFields = extractStringFields(schema, "");
+
+        System.out.println("(API-7) Найдено строковых полей для фаззинга: " + stringFields.size());
+
+        int endpointRequestCount = 0;
+
+        for (String fieldPath : stringFields) {
+            if (endpointRequestCount >= MAX_REQUESTS_PER_ENDPOINT) {
+                System.out.println("(API-7) Достигнут лимит запросов для фаззинга эндпоинта " + endpoint);
+                break;
+            }
+
+            for (String payload : SSRF_PAYLOADS) {
+                if (endpointRequestCount >= MAX_REQUESTS_PER_ENDPOINT) {
+                    break;
+                }
+
+                try {
+                    // Ограничение скорости запросов
+                    enforceRateLimit();
+
+                    Map<String, Object> body = buildNestedObject(fieldPath, payload);
+                    String jsonBody = toJson(body);
+                    Map<String, String> headers = createAuthHeaders(token);
+
+                    Object resp = apiClient.executeRequest("POST", config.getTargetBaseUrl() + endpoint, jsonBody, headers);
+                    endpointRequestCount++;
+                    requestCount++;
+
+                    if (resp instanceof HttpApiClient.ApiResponse) {
+                        HttpApiClient.ApiResponse apiResp = (HttpApiClient.ApiResponse) resp;
+
+                        // Обработка rate limiting
+                        if (apiResp.getStatusCode() == 429) {
+                            System.out.println("(API-7) Обнаружен rate limiting, ждем " + RATE_LIMIT_DELAY + "мс");
+                            Thread.sleep(RATE_LIMIT_DELAY);
+                            continue; // Пропускаем этот payload при rate limiting
+                        }
+
+                        if (isSSRFResponse(apiResp, payload)) {
+                            vulnerabilities.add(createVuln(endpoint, fieldPath, payload, apiResp));
+                            System.out.println("(API-7) НАЙДЕНА SSRF в " + endpoint + " через существующее поле: " + fieldPath);
+                        }
+                    }
+                } catch (Exception ex) {
+                    // ignore
+                }
+            }
+        }
+        return vulnerabilities;
+    }
+
+    private void enforceRateLimit() throws InterruptedException {
+        long currentTime = System.currentTimeMillis();
+        if (lastRequestTime > 0) {
+            long timeSinceLastRequest = currentTime - lastRequestTime;
+            if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+                long sleepTime = MIN_REQUEST_INTERVAL - timeSinceLastRequest;
+                System.out.println("(API-7) Ограничение скорости: ждем " + sleepTime + "мс");
+                Thread.sleep(sleepTime);
+            }
+        }
+        lastRequestTime = System.currentTimeMillis();
+    }
+
+    private String getMethodFromOperation(Operation op) {
+        // Вспомогательный метод для получения HTTP метода из операции
+        return "POST"; // По умолчанию для тестирования используем POST
     }
 
     private List<Operation> getOperations(PathItem pathItem) {
@@ -152,39 +277,6 @@ public class API7_SSRFScanner implements SecurityScanner {
         if (op.getRequestBody() == null || op.getRequestBody().getContent() == null) return false;
         Content content = op.getRequestBody().getContent();
         return content.containsKey("application/json") || content.containsKey("application/*+json");
-    }
-
-    private void fuzzExistingStringFields(Operation op, String endpoint, ScanConfig config,
-                                          ApiClient apiClient, List<Vulnerability> vulns, String token) {
-        MediaType mediaType = op.getRequestBody().getContent().get("application/json");
-        if (mediaType == null || mediaType.getSchema() == null) return;
-
-        Schema<?> schema = mediaType.getSchema();
-        List<String> stringFields = extractStringFields(schema, "");
-
-        System.out.println("(API-7) Найдено строковых полей для фаззинга: " + stringFields.size());
-
-        for (String fieldPath : stringFields) {
-            for (String payload : SSRF_PAYLOADS) {
-                try {
-                    Map<String, Object> body = buildNestedObject(fieldPath, payload);
-                    String jsonBody = toJson(body);
-                    Map<String, String> headers = createAuthHeaders(token);
-
-                    Object resp = apiClient.executeRequest("POST", config.getTargetBaseUrl() + endpoint, jsonBody, headers);
-
-                    if (resp instanceof HttpApiClient.ApiResponse) {
-                        HttpApiClient.ApiResponse apiResp = (HttpApiClient.ApiResponse) resp;
-                        if (isSSRFResponse(apiResp, payload)) {
-                            vulns.add(createVuln(endpoint, fieldPath, payload, apiResp));
-                            System.out.println("(API-7) НАЙДЕНА SSRF в " + endpoint + " через существующее поле: " + fieldPath);
-                        }
-                    }
-                } catch (Exception ex) {
-                    // ignore
-                }
-            }
-        }
     }
 
     private Map<String, Object> buildNestedObject(String fieldPath, String value) {
@@ -228,6 +320,9 @@ public class API7_SSRFScanner implements SecurityScanner {
                                 propSchema.getName().toLowerCase().contains("host") ||
                                 propSchema.getName().toLowerCase().contains("endpoint"))) {
                     fields.add(fullName);
+                } else {
+                    // Добавляем все строковые поля для более широкого покрытия
+                    fields.add(fullName);
                 }
             } else if ("object".equals(propSchema.getType()) && propSchema.getProperties() != null) {
                 fields.addAll(extractStringFields(propSchema, fullName));
@@ -257,9 +352,6 @@ public class API7_SSRFScanner implements SecurityScanner {
         String bankId = config.getBankId();
         if (bankId != null && !bankId.trim().isEmpty()) {
             headers.put("X-Requesting-Bank", bankId);
-            System.out.println("(API-7) Добавлен заголовок X-Requesting-Bank: " + bankId);
-        } else {
-            System.out.println("(API-7) BankId не указан в конфигурации, заголовок X-Requesting-Bank не добавлен");
         }
 
         return headers;
