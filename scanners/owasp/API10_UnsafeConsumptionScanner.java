@@ -1,4 +1,3 @@
-// scanners/owasp/API10_UnsafeConsumptionScanner.java
 package scanners.owasp;
 
 import scanners.SecurityScanner;
@@ -317,17 +316,19 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
 
                     if (response instanceof HttpApiClient.ApiResponse) {
                         HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                        int statusCode = extractStatusCode(apiResponse);
 
-                        if (apiResponse.getStatusCode() == 200 || apiResponse.getStatusCode() == 201) {
+                        if (statusCode == 200 || statusCode == 201) {
                             Vulnerability vuln = createBaseVulnerability();
                             vuln.setTitle("API10:2023 - Missing Validation of Trusted Source Data");
                             vuln.setDescription("Приложение принимает некорректные данные от доверенных источников:\n" +
                                     "• Эндпоинт: " + endpoint + "\n" +
                                     "• Сценарий: " + (scenario.length() > 100 ? scenario.substring(0, 100) + "..." : scenario) + "\n" +
-                                    "• Статус: " + apiResponse.getStatusCode() + "\n" +
+                                    "• Статус: " + statusCode + "\n" +
                                     "• Риск: Обход валидации через доверенные каналы");
                             vuln.setSeverity(Vulnerability.Severity.MEDIUM);
                             vuln.setEvidence("Trusted source data accepted at: " + endpoint);
+                            vuln.setStatusCode(statusCode);
                             vuln.setRecommendations(Arrays.asList(
                                     "Валидировать все данные независимо от источника",
                                     "Реализовать строгие схемы валидации для всех полей",
@@ -367,6 +368,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
 
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                    int statusCode = extractStatusCode(apiResponse);
                     String responseBody = apiResponse.getBody();
 
                     // Проверяем, не раскрывает ли приложение внутреннюю информацию об ошибках
@@ -375,12 +377,14 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
                         vuln.setTitle("API10:2023 - Information Disclosure in External Service Errors");
                         vuln.setDescription("Приложение раскрывает чувствительную информацию при ошибках внешних сервисов:\n" +
                                 "• Эндпоинт: " + endpoint + "\n" +
+                                "• Статус: " + statusCode + "\n" +
                                 "• Раскрытые данные могут помочь атакующему\n" +
                                 "• Риск: Утечка внутренней структуры системы\n" +
                                 "• Угроза: Reconnaissance атак");
                         vuln.setSeverity(Vulnerability.Severity.MEDIUM);
-                        vuln.setEvidence("Sensitive error information at " + endpoint + ": " +
+                        vuln.setEvidence("Sensitive error information at " + endpoint + " with status " + statusCode + ": " +
                                 (responseBody.length() > 200 ? responseBody.substring(0, 200) + "..." : responseBody));
+                        vuln.setStatusCode(statusCode);
                         vuln.setRecommendations(Arrays.asList(
                                 "Использовать унифицированные сообщения об ошибках",
                                 "Не раскрывать stack traces в production",
@@ -538,14 +542,16 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
 
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                    int statusCode = extractStatusCode(apiResponse);
 
-                    if (apiResponse.getStatusCode() == 200) {
+                    if (statusCode == 200) {
                         Vulnerability vuln = createBaseVulnerability();
                         vuln.setTitle("API10:2023 - JWKS External Key Dependency");
                         vuln.setDescription("Обнаружен JWKS endpoint для внешних ключей:\n" +
                                 "• Риск: Зависимость от внешних ключей подписи\n• Угроза: Компрометация ключей проверки JWT\n• Возможность подмены identity");
                         vuln.setSeverity(Vulnerability.Severity.HIGH);
                         vuln.setEvidence("JWKS endpoint exposed: " + jwksUrl);
+                        vuln.setStatusCode(statusCode);
                         vuln.setRecommendations(Arrays.asList(
                                 "Реализовать rotation ключей подписи",
                                 "Использовать HS256 для внутренних токенов вместо RS256",
@@ -888,24 +894,58 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         return false;
     }
 
+    /**
+     * Новый метод для извлечения статус кода из различных типов ответов
+     */
+    private int extractStatusCode(Object response) {
+        try {
+            if (response instanceof core.ApiResponse) {
+                return ((core.ApiResponse) response).getStatusCode();
+            } else if (response instanceof HttpApiClient.ApiResponse) {
+                return ((HttpApiClient.ApiResponse) response).getStatusCode();
+            } else {
+                return (int) response.getClass().getMethod("getStatusCode").invoke(response);
+            }
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /**
+     * Обновленный метод для проверки ответов на уязвимости с использованием реальных статус кодов
+     */
     private void checkResponseForVulnerabilities(HttpApiClient.ApiResponse apiResponse, String endpoint, String payload, List<Vulnerability> vulnerabilities) {
+        int statusCode = apiResponse.getStatusCode();
+
         // Проверяем, не приняло ли приложение опасные данные
-        if (apiResponse.getStatusCode() == 200 || apiResponse.getStatusCode() == 201) {
+        if (statusCode == 200 || statusCode == 201) {
             Vulnerability vuln = createBaseVulnerability();
             vuln.setTitle("API10:2023 - Unsafe Processing of External Data");
             vuln.setDescription("Приложение некорректно обрабатывает потенциально опасные данные:\n" +
                     "• Эндпоинт: " + endpoint + "\n" +
                     "• Полезная нагрузка: " + (payload.length() > 100 ? payload.substring(0, 100) + "..." : payload) + "\n" +
-                    "• Статус ответа: " + apiResponse.getStatusCode() + "\n" +
+                    "• Статус ответа: " + statusCode + "\n" +
                     "• Риск: Возможность внедрения вредоносных данных");
             vuln.setSeverity(Vulnerability.Severity.HIGH);
-            vuln.setEvidence("Payload accepted at " + endpoint + " with status: " + apiResponse.getStatusCode());
+            vuln.setEvidence("Payload accepted at " + endpoint + " with status: " + statusCode);
+            vuln.setStatusCode(statusCode);  // РЕАЛЬНЫЙ СТАТУС КОД
             vuln.setRecommendations(Arrays.asList(
                     "Реализовать строгую схему валидации для всех входящих данных",
                     "Использовать санитизацию входных данных",
                     "Внедрить Content Security Policy",
                     "Ограничить типы принимаемых данных"
             ));
+            vulnerabilities.add(vuln);
+        } else if (statusCode >= 500) {
+            // ДОБАВЛЕНО: Уязвимости для серверных ошибок
+            Vulnerability vuln = createBaseVulnerability();
+            vuln.setTitle("API10:2023 - Server Error on Malicious Input");
+            vuln.setDescription("Сервер возвращает ошибку " + statusCode + " при обработке подозрительных данных:\n" +
+                    "• Эндпоинт: " + endpoint + "\n" +
+                    "• Может свидетельствовать о нестабильности обработки внешних данных");
+            vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+            vuln.setEvidence("Server error " + statusCode + " at " + endpoint + " with malicious payload");
+            vuln.setStatusCode(statusCode);  // РЕАЛЬНЫЙ СТАТУС КОД
             vulnerabilities.add(vuln);
         }
     }

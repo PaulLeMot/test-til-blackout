@@ -449,11 +449,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             int successfulCalls = 0;
             int totalCalls = 3;
+            int lastStatusCode = -1;
 
             for (int i = 0; i < totalCalls; i++) {
                 Object response = apiClient.executeRequest(endpoint.getMethod(), url, testPayload, headers);
                 if (isSuccessfulResponse(response)) {
                     successfulCalls++;
+                    lastStatusCode = extractStatusCode(response);  // ПОЛУЧАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 }
                 Thread.sleep(1000);
             }
@@ -464,7 +466,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Неограниченная автоматизация бизнес-процесса",
                         "Эндпоинт " + endpoint.getPath() + " позволяет выполнять " + successfulCalls +
                                 " последовательных операций без ограничений",
-                        Vulnerability.Severity.HIGH
+                        Vulnerability.Severity.HIGH,
+                        lastStatusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
@@ -516,7 +519,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         endpoint.getPath(),
                         "Отсутствие rate limiting для бизнес-операций",
                         "Критичный бизнес-процесс " + endpoint.getPath() + " не имеет ограничений частоты запросов",
-                        successCount >= 3 ? Vulnerability.Severity.HIGH : Vulnerability.Severity.MEDIUM
+                        successCount >= 3 ? Vulnerability.Severity.HIGH : Vulnerability.Severity.MEDIUM,
+                        responseCodes.get(0)  // ПЕРЕДАЕМ ПЕРВЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
@@ -556,7 +560,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                     endpoint.getPath(),
                     "Недостаточная документация защиты бизнес-процесса",
                     "Критичный бизнес-процесс " + endpoint.getPath() + " не имеет явных указаний на механизмы защиты",
-                    Vulnerability.Severity.LOW
+                    Vulnerability.Severity.LOW,
+                    200  // Это статический анализ, используем 200
             );
             vulnerabilities.add(vuln);
         }
@@ -577,11 +582,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             boolean secondSuccess = isSuccessfulResponse(response2);
 
             if (firstSuccess && secondSuccess) {
+                int statusCode = extractStatusCode(response1);
                 Vulnerability vuln = createBusinessFlowVulnerability(
                         endpoint.getPath(),
                         "Отсутствие защиты от повторных операций",
                         "Эндпоинт " + endpoint.getPath() + " не имеет защиты от повторного выполнения одинаковых операций",
-                        Vulnerability.Severity.MEDIUM
+                        Vulnerability.Severity.MEDIUM,
+                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
@@ -622,11 +629,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, negativePayload, headers);
             if (isSuccessfulResponse(response)) {
+                int statusCode = extractStatusCode(response);
                 Vulnerability vuln = createBusinessFlowVulnerability(
                         endpoint.getPath(),
                         "Обход валидации отрицательных значений",
                         "Эндпоинт " + endpoint.getPath() + " принимает отрицательные значения без валидации",
-                        Vulnerability.Severity.HIGH
+                        Vulnerability.Severity.HIGH,
+                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
@@ -645,11 +654,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, boundaryPayload, headers);
             if (isSuccessfulResponse(response)) {
+                int statusCode = extractStatusCode(response);
                 Vulnerability vuln = createBusinessFlowVulnerability(
                         endpoint.getPath(),
                         "Обход проверки граничных значений",
                         "Эндпоинт " + endpoint.getPath() + " принимает экстремально большие значения без валидации",
-                        Vulnerability.Severity.HIGH
+                        Vulnerability.Severity.HIGH,
+                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
@@ -668,11 +679,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, invalidTypePayload, headers);
             if (isSuccessfulResponse(response)) {
+                int statusCode = extractStatusCode(response);
                 Vulnerability vuln = createBusinessFlowVulnerability(
                         endpoint.getPath(),
                         "Обход валидации типов данных",
                         "Эндпоинт " + endpoint.getPath() + " принимает неверные типы данных без валидации",
-                        Vulnerability.Severity.MEDIUM
+                        Vulnerability.Severity.MEDIUM,
+                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
@@ -691,11 +704,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, minimalPayload, headers);
             if (isSuccessfulResponse(response)) {
+                int statusCode = extractStatusCode(response);
                 Vulnerability vuln = createBusinessFlowVulnerability(
                         endpoint.getPath(),
                         "Обход проверки обязательных полей",
                         "Эндпоинт " + endpoint.getPath() + " обрабатывает запросы без обязательных полей",
-                        Vulnerability.Severity.MEDIUM
+                        Vulnerability.Severity.MEDIUM,
+                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
@@ -724,7 +739,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                     "/payments",
                     "Возможное нарушение целостности процесса платежей",
                     "Обнаружены эндпоинты платежей без явного требования согласий в документации",
-                    Vulnerability.Severity.MEDIUM
+                    Vulnerability.Severity.MEDIUM,
+                    200  // Это статический анализ, используем 200
             );
             vulnerabilities.add(vuln);
         }
@@ -753,11 +769,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, paymentPayload, headers);
             if (isSuccessfulResponse(response)) {
+                int statusCode = extractStatusCode(response);
                 Vulnerability vuln = createBusinessFlowVulnerability(
                         endpoint.getPath(),
                         "Нарушение целостности процесса платежей",
                         "Возможно создание платежа без предварительного согласия",
-                        Vulnerability.Severity.HIGH
+                        Vulnerability.Severity.HIGH,
+                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
@@ -789,16 +807,33 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             Object response = apiClient.executeRequest(endpoint.getMethod(), url, payload, headers);
             if (isSuccessfulResponse(response) && endpoint.getPath().contains("/payments") && "POST".equals(endpoint.getMethod())) {
+                int statusCode = extractStatusCode(response);
                 Vulnerability vuln = createBusinessFlowVulnerability(
                         endpoint.getPath(),
                         "Прямой доступ к критичным операциям",
                         "Критичная операция " + endpoint.getPath() + " доступна для прямого вызова без проверок",
-                        Vulnerability.Severity.MEDIUM
+                        Vulnerability.Severity.MEDIUM,
+                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
         } catch (Exception e) {
             System.out.println("(API-6) Прямой доступ ограничен для " + endpoint.getPath());
+        }
+    }
+
+    // ДОБАВЛЕН МЕТОД extractStatusCode
+    private int extractStatusCode(Object response) {
+        try {
+            if (response instanceof core.ApiResponse) {
+                return ((core.ApiResponse) response).getStatusCode();
+            } else if (response instanceof HttpApiClient.ApiResponse) {
+                return ((HttpApiClient.ApiResponse) response).getStatusCode();
+            } else {
+                return (int) response.getClass().getMethod("getStatusCode").invoke(response);
+            }
+        } catch (Exception e) {
+            return -1;
         }
     }
 
@@ -1008,10 +1043,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
             String testPayload = createBasicTestPayload(endpoint, clientId);
 
             int successfulCalls = 0;
+            int lastStatusCode = -1;
+
             for (int i = 0; i < 3; i++) {
                 Object response = apiClient.executeRequest("POST", baseUrl + endpoint, testPayload, headers);
                 if (isSuccessfulResponse(response)) {
                     successfulCalls++;
+                    lastStatusCode = extractStatusCode(response);
                 }
                 Thread.sleep(1000);
             }
@@ -1021,7 +1059,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         endpoint,
                         "Неограниченная автоматизация бизнес-процесса (базовое сканирование)",
                         "Эндпоинт " + endpoint + " позволяет выполнять последовательные операци без ограничений",
-                        Vulnerability.Severity.HIGH
+                        Vulnerability.Severity.HIGH,
+                        lastStatusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
@@ -1073,7 +1112,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                             endpoint,
                             "Отсутствие rate limiting (базовое сканирование)",
                             "Критичный бизнес-процесс " + endpoint + " не имеет ограничений частоты запросов",
-                            Vulnerability.Severity.MEDIUM
+                            Vulnerability.Severity.MEDIUM,
+                            responseCodes.get(0)  // ПЕРЕДАЕМ ПЕРВЫЙ СТАТУС КОД
                     );
                     vulnerabilities.add(vuln);
                 }
@@ -1094,11 +1134,13 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
 
             Object response = apiClient.executeRequest("POST", baseUrl + "/payments", negativePaymentPayload, headers);
             if (isSuccessfulResponse(response)) {
+                int statusCode = extractStatusCode(response);
                 Vulnerability vuln = createBusinessFlowVulnerability(
                         "/payments",
                         "Обход бизнес-логики (отрицательные суммы)",
                         "Эндпоинт /payments принимает отрицательные суммы без валидации",
-                        Vulnerability.Severity.HIGH
+                        Vulnerability.Severity.HIGH,
+                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
@@ -1110,8 +1152,9 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         return vulnerabilities;
     }
 
+    // ОБНОВЛЕННЫЙ МЕТОД createBusinessFlowVulnerability
     private Vulnerability createBusinessFlowVulnerability(String endpoint, String title,
-                                                          String description, Vulnerability.Severity severity) {
+                                                          String description, Vulnerability.Severity severity, int statusCode) {
         Vulnerability vuln = new Vulnerability();
         vuln.setTitle("API6:2023 - " + title);
         vuln.setDescription(description);
@@ -1119,6 +1162,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         vuln.setCategory(Vulnerability.Category.OWASP_API6_BUSINESS_FLOW);
         vuln.setEndpoint(endpoint);
         vuln.setMethod("POST");
+        vuln.setStatusCode(statusCode);  // УСТАНАВЛИВАЕМ РЕАЛЬНЫЙ СТАТУС КОД
 
         vuln.setRecommendations(Arrays.asList(
                 "Внедрить rate limiting для чувствительных бизнес-операций",

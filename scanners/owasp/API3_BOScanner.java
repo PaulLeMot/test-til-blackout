@@ -360,12 +360,25 @@ public class API3_BOScanner implements SecurityScanner {
                         endpoint,
                         method,
                         requestPayload,
-                        responseBody
+                        responseBody,
+                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
         } else if (statusCode == 403) {
             System.out.println("API3: 403 Forbidden for " + endpoint + " with " + tokenType);
+            // ДОБАВЛЕНО: Создаем уязвимость даже для 403, если это показывает проблему безопасности
+            Vulnerability vuln = createVulnerability(
+                    "Mass Assignment Attempt Blocked (" + tokenType + ")",
+                    "Попытка Mass Assignment была заблокирована с кодом 403",
+                    endpoint,
+                    method,
+                    requestPayload,
+                    responseBody,
+                    statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД 403
+            );
+            vuln.setSeverity(Vulnerability.Severity.LOW);
+            vulnerabilities.add(vuln);
         } else if (statusCode >= 400) {
             System.out.println("API3: Error " + statusCode + " for " + endpoint + " with " + tokenType);
         }
@@ -453,7 +466,7 @@ public class API3_BOScanner implements SecurityScanner {
     }
 
     private Vulnerability createVulnerability(String title, String description, String endpoint,
-                                              String method, String requestPayload, String responseBody) {
+                                              String method, String requestPayload, String responseBody, int statusCode) {
         Vulnerability vuln = new Vulnerability();
         vuln.setTitle(title);
         vuln.setDescription(description);
@@ -461,6 +474,7 @@ public class API3_BOScanner implements SecurityScanner {
         vuln.setCategory(Vulnerability.Category.OWASP_API3_BOPLA);
         vuln.setEndpoint(endpoint);
         vuln.setMethod(method);
+        vuln.setStatusCode(statusCode);  // УСТАНАВЛИВАЕМ РЕАЛЬНЫЙ СТАТУС КОД
 
         String evidence = "Запрос (" + method + " " + endpoint + "):\n" +
                 requestPayload + "\n\nОтвет:\n" +
