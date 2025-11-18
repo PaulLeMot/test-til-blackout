@@ -16,6 +16,7 @@ public class ScanConfig {
     private List<BankConfig> banks = new ArrayList<>();
     private List<UserCredentials> credentials = new ArrayList<>();
     private Map<String, String> userTokens = new HashMap<>();
+    private Map<String, Object> realData = new HashMap<>();
 
     // Конструктор по умолчанию
     public ScanConfig() {}
@@ -50,6 +51,10 @@ public class ScanConfig {
 
     public Map<String, String> getUserTokens() { return userTokens; }
     public void setUserTokens(Map<String, String> userTokens) { this.userTokens = userTokens; }
+
+    // Геттер и сеттер для realData
+    public Map<String, Object> getRealData() { return realData; }
+    public void setRealData(Map<String, Object> realData) { this.realData = realData; }
 
     // Методы для работы с токенами
 

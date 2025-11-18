@@ -63,12 +63,12 @@ public class ConfigParser {
                         config.setBankId(calculatedBankId);
                         logger.info("[CONFIG_PARSER] Calculated bankId from username: " + calculatedBankId);
                     } else {
-                        config.setBankId("team172");
-                        logger.info("[CONFIG_PARSER] Set default bankId: team172");
+                        config.setBankId("def");
+                        logger.info("[CONFIG_PARSER] Set default bankId: def");
                     }
                 } else {
-                    config.setBankId("team172");
-                    logger.info("[CONFIG_PARSER] Set default bankId: team172 (no credentials)");
+                    config.setBankId("def");
+                    logger.info("[CONFIG_PARSER] Set default bankId: def (no credentials)");
                 }
             }
 
