@@ -87,12 +87,12 @@ public class ScannerService {
 
         // Создаём сканеры
         List<SecurityScanner> securityScanners = Arrays.asList(
-//                new API1_BOLAScanner(),
-//                new API2_BrokenAuthScanner(),
-//                new API3_BOScanner(),
-//                new API4_URCScanner(),
-//                new API5_BrokenFunctionLevelAuthScanner(),
-//                new API6_BusinessFlowScanner(),
+                new API1_BOLAScanner(),
+                new API2_BrokenAuthScanner(),
+                new API3_BOScanner(),
+                new API4_URCScanner(),
+                new API5_BrokenFunctionLevelAuthScanner(),
+                new API6_BusinessFlowScanner(),
                 new API7_SSRFScanner(),
                 new API8_SecurityConfigScanner(),
                 new API9_InventoryScanner(),
