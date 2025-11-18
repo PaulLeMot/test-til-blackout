@@ -709,6 +709,22 @@ class SecurityDashboard {
         if (!modal || !modalTitle || !modalContent) return;
 
         modalTitle.textContent = item.vulnerabilityTitle;
+
+        // Форматируем рекомендации с поддержкой многострочности
+        const formatRecommendations = (recText) => {
+            if (!recText) return 'Нет рекомендаций';
+
+            // Если рекомендации содержат маркированный список
+            if (recText.includes('\n') || recText.includes('•') || recText.includes('-')) {
+                let formatted = recText
+                    .replace(/\n/g, '<br>')
+                    .replace(/•/g, '•')
+                    .replace(/-/g, '•');
+                return formatted;
+            }
+            return recText;
+        };
+
         modalContent.innerHTML = `
             <div class="vulnerability-details">
                 <div class="detail-group">
@@ -725,7 +741,7 @@ class SecurityDashboard {
                 </div>
                 <div class="detail-group">
                     <label>Статус код:</label>
-                    <span>${this.escapeHtml(item.statusCode || 'N/A')}</span>
+                    <span>${this.escapeHtml(item.statusCode === "-1" ? "N/A" : item.statusCode)}</span>
                 </div>
                 <div class="detail-group">
                     <label>Сканер:</label>
@@ -741,7 +757,7 @@ class SecurityDashboard {
                 </div>
                 <div class="detail-group">
                     <label>Рекомендации:</label>
-                    <div class="recommendation">${this.escapeHtml(item.recommendation || 'Нет рекомендаций')}</div>
+                    <div class="recommendation" style="white-space: pre-line; line-height: 1.5;">${formatRecommendations(item.recommendation)}</div>
                 </div>
             </div>
         `;

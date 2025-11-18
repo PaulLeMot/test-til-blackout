@@ -156,7 +156,7 @@ public class ScannerService {
                                 vuln.getTitle(),
                                 vuln.getSeverity().toString(),
                                 vuln.getCategory().toString(),
-                                String.valueOf(vuln.getStatusCode()),
+                                extractStatusCodeFromVulnerability(vuln),
                                 proof,
                                 recommendation,
                                 scanner.getName(),
@@ -268,6 +268,12 @@ public class ScannerService {
     }
 
     private String extractRecommendationFromVulnerability(Vulnerability vuln) {
+        // ПЕРВОЕ: Используем конкретные рекомендации из уязвимости, если они есть
+        if (vuln.getRecommendations() != null && !vuln.getRecommendations().isEmpty()) {
+            return String.join("\n", vuln.getRecommendations());
+        }
+
+        // ВТОРОЕ: Если конкретных рекомендаций нет, используем общие по категории
         switch (vuln.getCategory().toString()) {
             case "OWASP_API1_BOLA":
                 return "Реализуйте проверки авторизации на уровне объектов. Убедитесь, что пользователи могут access только свои данные.";
@@ -327,6 +333,16 @@ public class ScannerService {
             }
         }
     }
+
+    private String extractStatusCodeFromVulnerability(Vulnerability vuln) {
+        int statusCode = vuln.getStatusCode();
+        if (statusCode == -1 || statusCode == 0) {
+            return "N/A";
+        }
+        return String.valueOf(statusCode);
+    }
+
+
 
     public boolean isScanning() {
         return isScanning;
