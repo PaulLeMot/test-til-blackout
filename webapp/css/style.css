@@ -49,7 +49,7 @@ body {
 }
 
 .header-actions {
-    margin: auto;
+    margin: 0 auto;
     display: flex;
     align-items: center;
     gap: 7rem;
