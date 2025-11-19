@@ -15,6 +15,7 @@ class SecurityDashboard {
         this.lastDataCount = 0;
         this.sessions = [];
         this.activeSection = 'dashboard'; // 'dashboard', 'comparison', 'apiGraph'
+        this.scanStatusCheckInterval = null; // ДОБАВЛЕНО: Интервал для проверки статуса
         this.init();
     }
 
@@ -26,6 +27,40 @@ class SecurityDashboard {
         this.loadInitialData();
         this.restoreState();
         this.setupLogoClick();
+        this.startScanStatusPolling(); // ДОБАВЛЕНО: Запуск проверки статуса
+    }
+
+    // ДОБАВЛЕНО: Метод для запуска опроса статуса сканирования
+    startScanStatusPolling() {
+        // Проверяем статус каждые 3 секунды
+        this.scanStatusCheckInterval = setInterval(() => {
+            this.checkScanStatus();
+        }, 3000);
+    }
+
+    // ДОБАВЛЕНО: Метод для проверки статуса сканирования
+    async checkScanStatus() {
+        try {
+            const response = await fetch('/api/scan/status');
+            if (response.ok) {
+                const status = await response.json();
+
+                // Обновляем статус только если он изменился
+                if (this.isScanning !== status.scanning) {
+                    this.isScanning = status.scanning;
+                    this.updateScanButton(this.isScanning);
+
+                    // Показываем уведомление при завершении сканирования
+                    if (!this.isScanning && this.wasScanning) {
+                        this.showNotification('Сканирование завершено', 'success');
+                    }
+
+                    this.wasScanning = this.isScanning;
+                }
+            }
+        } catch (error) {
+            console.error('Error checking scan status:', error);
+        }
     }
 
     setupLogoClick() {
@@ -491,6 +526,7 @@ class SecurityDashboard {
         }
 
         try {
+            // Устанавливаем локальный статус сканирования
             this.isScanning = true;
             this.updateScanButton(true);
             this.showNotification('Запущено расширенное сканирование с новыми типами атак', 'success');
@@ -513,6 +549,7 @@ class SecurityDashboard {
         } catch (error) {
             console.error('Error starting scan:', error);
             this.showNotification('Ошибка запуска сканирования', 'error');
+            // Сбрасываем статус при ошибке
             this.isScanning = false;
             this.updateScanButton(false);
         }
@@ -523,9 +560,11 @@ class SecurityDashboard {
         if (scanning) {
             btn.innerHTML = '<span class="scanning-indicator"><span class="pulse">⏳</span> Расширенное сканирование...</span>';
             btn.disabled = true;
+            btn.classList.add('scanning');
         } else {
             btn.innerHTML = 'Запустить расширенное сканирование';
             btn.disabled = false;
+            btn.classList.remove('scanning');
         }
         this.updateConnectionStatus();
     }

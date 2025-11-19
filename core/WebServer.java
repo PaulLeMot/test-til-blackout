@@ -26,6 +26,8 @@ public class WebServer {
     private final Set<WebSocketConnection> webSocketConnections = new CopyOnWriteArraySet<>();
     private ScanLauncher scanLauncher;
     private ApiController apiController; // ДОБАВЛЕНО: ApiController для CI/CD
+    private volatile boolean isScanning = false; // ДОБАВЛЕНО: Флаг статуса сканирования
+    private volatile long scanStartTime = 0; // ДОБАВЛЕНО: Время начала сканирования
 
     public WebServer(int port) {
         this.port = port;
@@ -54,6 +56,7 @@ public class WebServer {
         server.createContext("/api/scan/stats", new ScanStatsHandler());
         server.createContext("/api/scan/clear", new ClearResultsHandler());
         server.createContext("/api/scan/export/pdf", new ExportPdfHandler());
+        server.createContext("/api/scan/status", new ScanStatusHandler()); // ДОБАВЛЕНО: Endpoint для статуса сканирования
 
         // Новые endpoints для работы с сессиями
         server.createContext("/api/sessions/list", new SessionsListHandler());
@@ -88,6 +91,23 @@ public class WebServer {
         }
     }
 
+    // ДОБАВЛЕНО: Метод для установки статуса сканирования
+    public void setScanningStatus(boolean scanning) {
+        this.isScanning = scanning;
+        if (scanning) {
+            this.scanStartTime = System.currentTimeMillis();
+        }
+    }
+
+    // ДОБАВЛЕНО: Метод для получения статуса сканирования
+    public boolean isScanning() {
+        // Автоматически сбрасываем статус если сканирование длится больше 30 минут
+        if (isScanning && (System.currentTimeMillis() - scanStartTime) > 30 * 60 * 1000) {
+            isScanning = false;
+        }
+        return isScanning;
+    }
+
     // Старый метод для обратной совместимости
     public void saveScanResult(String bankName, String title, String severity,
                                String category, String statusCode, String proof,
@@ -108,6 +128,34 @@ public class WebServer {
     }
 
     static class WebSocketConnection {
+    }
+
+    // ДОБАВЛЕНО: Обработчик для проверки статуса сканирования
+    class ScanStatusHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("GET".equals(exchange.getRequestMethod())) {
+                try {
+                    String response = "{\"scanning\": " + isScanning() + "}";
+
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                    exchange.sendResponseHeaders(200, response.getBytes().length);
+
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(response.getBytes());
+                    }
+                } catch (Exception e) {
+                    String response = "{\"error\": \"Failed to get scan status\"}";
+                    exchange.sendResponseHeaders(500, response.getBytes().length);
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(response.getBytes());
+                    }
+                }
+            } else {
+                exchange.sendResponseHeaders(405, -1);
+            }
+        }
     }
 
     // НОВЫЙ ОБРАБОТЧИК ДЛЯ ГРАФА API
@@ -665,6 +713,9 @@ public class WebServer {
                 try {
                     System.out.println("Received configuration: " + requestBody);
 
+                    // ДОБАВЛЕНО: Устанавливаем статус сканирования
+                    setScanningStatus(true);
+
                     if (scanLauncher != null) {
                         scanLauncher.startScan(requestBody);
                         String response = "{\"status\": \"success\", \"message\": \"Сканирование запущено с пользовательской конфигурацией\"}";
@@ -677,6 +728,8 @@ public class WebServer {
                             os.write(response.getBytes());
                         }
                     } else {
+                        // ДОБАВЛЕНО: Сбрасываем статус если scanLauncher не инициализирован
+                        setScanningStatus(false);
                         String response = "{\"status\": \"error\", \"message\": \"ScanLauncher not initialized\"}";
                         exchange.getResponseHeaders().set("Content-Type", "application/json");
                         exchange.sendResponseHeaders(500, response.length());
@@ -685,6 +738,8 @@ public class WebServer {
                         }
                     }
                 } catch (Exception e) {
+                    // ДОБАВЛЕНО: Сбрасываем статус при ошибке
+                    setScanningStatus(false);
                     String response = "{\"status\": \"error\", \"message\": \"Invalid configuration: \" + e.getMessage()}";
                     exchange.getResponseHeaders().set("Content-Type", "application/json");
                     exchange.sendResponseHeaders(400, response.length());
