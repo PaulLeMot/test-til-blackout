@@ -49,9 +49,10 @@ body {
 }
 
 .header-actions {
+    margin: auto;
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 7rem;
 }
 
 /* Buttons */
