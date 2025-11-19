@@ -9,14 +9,17 @@
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
-<div class="app-container">
-    <!-- Header -->
+    <div class="app-container">
+        <h1 class="app-title">
+            <span class="logo">🛡️</span>
+            black Marker scanner
+        </h1>
     <div class="header-actions">
         <button id="startScanBtn" class="btn btn-primary">
             Запустить сканирование
         </button>
         <button id="showComparison" class="btn btn-secondary">Сравнить сканирования</button>
-        <!-- НОВАЯ КНОПКА -->
+
         <button id="showApiGraph" class="btn btn-secondary">Граф API</button>
         <div class="connection-status">
             <span id="connectionStatus" class="status-offline">Офлайн</span>
@@ -322,7 +325,6 @@
         </div>
     </div>
 </div>
-
 <script src="js/app.js"></script>
 </body>
 </html>
