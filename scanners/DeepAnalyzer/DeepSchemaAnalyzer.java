@@ -1,5 +1,6 @@
-package core;
+package scanners.DeepAnalyzer;
 
+import core.Vulnerability;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.parameters.Parameter;

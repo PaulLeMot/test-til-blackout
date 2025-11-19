@@ -2,6 +2,7 @@ package core;
 
 import scanners.SecurityScanner;
 import scanners.owasp.*;
+import scanners.DeepAnalyzer.*;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
