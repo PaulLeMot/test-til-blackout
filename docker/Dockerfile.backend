@@ -9,7 +9,7 @@ COPY . .
 RUN mkdir -p logs
 
 # Компилируем проект ВНУТРИ контейнера
-RUN javac -cp "lib/*" Main.java core/*.java scanners/*.java scanners/owasp/*.java scanners/fuzzing/*.java gost/*.java
+RUN javac -cp "lib/*" Main.java core/*.java scanners/*.java scanners/owasp/*.java gost/*.java
 
 # Открываем порт для веб-интерфейса
 EXPOSE 8081
