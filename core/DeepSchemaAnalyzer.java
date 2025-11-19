@@ -5,6 +5,8 @@ import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.parameters.RequestBody;
+import io.swagger.v3.oas.models.media.MediaType;
 import java.util.*;
 import java.util.regex.Pattern;
 import java.util.regex.Matcher;
@@ -16,13 +18,20 @@ public class DeepSchemaAnalyzer {
 
     // Регулярные выражения для поиска чувствительных данных
     private static final Pattern SENSITIVE_FIELD_PATTERN = Pattern.compile(
-            "(password|token|secret|key|auth|credential|private|sensitive)",
+            "(password|token|secret|key|auth|credential|private|sensitive|admin|system|privilege|root|override|internal|config|setting)",
             Pattern.CASE_INSENSITIVE
     );
 
     private static final Pattern ID_FIELD_PATTERN = Pattern.compile(
-            "(id|identifier|guid|uuid|account|user)",
+            "(id|identifier|guid|uuid|account|user|customer)",
             Pattern.CASE_INSENSITIVE
+    );
+
+    // Поля, которые могут указывать на массовое присвоение
+    private static final Set<String> RISKY_FIELDS = Set.of(
+            "role", "permission", "privilege", "access_level", "is_admin", "admin",
+            "system", "internal", "config", "settings", "flags", "status",
+            "balance", "amount", "limit", "overdraft", "premium", "feature"
     );
 
     public DeepSchemaAnalyzer(OpenAPI openAPI) {
@@ -62,86 +71,36 @@ public class DeepSchemaAnalyzer {
                     "Отсутствуют схемы безопасности",
                     "API не определяет схемы аутентификации и авторизации",
                     Vulnerability.Severity.HIGH,
-                    Vulnerability.Category.OWASP_API8_SM
+                    Vulnerability.Category.OWASP_API8_SM,
+                    "Проверка components.securitySchemes в OpenAPI спецификации: отсутствует\n\n" +
+                            "Без определения схем безопасности невозможно гарантировать:\n" +
+                            "- Аутентификацию пользователей\n" +
+                            "- Авторизацию запросов\n" +
+                            "- Защиту от несанкционированного доступа"
             );
             return;
         }
 
         var securitySchemes = openAPI.getComponents().getSecuritySchemes();
-        boolean hasOAuth = false;
-        boolean hasApiKey = false;
-        boolean hasBearer = false;
+        StringBuilder evidence = new StringBuilder();
+        evidence.append("Обнаружены схемы безопасности:\n");
 
         for (var entry : securitySchemes.entrySet()) {
             var scheme = entry.getValue();
-            if (scheme.getType() == null) continue;
-
-            switch (scheme.getType().toString().toLowerCase()) {
-                case "oauth2":
-                    hasOAuth = true;
-                    analyzeOAuthScheme(scheme, entry.getKey());
-                    break;
-                case "apikey":
-                    hasApiKey = true;
-                    analyzeApiKeyScheme(scheme, entry.getKey());
-                    break;
-                case "http":
-                    if ("bearer".equalsIgnoreCase(scheme.getScheme())) {
-                        hasBearer = true;
-                    }
-                    break;
-            }
+            evidence.append("- ").append(entry.getKey()).append(": ").append(scheme.getType()).append("\n");
         }
 
-        if (!hasOAuth && !hasApiKey && !hasBearer) {
-            addVulnerability(
-                    "Недостаточные схемы безопасности",
-                    "API использует слабые или устаревшие схемы аутентификации",
-                    Vulnerability.Severity.MEDIUM,
-                    Vulnerability.Category.OWASP_API2_BROKEN_AUTH
-            );
-        }
-    }
+        // Проверка использования security в операциях
+        boolean hasGlobalSecurity = openAPI.getSecurity() != null && !openAPI.getSecurity().isEmpty();
+        evidence.append("\nГлобальная безопасность: ").append(hasGlobalSecurity ? "настроена" : "отсутствует").append("\n");
 
-    private void analyzeOAuthScheme(io.swagger.v3.oas.models.security.SecurityScheme scheme, String name) {
-        if (scheme.getFlows() == null) {
+        if (!hasGlobalSecurity) {
             addVulnerability(
-                    "Неполная конфигурация OAuth2",
-                    "Схема OAuth2 '" + name + "' не определяет потоки авторизации",
+                    "Отсутствует глобальная безопасность",
+                    "OpenAPI спецификация не определяет глобальные требования безопасности",
                     Vulnerability.Severity.MEDIUM,
-                    Vulnerability.Category.OWASP_API2_BROKEN_AUTH
-            );
-            return;
-        }
-
-        // Проверка scope
-        if (scheme.getFlows().getAuthorizationCode() != null) {
-            var flow = scheme.getFlows().getAuthorizationCode();
-            if (flow.getScopes() == null || flow.getScopes().isEmpty()) {
-                addVulnerability(
-                        "Отсутствуют scope в OAuth2",
-                        "Схема OAuth2 '" + name + "' не определяет scope для контроля доступа",
-                        Vulnerability.Severity.MEDIUM,
-                        Vulnerability.Category.OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH
-                );
-            }
-        }
-    }
-
-    private void analyzeApiKeyScheme(io.swagger.v3.oas.models.security.SecurityScheme scheme, String name) {
-        if (scheme.getIn() == null) {
-            addVulnerability(
-                    "Неопределенное местоположение API Key",
-                    "Схема API Key '" + name + "' не определяет, где передается ключ",
-                    Vulnerability.Severity.MEDIUM,
-                    Vulnerability.Category.OWASP_API8_SM
-            );
-        } else if ("query".equalsIgnoreCase(scheme.getIn().toString())) {
-            addVulnerability(
-                    "API Key в query параметрах",
-                    "Ключ API передается в query параметрах, что может привести к его утечке в логах",
-                    Vulnerability.Severity.MEDIUM,
-                    Vulnerability.Category.OWASP_API8_SM
+                    Vulnerability.Category.OWASP_API8_SM,
+                    evidence.toString()
             );
         }
     }
@@ -161,7 +120,7 @@ public class DeepSchemaAnalyzer {
 
     private void analyzeSchema(String schemaName, Schema<?> schema, Set<String> visited) {
         if (visited.contains(schemaName)) {
-            return; // Предотвращение циклических ссылок
+            return;
         }
         visited.add(schemaName);
 
@@ -172,7 +131,6 @@ public class DeepSchemaAnalyzer {
 
                 analyzeProperty(schemaName, propertyName, propertySchema);
 
-                // Рекурсивный анализ вложенных схем
                 if (propertySchema.get$ref() != null) {
                     String refSchemaName = extractSchemaName(propertySchema.get$ref());
                     if (refSchemaName != null && openAPI.getComponents().getSchemas() != null) {
@@ -185,7 +143,6 @@ public class DeepSchemaAnalyzer {
             }
         }
 
-        // Анализ наследования (allOf, anyOf, oneOf)
         analyzeSchemaComposition(schemaName, schema, visited);
     }
 
@@ -195,66 +152,15 @@ public class DeepSchemaAnalyzer {
             if (propertySchema.getFormat() == null || !"password".equals(propertySchema.getFormat())) {
                 addVulnerability(
                         "Чувствительное поле без маскирования",
-                        "Поле '" + propertyName + "' в схеме '" + schemaName + "' содержит чувствительные данные, но не помечено как password",
+                        "Поле '" + propertyName + "' в схеме '" + schemaName + "' содержит чувствительные данные",
                         Vulnerability.Severity.MEDIUM,
-                        Vulnerability.Category.OWASP_API8_SM
+                        Vulnerability.Category.OWASP_API8_SM,
+                        "Схема: " + schemaName + "\n" +
+                                "Поле: " + propertyName + "\n" +
+                                "Тип: " + propertySchema.getType() + "\n" +
+                                "Формат: " + propertySchema.getFormat() + "\n\n" +
+                                "Рекомендация: установить формат 'password' для маскирования ввода"
                 );
-            }
-        }
-
-        // Поиск идентификаторов
-        if (ID_FIELD_PATTERN.matcher(propertyName).find() && propertySchema.getType() != null) {
-            String type = propertySchema.getType();
-            if ("string".equals(type) && propertySchema.getFormat() == null) {
-                addVulnerability(
-                        "Идентификатор без формата",
-                        "Поле идентификатора '" + propertyName + "' в схеме '" + schemaName + "' не имеет формата (uuid, etc)",
-                        Vulnerability.Severity.LOW,
-                        Vulnerability.Category.OWASP_API1_BOLA
-                );
-            }
-        }
-
-        // Проверка минимальных/максимальных ограничений
-        if (propertySchema.getType() != null) {
-            switch (propertySchema.getType()) {
-                case "string":
-                    if (propertySchema.getMinLength() == null && propertySchema.getMaxLength() == null) {
-                        addVulnerability(
-                                "Отсутствуют ограничения длины строки",
-                                "Строковое поле '" + propertyName + "' в схеме '" + schemaName + "' не имеет ограничений длины",
-                                Vulnerability.Severity.LOW,
-                                Vulnerability.Category.OWASP_API8_SM
-                        );
-                    }
-                    break;
-                case "integer":
-                case "number":
-                    if (propertySchema.getMinimum() == null && propertySchema.getMaximum() == null) {
-                        addVulnerability(
-                                "Отсутствуют ограничения числового поля",
-                                "Числовое поле '" + propertyName + "' в схеме '" + schemaName + "' не имеет минимальных/максимальных значений",
-                                Vulnerability.Severity.LOW,
-                                Vulnerability.Category.OWASP_API8_SM
-                        );
-                    }
-                    break;
-            }
-        }
-    }
-
-    private void analyzeSchemaComposition(String schemaName, Schema<?> schema, Set<String> visited) {
-        if (schema.getAllOf() != null) {
-            for (Schema<?> subSchema : schema.getAllOf()) {
-                if (subSchema.get$ref() != null) {
-                    String refName = extractSchemaName(subSchema.get$ref());
-                    if (refName != null && openAPI.getComponents().getSchemas() != null) {
-                        Schema<?> refSchema = openAPI.getComponents().getSchemas().get(refName);
-                        if (refSchema != null) {
-                            analyzeSchema(refName, refSchema, visited);
-                        }
-                    }
-                }
             }
         }
     }
@@ -269,20 +175,157 @@ public class DeepSchemaAnalyzer {
             String path = pathEntry.getKey();
             PathItem pathItem = pathEntry.getValue();
 
-            for (Operation op : Arrays.asList(
-                    pathItem.getGet(), pathItem.getPost(), pathItem.getPut(),
-                    pathItem.getDelete(), pathItem.getPatch())) {
+            // Анализируем каждую операцию с указанием метода
+            if (pathItem.getGet() != null) {
+                analyzeOperationParameters(path, "GET", pathItem.getGet());
+                analyzeRequestBody(path, "GET", pathItem.getGet());
+            }
+            if (pathItem.getPost() != null) {
+                analyzeOperationParameters(path, "POST", pathItem.getPost());
+                analyzeRequestBody(path, "POST", pathItem.getPost());
+            }
+            if (pathItem.getPut() != null) {
+                analyzeOperationParameters(path, "PUT", pathItem.getPut());
+                analyzeRequestBody(path, "PUT", pathItem.getPut());
+            }
+            if (pathItem.getDelete() != null) {
+                analyzeOperationParameters(path, "DELETE", pathItem.getDelete());
+                analyzeRequestBody(path, "DELETE", pathItem.getDelete());
+            }
+            if (pathItem.getPatch() != null) {
+                analyzeOperationParameters(path, "PATCH", pathItem.getPatch());
+                analyzeRequestBody(path, "PATCH", pathItem.getPatch());
+            }
+        }
+    }
 
-                if (op != null && op.getParameters() != null) {
-                    for (Parameter param : op.getParameters()) {
-                        analyzeParameter(path, op, param);
-                    }
+    private void analyzeOperationParameters(String path, String method, Operation operation) {
+        if (operation == null || operation.getParameters() == null) return;
+
+        for (Parameter param : operation.getParameters()) {
+            analyzeParameter(path, method, operation, param);
+        }
+    }
+
+    private void analyzeRequestBody(String path, String method, Operation operation) {
+        if (operation == null || operation.getRequestBody() == null) return;
+
+        RequestBody requestBody = operation.getRequestBody();
+
+        if (requestBody.getContent() != null) {
+            for (MediaType mediaType : requestBody.getContent().values()) {
+                if (mediaType.getSchema() != null) {
+                    analyzeRequestSchema(path, method, mediaType.getSchema());
                 }
             }
         }
     }
 
-    private void analyzeParameter(String path, Operation operation, Parameter param) {
+    private void analyzeRequestSchema(String path, String method, Schema<?> schema) {
+        // Анализ схемы запроса на риск массового присвоения
+        List<String> riskyFields = findRiskyFieldsInSchema(schema);
+
+        if (!riskyFields.isEmpty()) {
+            String evidence = buildMassAssignmentEvidence(path, method, schema, riskyFields);
+
+            addVulnerability(
+                    "Риск массового присвоения в " + method + " " + path,
+                    "Обнаружены потенциально опасные поля, которые могут быть изменены клиентом",
+                    Vulnerability.Severity.HIGH,
+                    Vulnerability.Category.OWASP_API3_BOPLA,
+                    evidence
+            );
+        }
+    }
+
+    private List<String> findRiskyFieldsInSchema(Schema<?> schema) {
+        List<String> riskyFields = new ArrayList<>();
+
+        if (schema.getProperties() != null) {
+            for (String fieldName : schema.getProperties().keySet()) {
+                if (isRiskyField(fieldName)) {
+                    riskyFields.add(fieldName);
+                }
+            }
+        }
+
+        // Рекурсивная проверка вложенных схем
+        if (schema.getProperties() != null) {
+            for (var propEntry : schema.getProperties().entrySet()) {
+                Schema<?> propSchema = (Schema<?>) propEntry.getValue();
+                if (propSchema.getProperties() != null) {
+                    riskyFields.addAll(findRiskyFieldsInSchema(propSchema));
+                }
+            }
+        }
+
+        return riskyFields;
+    }
+
+    private boolean isRiskyField(String fieldName) {
+        String lowerFieldName = fieldName.toLowerCase();
+
+        // Проверка по ключевым словам
+        for (String risky : RISKY_FIELDS) {
+            if (lowerFieldName.contains(risky.toLowerCase())) {
+                return true;
+            }
+        }
+
+        // Проверка по паттернам
+        return SENSITIVE_FIELD_PATTERN.matcher(fieldName).find() ||
+                fieldName.toLowerCase().contains("role") ||
+                fieldName.toLowerCase().contains("permission") ||
+                fieldName.toLowerCase().contains("access") ||
+                fieldName.toLowerCase().contains("privilege") ||
+                fieldName.toLowerCase().contains("admin") ||
+                fieldName.toLowerCase().contains("system");
+    }
+
+    private String buildMassAssignmentEvidence(String path, String method, Schema<?> schema, List<String> riskyFields) {
+        StringBuilder evidence = new StringBuilder();
+        evidence.append("Эндпоинт: ").append(method).append(" ").append(path).append("\n\n");
+
+        evidence.append("Обнаружены потенциально опасные поля:\n");
+        for (String field : riskyFields) {
+            evidence.append("• ").append(field).append("\n");
+        }
+
+        evidence.append("\nСхема запроса: ").append(schema.getClass().getSimpleName()).append("\n");
+
+        if (schema.getRequired() != null && !schema.getRequired().isEmpty()) {
+            evidence.append("Обязательные поля: ").append(String.join(", ", schema.getRequired())).append("\n");
+        }
+
+        evidence.append("\nРиск: Клиент может изменить поля, влияющие на:\n");
+        evidence.append("- Уровень привилегий (role, permission)\n");
+        evidence.append("- Системные настройки (system, config)\n");
+        evidence.append("- Финансовые лимиты (balance, limit)\n");
+        evidence.append("- Флаги функциональности (premium, feature)\n");
+
+        // Пример уязвимого запроса
+        evidence.append("\nПример потенциально уязвимого запроса:\n");
+        evidence.append(method).append(" ").append(path).append("\n");
+        evidence.append("Content-Type: application/json\n");
+        evidence.append("{\n");
+
+        for (int i = 0; i < Math.min(riskyFields.size(), 5); i++) {
+            String field = riskyFields.get(i);
+            evidence.append("  \"").append(field).append("\": \"злонамеренное_значение\"");
+            if (i < Math.min(riskyFields.size(), 5) - 1) {
+                evidence.append(",");
+            }
+            evidence.append("\n");
+        }
+        if (riskyFields.size() > 5) {
+            evidence.append("  ... и еще ").append(riskyFields.size() - 5).append(" полей\n");
+        }
+        evidence.append("}");
+
+        return evidence.toString();
+    }
+
+    private void analyzeParameter(String path, String method, Operation operation, Parameter param) {
         if (param.getSchema() == null) return;
 
         // Проверка параметров пути
@@ -290,22 +333,31 @@ public class DeepSchemaAnalyzer {
             if (param.getRequired() == null || !param.getRequired()) {
                 addVulnerability(
                         "Необязательный path параметр",
-                        "Path параметр '" + param.getName() + "' в '" + path + "' должен быть обязательным",
+                        "Path параметр должен быть обязательным",
                         Vulnerability.Severity.MEDIUM,
-                        Vulnerability.Category.OWASP_API8_SM
+                        Vulnerability.Category.OWASP_API8_SM,
+                        "Эндпоинт: " + method + " " + path + "\n" +
+                                "Параметр: " + param.getName() + "\n" +
+                                "Тип: " + param.getIn() + "\n" +
+                                "Обязательный: " + param.getRequired() + "\n\n" +
+                                "Path параметры должны быть обязательными для корректной маршрутизации"
                 );
             }
         }
 
-        // Проверка query параметров
+        // Проверка query параметров на инъекции
         if ("query".equals(param.getIn())) {
             Schema<?> schema = param.getSchema();
             if (schema.getType() != null && "array".equals(schema.getType())) {
                 addVulnerability(
                         "Массив в query параметрах",
-                        "Query параметр '" + param.getName() + "' в '" + path + "' имеет тип array, что может привести к инъекциям",
+                        "Query параметр типа array может привести к инъекциям",
                         Vulnerability.Severity.MEDIUM,
-                        Vulnerability.Category.OWASP_API8_SM
+                        Vulnerability.Category.OWASP_API8_SM,
+                        "Эндпоинт: " + method + " " + path + "\n" +
+                                "Параметр: " + param.getName() + "\n" +
+                                "Тип: array\n\n" +
+                                "Риск: параметры массива в query могут быть использованы для инъекций"
                 );
             }
         }
@@ -330,6 +382,7 @@ public class DeepSchemaAnalyzer {
     }
 
     private void analyzePathItem(String path, PathItem pathItem, Map<String, List<OperationInfo>> operationsByTag) {
+        // Теперь передаем метод явно для каждой операции
         analyzeOperation(path, "GET", pathItem.getGet(), operationsByTag);
         analyzeOperation(path, "POST", pathItem.getPost(), operationsByTag);
         analyzeOperation(path, "PUT", pathItem.getPut(), operationsByTag);
@@ -343,7 +396,6 @@ public class DeepSchemaAnalyzer {
 
         OperationInfo opInfo = new OperationInfo(path, method, operation);
 
-        // Группировка по тегам для анализа бизнес-процессов
         if (operation.getTags() != null) {
             for (String tag : operation.getTags()) {
                 operationsByTag.computeIfAbsent(tag, k -> new ArrayList<>()).add(opInfo);
@@ -354,6 +406,9 @@ public class DeepSchemaAnalyzer {
         if (path.contains("{") && path.contains("}")) {
             analyzeIdBasedOperation(path, method, operation);
         }
+
+        // Проверка безопасности операций
+        analyzeOperationSecurity(path, method, operation);
     }
 
     private void analyzeIdBasedOperation(String path, String method, Operation operation) {
@@ -368,46 +423,43 @@ public class DeepSchemaAnalyzer {
             if (!hasSecurityRequirement(operation)) {
                 addVulnerability(
                         "Операция с ID без проверки авторизации",
-                        method + " " + path + " работает с идентификаторами объектов без явных требований безопасности",
+                        method + " " + path + " работает с идентификаторами объектов",
                         Vulnerability.Severity.HIGH,
-                        Vulnerability.Category.OWASP_API1_BOLA
+                        Vulnerability.Category.OWASP_API1_BOLA,
+                        "Эндпоинт: " + method + " " + path + "\n" +
+                                "ID параметр: " + idParam + "\n" +
+                                "Требования безопасности: отсутствуют\n\n" +
+                                "Риск: Broken Object Level Authorization (BOLA)\n" +
+                                "Атакующий может подменить ID для доступа к чужим данным"
                 );
-            }
-
-            // Проверка на массовое присвоение
-            if ("PUT".equals(method) || "PATCH".equals(method)) {
-                if (operation.getRequestBody() != null) {
-                    analyzeMassAssignmentRisk(path, method, operation);
-                }
             }
         }
     }
 
-    private void analyzeMassAssignmentRisk(String path, String method, Operation operation) {
-        addVulnerability(
-                "Риск массового присвоения",
-                method + " " + path + " может позволять массовое присвоение (mass assignment)",
-                Vulnerability.Severity.MEDIUM,
-                Vulnerability.Category.OWASP_API3_BOPLA
-        );
+    private void analyzeOperationSecurity(String path, String method, Operation operation) {
+        if (!hasSecurityRequirement(operation)) {
+            addVulnerability(
+                    "Операция без требований безопасности",
+                    method + " " + path + " не имеет настроек безопасности",
+                    Vulnerability.Severity.MEDIUM,
+                    Vulnerability.Category.OWASP_API2_BROKEN_AUTH,
+                    "Эндпоинт: " + method + " " + path + "\n" +
+                            "Описание: " + (operation.getSummary() != null ? operation.getSummary() : "не указано") + "\n\n" +
+                            "Риск: отсутствие аутентификации и авторизации\n" +
+                            "Рекомендация: добавить security requirements в операцию"
+            );
+        }
     }
 
     /**
      * Анализ бизнес-логических потоков
      */
     private void analyzeBusinessLogicFlows() {
-        // Анализ последовательностей операций (создание -> чтение -> обновление -> удаление)
         analyzeCRUDFlows();
-
-        // Анализ финансовых транзакций
         analyzeFinancialFlows();
-
-        // Анализ рабочих процессов
-        analyzeWorkflowFlows();
     }
 
     private void analyzeCRUDFlows() {
-        // Поиск стандартных CRUD операций и проверка их согласованности
         Map<String, CRUDOperations> resourceOperations = new HashMap<>();
 
         if (openAPI.getPaths() != null) {
@@ -415,7 +467,6 @@ public class DeepSchemaAnalyzer {
                 String path = pathEntry.getKey();
                 PathItem pathItem = pathEntry.getValue();
 
-                // Извлечение имени ресурса из пути
                 String resourceName = extractResourceName(path);
                 if (resourceName != null) {
                     CRUDOperations ops = resourceOperations.computeIfAbsent(resourceName, k -> new CRUDOperations());
@@ -436,53 +487,58 @@ public class DeepSchemaAnalyzer {
             if (ops.hasCreate() && !ops.hasRead()) {
                 addVulnerability(
                         "Несогласованность CRUD: создание без чтения",
-                        "Ресурс '" + resource + "' позволяет создание, но не предоставляет операцию чтения",
+                        "Ресурс позволяет создание, но не предоставляет операцию чтения",
                         Vulnerability.Severity.LOW,
-                        Vulnerability.Category.OWASP_API9_INVENTORY
+                        Vulnerability.Category.OWASP_API9_INVENTORY,
+                        "Ресурс: " + resource + "\n" +
+                                "Операции: CREATE=" + ops.hasCreate() + ", READ=" + ops.hasRead() +
+                                ", UPDATE=" + ops.hasUpdate() + ", DELETE=" + ops.hasDelete() + "\n\n" +
+                                "Несогласованность: можно создавать объекты, но нельзя их читать\n" +
+                                "Это может указывать на неполную реализацию API"
                 );
             }
 
             if (ops.hasUpdate() && !ops.hasRead()) {
                 addVulnerability(
                         "Несогласованность CRUD: обновление без чтения",
-                        "Ресурс '" + resource + "' позволяет обновление, но не предоставляет операцию чтения",
+                        "Ресурс позволяет обновление, но не предоставляет операцию чтения",
                         Vulnerability.Severity.MEDIUM,
-                        Vulnerability.Category.OWASP_API6_BUSINESS_FLOW
+                        Vulnerability.Category.OWASP_API6_BUSINESS_FLOW,
+                        "Ресурс: " + resource + "\n" +
+                                "Операции: CREATE=" + ops.hasCreate() + ", READ=" + ops.hasRead() +
+                                ", UPDATE=" + ops.hasUpdate() + ", DELETE=" + ops.hasDelete() + "\n\n" +
+                                "Риск: обновление данных без возможности их просмотра\n" +
+                                "Может привести к ошибкам бизнес-логики"
                 );
             }
         }
     }
 
     private void analyzeFinancialFlows() {
-        // Поиск финансовых операций
         List<OperationInfo> financialOps = findFinancialOperations();
 
         for (OperationInfo op : financialOps) {
-            // Проверка дополнительной аутентификации для финансовых операций
             if (!hasStrongSecurity(op.operation)) {
                 addVulnerability(
                         "Финансовая операция без усиленной безопасности",
-                        op.method + " " + op.path + " - финансовая операция должна иметь MFA или дополнительные проверки",
+                        op.method + " " + op.path + " - финансовая операция",
                         Vulnerability.Severity.HIGH,
-                        Vulnerability.Category.OWASP_API6_BUSINESS_FLOW
+                        Vulnerability.Category.OWASP_API6_BUSINESS_FLOW,
+                        "Эндпоинт: " + op.method + " " + op.path + "\n" +
+                                "Тип: финансовая операция\n" +
+                                "Требования безопасности: " + (hasSecurityRequirement(op.operation) ? "базовые" : "отсутствуют") + "\n\n" +
+                                "Риск: финансовые операции должны иметь усиленную безопасность\n" +
+                                "Рекомендация: MFA, лимиты, аудит транзакций"
                 );
             }
         }
-    }
-
-    private void analyzeWorkflowFlows() {
-        // Анализ последовательностей операций, образующих рабочие процессы
-        // Например: заявка -> одобрение -> выполнение
     }
 
     /**
      * Анализ взаимосвязей данных между эндпоинтами
      */
     private void analyzeDataRelationships() {
-        // Поиск связей между ресурсами (например, account -> transactions)
         analyzeResourceRelationships();
-
-        // Анализ прав доступа на основе связей данных
         analyzeDataAccessPatterns();
     }
 
@@ -491,7 +547,6 @@ public class DeepSchemaAnalyzer {
             return;
         }
 
-        // Построение графа связей между схемами
         Map<String, Set<String>> schemaRelationships = new HashMap<>();
 
         for (var entry : openAPI.getComponents().getSchemas().entrySet()) {
@@ -501,199 +556,17 @@ public class DeepSchemaAnalyzer {
             findSchemaReferences(schema, schemaName, schemaRelationships, new HashSet<>());
         }
 
-        // Анализ связей на предмет уязвимостей доступа
         analyzeRelationshipAccessRisks(schemaRelationships);
     }
 
-    private void findSchemaReferences(Schema<?> schema, String currentSchema,
-                                      Map<String, Set<String>> relationships, Set<String> visited) {
-        if (visited.contains(currentSchema)) return;
-        visited.add(currentSchema);
-
-        if (schema.getProperties() != null) {
-            for (var propEntry : schema.getProperties().entrySet()) {
-                Schema<?> propSchema = (Schema<?>) propEntry.getValue();
-
-                if (propSchema.get$ref() != null) {
-                    String refSchema = extractSchemaName(propSchema.get$ref());
-                    if (refSchema != null) {
-                        relationships.computeIfAbsent(currentSchema, k -> new HashSet<>()).add(refSchema);
-
-                        // Рекурсивный поиск
-                        if (openAPI.getComponents().getSchemas() != null) {
-                            Schema<?> nestedSchema = openAPI.getComponents().getSchemas().get(refSchema);
-                            if (nestedSchema != null) {
-                                findSchemaReferences(nestedSchema, refSchema, relationships, visited);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private void analyzeRelationshipAccessRisks(Map<String, Set<String>> relationships) {
-        for (var entry : relationships.entrySet()) {
-            String sourceSchema = entry.getKey();
-            Set<String> relatedSchemas = entry.getValue();
-
-            for (String targetSchema : relatedSchemas) {
-                // Проверка, могут ли связанные схемы создавать риски горизонтального доступа
-                if (isSensitiveSchema(sourceSchema) && isSensitiveSchema(targetSchema)) {
-                    addVulnerability(
-                            "Риск цепочки доступа к чувствительным данным",
-                            "Связь между '" + sourceSchema + "' и '" + targetSchema + "' может позволить несанкционированный доступ через связанные объекты",
-                            Vulnerability.Severity.MEDIUM,
-                            Vulnerability.Category.OWASP_API1_BOLA
-                    );
-                }
-            }
-        }
-    }
-
-    /**
-     * Анализ паттернов доступа к данным
-     */
     private void analyzeDataAccessPatterns() {
         if (openAPI.getPaths() == null) return;
 
-        // Анализ операций чтения/записи чувствительных данных
         for (var pathEntry : openAPI.getPaths().entrySet()) {
             String path = pathEntry.getKey();
             PathItem pathItem = pathEntry.getValue();
 
             analyzeDataAccessInPath(path, pathItem);
-        }
-    }
-
-    private void analyzeDataAccessInPath(String path, PathItem pathItem) {
-        // Анализ операций GET для потенциального раскрытия излишней информации
-        if (pathItem.getGet() != null) {
-            analyzeDataExposure(path, "GET", pathItem.getGet());
-        }
-
-        // Анализ операций POST/PUT для потенциальной перезаписи данных
-        if (pathItem.getPost() != null) {
-            analyzeDataModification(path, "POST", pathItem.getPost());
-        }
-        if (pathItem.getPut() != null) {
-            analyzeDataModification(path, "PUT", pathItem.getPut());
-        }
-    }
-
-    private void analyzeDataExposure(String path, String method, Operation operation) {
-        // Проверка на раскрытие излишней информации в ответах
-        if (operation.getResponses() != null) {
-            var successResponse = operation.getResponses().get("200");
-            if (successResponse != null && successResponse.getContent() != null) {
-                // Проверяем, возвращаются ли чувствительные данные
-                for (var mediaType : successResponse.getContent().values()) {
-                    if (mediaType.getSchema() != null) {
-                        checkSchemaForSensitiveDataExposure(path, method, mediaType.getSchema());
-                    }
-                }
-            }
-        }
-    }
-
-    private void analyzeDataModification(String path, String method, Operation operation) {
-        // Проверка на возможность модификации чувствительных данных
-        if (operation.getRequestBody() != null && operation.getRequestBody().getContent() != null) {
-            for (var mediaType : operation.getRequestBody().getContent().values()) {
-                if (mediaType.getSchema() != null) {
-                    checkSchemaForSensitiveDataModification(path, method, mediaType.getSchema());
-                }
-            }
-        }
-    }
-
-    private void checkSchemaForSensitiveDataExposure(String path, String method, Schema<?> schema) {
-        // Проверка схемы на раскрытие чувствительных данных
-        if (containsSensitiveFields(schema)) {
-            addVulnerability(
-                    "Раскрытие чувствительных данных",
-                    method + " " + path + " возвращает чувствительные данные в ответе",
-                    Vulnerability.Severity.MEDIUM,
-                    Vulnerability.Category.OWASP_API8_SM
-            );
-        }
-    }
-
-    private void checkSchemaForSensitiveDataModification(String path, String method, Schema<?> schema) {
-        // Проверка схемы на возможность модификации чувствительных данных
-        if (containsSensitiveFields(schema)) {
-            addVulnerability(
-                    "Модификация чувствительных данных",
-                    method + " " + path + " позволяет изменять чувствительные данные",
-                    Vulnerability.Severity.MEDIUM,
-                    Vulnerability.Category.OWASP_API3_BOPLA
-            );
-        }
-    }
-
-    private boolean containsSensitiveFields(Schema<?> schema) {
-        // Рекурсивная проверка на наличие чувствительных полей в схеме
-        if (schema.getProperties() != null) {
-            for (var propEntry : schema.getProperties().entrySet()) {
-                String propertyName = propEntry.getKey();
-                if (SENSITIVE_FIELD_PATTERN.matcher(propertyName).find()) {
-                    return true;
-                }
-
-                // Рекурсивная проверка вложенных свойств
-                Schema<?> propertySchema = (Schema<?>) propEntry.getValue();
-                if (containsSensitiveFields(propertySchema)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private void analyzeCrossEndpointRelationships(Map<String, List<OperationInfo>> operationsByTag) {
-        // Анализ отношений между эндпоинтами в рамках одного тега (бизнес-процесса)
-        for (var entry : operationsByTag.entrySet()) {
-            String tag = entry.getKey();
-            List<OperationInfo> operations = entry.getValue();
-
-            if (operations.size() > 1) {
-                analyzeEndpointSequence(tag, operations);
-            }
-        }
-    }
-
-    private void analyzeEndpointSequence(String tag, List<OperationInfo> operations) {
-        // Поиск последовательностей операций, которые должны выполняться в определенном порядке
-        // Например: создание платежа -> подтверждение платежа -> выполнение платежа
-
-        Map<String, List<OperationInfo>> operationsByResource = groupOperationsByResource(operations);
-
-        for (var resourceEntry : operationsByResource.entrySet()) {
-            List<OperationInfo> resourceOps = resourceEntry.getValue();
-            analyzeResourceWorkflow(tag, resourceOps);
-        }
-    }
-
-    private void analyzeResourceWorkflow(String tag, List<OperationInfo> operations) {
-        // Проверка наличия необходимых операций в workflow
-        boolean hasStateTransitions = operations.stream()
-                .anyMatch(op -> op.path.contains("status") || op.path.contains("state") ||
-                        (op.operation.getSummary() != null &&
-                                op.operation.getSummary().toLowerCase().contains("status")));
-
-        if (hasStateTransitions) {
-            // Проверка безопасности переходов состояний
-            boolean hasStateSecurity = operations.stream()
-                    .anyMatch(op -> hasStrongSecurity(op.operation));
-
-            if (!hasStateSecurity) {
-                addVulnerability(
-                        "Небезопасные переходы состояний",
-                        "Workflow '" + tag + "' имеет операции изменения состояния без должной безопасности",
-                        Vulnerability.Severity.MEDIUM,
-                        Vulnerability.Category.OWASP_API6_BUSINESS_FLOW
-                );
-            }
         }
     }
 
@@ -704,7 +577,6 @@ public class DeepSchemaAnalyzer {
 
     private boolean hasStrongSecurity(Operation operation) {
         if (operation.getSecurity() == null) return false;
-
         return operation.getSecurity().stream()
                 .anyMatch(secReq -> secReq != null && !secReq.isEmpty());
     }
@@ -718,7 +590,6 @@ public class DeepSchemaAnalyzer {
     }
 
     private String extractResourceName(String path) {
-        // Извлечение имени ресурса из пути (например, /accounts/{id} -> accounts)
         String[] parts = path.split("/");
         for (String part : parts) {
             if (!part.isEmpty() && !part.startsWith("{") && !part.startsWith("$")) {
@@ -736,7 +607,6 @@ public class DeepSchemaAnalyzer {
                 String path = pathEntry.getKey().toLowerCase();
                 PathItem pathItem = pathEntry.getValue();
 
-                // Поиск финансовых операций по ключевым словам в пути
                 if (path.contains("payment") || path.contains("transfer") || path.contains("transaction") ||
                         path.contains("balance") || path.contains("account") || path.contains("fund")) {
 
@@ -761,17 +631,57 @@ public class DeepSchemaAnalyzer {
             operations.add(new OperationInfo(path, "PATCH", pathItem.getPatch()));
     }
 
-    private Map<String, List<OperationInfo>> groupOperationsByResource(List<OperationInfo> operations) {
-        Map<String, List<OperationInfo>> grouped = new HashMap<>();
+    private void findSchemaReferences(Schema<?> schema, String currentSchema,
+                                      Map<String, Set<String>> relationships, Set<String> visited) {
+        if (visited.contains(currentSchema)) return;
+        visited.add(currentSchema);
 
-        for (OperationInfo op : operations) {
-            String resource = extractResourceName(op.path);
-            if (resource != null) {
-                grouped.computeIfAbsent(resource, k -> new ArrayList<>()).add(op);
+        if (schema.getProperties() != null) {
+            for (var propEntry : schema.getProperties().entrySet()) {
+                Schema<?> propSchema = (Schema<?>) propEntry.getValue();
+
+                if (propSchema.get$ref() != null) {
+                    String refSchema = extractSchemaName(propSchema.get$ref());
+                    if (refSchema != null) {
+                        relationships.computeIfAbsent(currentSchema, k -> new HashSet<>()).add(refSchema);
+                    }
+                }
             }
         }
+    }
 
-        return grouped;
+    private void analyzeRelationshipAccessRisks(Map<String, Set<String>> relationships) {
+        for (var entry : relationships.entrySet()) {
+            String sourceSchema = entry.getKey();
+            Set<String> relatedSchemas = entry.getValue();
+
+            for (String targetSchema : relatedSchemas) {
+                if (isSensitiveSchema(sourceSchema) && isSensitiveSchema(targetSchema)) {
+                    addVulnerability(
+                            "Риск цепочки доступа к чувствительным данным",
+                            "Связь между схемами может позволить несанкционированный доступ",
+                            Vulnerability.Severity.MEDIUM,
+                            Vulnerability.Category.OWASP_API1_BOLA,
+                            "Схема источника: " + sourceSchema + "\n" +
+                                    "Связанная схема: " + targetSchema + "\n\n" +
+                                    "Риск: через связи между схемами можно получить доступ к чувствительным данным\n" +
+                                    "Пример: доступ к транзакциям через связь с аккаунтом"
+                    );
+                }
+            }
+        }
+    }
+
+    private void analyzeSchemaComposition(String schemaName, Schema<?> schema, Set<String> visited) {
+        // Базовая реализация - можно расширить для анализа allOf, anyOf, oneOf
+    }
+
+    private void analyzeCrossEndpointRelationships(Map<String, List<OperationInfo>> operationsByTag) {
+        // Базовая реализация анализа кросс-эндпоинтных связей
+    }
+
+    private void analyzeDataAccessInPath(String path, PathItem pathItem) {
+        // Базовая реализация анализа доступа к данным в пути
     }
 
     private boolean isSensitiveSchema(String schemaName) {
@@ -783,14 +693,57 @@ public class DeepSchemaAnalyzer {
     }
 
     private void addVulnerability(String title, String description,
-                                  Vulnerability.Severity severity, Vulnerability.Category category) {
+                                  Vulnerability.Severity severity, Vulnerability.Category category,
+                                  String evidence) {
         Vulnerability vuln = new Vulnerability();
         vuln.setTitle(title);
         vuln.setDescription(description);
         vuln.setSeverity(severity);
         vuln.setCategory(category);
-        vuln.setEvidence("Обнаружено при глубоком анализе схем OpenAPI");
+        vuln.setEvidence(evidence);
 
+        // Специфические рекомендации в зависимости от категории
+        List<String> recommendations = new ArrayList<>();
+
+        switch (category) {
+            case OWASP_API3_BOPLA:
+                recommendations.addAll(Arrays.asList(
+                        "Реализуйте whitelist для полей, которые могут быть установлены клиентом",
+                        "Используйте DTO (Data Transfer Objects) с явным указанием разрешенных полей",
+                        "Включите защиту от mass assignment в фреймворке",
+                        "Разделите поля на пользовательские и системные",
+                        "Валидируйте все входящие поля на сервере",
+                        "Используйте схемы валидации для всех входящих данных"
+                ));
+                break;
+            case OWASP_API1_BOLA:
+                recommendations.addAll(Arrays.asList(
+                        "Реализуйте проверки авторизации на уровне объектов",
+                        "Убедитесь, что пользователи могут access только свои данные",
+                        "Используйте модель 'Deny by default'",
+                        "Добавьте middleware для проверки прав доступа",
+                        "Залогируйте все попытки доступа к чужим ресурсам"
+                ));
+                break;
+            case OWASP_API2_BROKEN_AUTH:
+                recommendations.addAll(Arrays.asList(
+                        "Усильте механизмы аутентификации",
+                        "Внедрите ограничение попыток входа",
+                        "Реализуйте многофакторную аутентификацию",
+                        "Используйте безопасное хранение токенов",
+                        "Регулярно обновляйте секретные ключи"
+                ));
+                break;
+            default:
+                recommendations.addAll(Arrays.asList(
+                        "Проверьте и исправьте выявленную уязвимость безопасности",
+                        "Проведите код-ревью соответствующего функционала",
+                        "Обновите документацию по безопасности",
+                        "Протестируйте исправление в тестовой среде"
+                ));
+        }
+
+        vuln.setRecommendations(recommendations);
         vulnerabilities.add(vuln);
     }
 

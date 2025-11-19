@@ -196,9 +196,6 @@ public class ScannerService {
             // Запускаем глубокий анализ схем
             List<Vulnerability> deepAnalysisVulnerabilities = performDeepAnalysis(openApiSpec, cleanBaseUrl);
 
-            // Запускаем анализ ГОСТ/TLS
-            List<Vulnerability> gostTlsVulnerabilities = performGOSTTLSAnalysis(cleanBaseUrl);
-
             // Создаем конфигурацию для конкретного банка
             ScanConfig bankScanConfig = createBankScanConfig(config, cleanBaseUrl, specUrl, tokens);
 
@@ -237,8 +234,6 @@ public class ScannerService {
             if (securityScanners.isEmpty()) {
                 List<Vulnerability> allVulnerabilities = new ArrayList<>();
                 allVulnerabilities.addAll(deepAnalysisVulnerabilities);
-                allVulnerabilities.addAll(gostTlsVulnerabilities);
-
                 notifyMessage("warning", "Нет доступных сканеров для запуска без токенов");
                 return new BankScanResult(allVulnerabilities.size(), cleanBaseUrl);
             }
@@ -274,8 +269,6 @@ public class ScannerService {
 
             // Добавляем результаты глубокого анализа
             allVulnerabilities.addAll(deepAnalysisVulnerabilities);
-            allVulnerabilities.addAll(gostTlsVulnerabilities);
-
             // Запускаем корреляцию уязвимостей
             List<Vulnerability> correlatedVulnerabilities = performCorrelationAnalysis(allVulnerabilities);
             allVulnerabilities.addAll(correlatedVulnerabilities);
@@ -397,30 +390,6 @@ public class ScannerService {
         return vulnerabilities;
     }
 
-    /**
-     * Выполняет анализ ГОСТ/TLS безопасности
-     */
-    private List<Vulnerability> performGOSTTLSAnalysis(String bankUrl) {
-        List<Vulnerability> vulnerabilities = new ArrayList<>();
-
-        try {
-            notifyMessage("info", "Запуск анализа ГОСТ/TLS...");
-            GOSTTLSAnalyzer gostAnalyzer = new GOSTTLSAnalyzer(bankUrl);
-            List<Vulnerability> gostVulnerabilities = gostAnalyzer.analyze();
-
-            // Сохраняем результаты анализа ГОСТ/TLS
-            for (Vulnerability vuln : gostVulnerabilities) {
-                saveVulnerabilityToDatabase(vuln, bankUrl, "GOSTTLSAnalyzer");
-            }
-
-            vulnerabilities.addAll(gostVulnerabilities);
-            notifyMessage("info", "Анализ ГОСТ/TLS завершен. Найдено: " + gostVulnerabilities.size());
-        } catch (Exception e) {
-            notifyMessage("error", "Ошибка при анализе ГОСТ/TLS: " + e.getMessage());
-        }
-
-        return vulnerabilities;
-    }
 
     /**
      * Выполняет корреляцию уязвимостей
