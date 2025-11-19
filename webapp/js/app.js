@@ -14,6 +14,7 @@ class SecurityDashboard {
         this.isScanning = false;
         this.lastDataCount = 0;
         this.sessions = [];
+        this.activeSection = 'dashboard'; // 'dashboard', 'comparison', 'apiGraph'
         this.init();
     }
 
@@ -24,6 +25,17 @@ class SecurityDashboard {
         this.connectWebSocket();
         this.loadInitialData();
         this.restoreState();
+        this.setupLogoClick();
+    }
+
+    setupLogoClick() {
+        const logo = document.querySelector('.app-title');
+        if (logo) {
+            logo.style.cursor = 'pointer';
+            logo.addEventListener('click', () => {
+                this.showMainDashboard();
+            });
+        }
     }
 
     setupEventListeners() {
@@ -51,7 +63,6 @@ class SecurityDashboard {
             this.exportToCsv();
         });
 
-        // НОВЫЙ ОБРАБОТЧИК ДЛЯ PDF
         document.getElementById('exportPdf').addEventListener('click', () => {
             this.exportToPdf();
         });
@@ -66,9 +77,13 @@ class SecurityDashboard {
             }
         });
 
-        // Новые обработчики для сравнения
+        // Обновленные обработчики для кнопок переключения
         document.getElementById('showComparison').addEventListener('click', () => {
-            this.showComparisonSection();
+            this.toggleComparisonSection();
+        });
+
+        document.getElementById('showApiGraph').addEventListener('click', () => {
+            this.toggleApiGraphSection();
         });
 
         document.getElementById('compareSessions').addEventListener('click', () => {
@@ -82,10 +97,6 @@ class SecurityDashboard {
         // Сохраняем состояние при закрытии страницы
         window.addEventListener('beforeunload', () => {
             this.saveState();
-        });
-
-        document.getElementById('showApiGraph').addEventListener('click', () => {
-            this.showApiGraphSection();
         });
 
         document.getElementById('loadGraph').addEventListener('click', () => {
@@ -121,6 +132,85 @@ class SecurityDashboard {
 
         // Загружаем сохраненные настройки при инициализации
         this.loadSavedConfiguration();
+    }
+
+    // Новый метод для показа главной панели
+    showMainDashboard() {
+        document.querySelector('.dashboard').style.display = 'block';
+        document.getElementById('comparisonSection').style.display = 'none';
+        document.getElementById('apiGraphSection').style.display = 'none';
+
+        this.activeSection = 'dashboard';
+        this.updateHeaderButtons();
+    }
+
+    // Обновленный метод для переключения секции сравнения
+    toggleComparisonSection() {
+        if (this.activeSection === 'comparison') {
+            this.showMainDashboard();
+        } else {
+            document.querySelector('.dashboard').style.display = 'none';
+            document.getElementById('comparisonSection').style.display = 'block';
+            document.getElementById('apiGraphSection').style.display = 'none';
+
+            this.activeSection = 'comparison';
+            this.updateHeaderButtons();
+
+            // Загружаем список сессий при открытии
+            this.loadSessionsList();
+            this.showNotification('Выберите две сессии для сравнения', 'info');
+        }
+    }
+
+    // Обновленный метод для переключения секции графа API
+    toggleApiGraphSection() {
+        if (this.activeSection === 'apiGraph') {
+            this.showMainDashboard();
+        } else {
+            document.querySelector('.dashboard').style.display = 'none';
+            document.getElementById('comparisonSection').style.display = 'none';
+            document.getElementById('apiGraphSection').style.display = 'block';
+
+            this.activeSection = 'apiGraph';
+            this.updateHeaderButtons();
+
+            // Автоматически загружаем граф если есть URL
+            const specUrl = document.getElementById('specUrlInput').value;
+            if (specUrl) {
+                setTimeout(() => this.loadApiGraph(), 500);
+            }
+        }
+    }
+
+    // Новый метод для обновления состояния кнопок в заголовке
+    updateHeaderButtons() {
+        const comparisonBtn = document.getElementById('showComparison');
+        const apiGraphBtn = document.getElementById('showApiGraph');
+
+        // Сбрасываем все кнопки к обычному состоянию
+        comparisonBtn.classList.remove('btn-primary');
+        comparisonBtn.classList.add('btn-secondary');
+        apiGraphBtn.classList.remove('btn-primary');
+        apiGraphBtn.classList.add('btn-secondary');
+
+        // Подсвечиваем активную кнопку
+        if (this.activeSection === 'comparison') {
+            comparisonBtn.classList.remove('btn-secondary');
+            comparisonBtn.classList.add('btn-primary');
+        } else if (this.activeSection === 'apiGraph') {
+            apiGraphBtn.classList.remove('btn-secondary');
+            apiGraphBtn.classList.add('btn-primary');
+        }
+    }
+
+    // Обновляем метод hideComparisonSection
+    hideComparisonSection() {
+        this.showMainDashboard();
+    }
+
+    // Добавляем метод hideApiGraphSection для кнопки закрытия в графе API
+    hideApiGraphSection() {
+        this.showMainDashboard();
     }
 
     async clearDatabase() {
@@ -1011,22 +1101,6 @@ class SecurityDashboard {
 
     // Методы для сравнения сессий
 
-    // Метод для показа секции сравнения
-    async showComparisonSection() {
-        document.getElementById('comparisonSection').style.display = 'block';
-        document.querySelector('.dashboard').style.display = 'none';
-
-        await this.loadSessionsList();
-        this.showNotification('Выберите две сессии для сравнения', 'info');
-    }
-
-    // Метод для скрытия секции сравнения
-    hideComparisonSection() {
-        document.getElementById('comparisonSection').style.display = 'none';
-        document.querySelector('.dashboard').style.display = 'block';
-        document.getElementById('comparisonResults').style.display = 'none';
-    }
-
     // Загрузка списка сессий
     async loadSessionsList() {
         try {
@@ -1261,18 +1335,6 @@ class SecurityDashboard {
     }
 
     // Методы для графа API:
-    showApiGraphSection() {
-        document.getElementById('apiGraphSection').style.display = 'block';
-        document.querySelector('.dashboard').style.display = 'none';
-        document.getElementById('comparisonSection').style.display = 'none';
-
-        // Автоматически загружаем граф если есть URL
-        const specUrl = document.getElementById('specUrlInput').value;
-        if (specUrl) {
-            setTimeout(() => this.loadApiGraph(), 500);
-        }
-    }
-
     async loadApiGraph() {
         const specUrl = document.getElementById('specUrlInput').value;
 

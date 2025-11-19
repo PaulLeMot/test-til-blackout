@@ -984,3 +984,35 @@ body {
 #addBankBtn {
     margin-bottom: 1rem;
 }
+/* Стили для активных кнопок в заголовке */
+.header-actions .btn-primary {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+}
+
+.header-actions .btn-primary:hover {
+    background: #1e40af;
+    border-color: #1e40af;
+}
+
+/* Курсор-указатель для логотипа */
+.app-title {
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.app-title:hover {
+    opacity: 0.8;
+}
+
+/* Стили для кнопки закрытия в секции графа API */
+.graph-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.graph-header h3 {
+    margin: 0;
+}
