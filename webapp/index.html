@@ -6,27 +6,22 @@
     <title>black Marker scanner</title>
     <link rel="stylesheet" href="css/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
 <div class="app-container">
     <!-- Header -->
-    <header class="app-header">
-        <div class="header-content">
-            <h1 class="app-title">
-                <span class="logo">🛡️</span>
-                black Marker scanner
-            </h1>
-            <div class="header-actions">
-                <button id="startScanBtn" class="btn btn-primary">
-                    Запустить сканирование
-                </button>
-                <button id="showComparison" class="btn btn-secondary">Сравнить сканирования</button>
-                <div class="connection-status">
-                    <span id="connectionStatus" class="status-offline">Офлайн</span>
-                </div>
-            </div>
+    <div class="header-actions">
+        <button id="startScanBtn" class="btn btn-primary">
+            Запустить сканирование
+        </button>
+        <button id="showComparison" class="btn btn-secondary">Сравнить сканирования</button>
+        <!-- НОВАЯ КНОПКА -->
+        <button id="showApiGraph" class="btn btn-secondary">Граф API</button>
+        <div class="connection-status">
+            <span id="connectionStatus" class="status-offline">Офлайн</span>
         </div>
-    </header>
+    </div>
 
     <section class="config-section">
         <div class="config-panel">
@@ -254,14 +249,69 @@
         </div>
     </section>
 
+    <section id="apiGraphSection" class="config-section" style="display: none;">
+        <div class="config-panel">
+            <div class="banks-header">
+                <h3>Визуализация API</h3>
+                <button id="refreshGraph" class="btn btn-outline btn-sm">Обновить граф</button>
+            </div>
+
+            <div class="graph-controls">
+                <div class="input-group">
+                    <label>OpenAPI Spec URL:</label>
+                    <input type="text" id="specUrlInput" class="config-input"
+                           value="https://vbank.open.bankingapi.ru/openapi.json"
+                           placeholder="URL к OpenAPI спецификации">
+                </div>
+                <button id="loadGraph" class="btn btn-primary">Загрузить граф</button>
+            </div>
+
+            <div id="graphContainer" style="margin-top: 20px;">
+                <div id="network" style="width: 100%; height: 600px; border: 1px solid #334155; border-radius: 8px;"></div>
+            </div>
+
+            <div id="endpointPanel" class="panel" style="display: none; margin-top: 20px; background: #1e293b; padding: 20px; border-radius: 8px; border: 1px solid #334155;">
+                <div class="panel-header">
+                    <h3>Детали эндпоинта</h3>
+                    <button id="closePanel" class="btn btn-outline btn-sm">×</button>
+                </div>
+                <div id="endpointInfo" style="margin: 15px 0;"></div>
+                <div class="test-form">
+                    <h4>Тестирование эндпоинта</h4>
+                    <form id="testForm">
+                        <input type="hidden" id="testUrl">
+                        <input type="hidden" id="testMethod">
+                        <div class="input-group">
+                            <label>Base URL:</label>
+                            <input type="text" id="baseUrlInput" class="config-input"
+                                   value="https://vbank.open.bankingapi.ru" placeholder="Базовый URL">
+                        </div>
+                        <div class="input-group">
+                            <label>Заголовки (JSON):</label>
+                            <textarea id="headersInput" class="config-input" rows="3" placeholder='{"Content-Type": "application/json", "Authorization": "Bearer token"}'></textarea>
+                        </div>
+                        <div class="input-group">
+                            <label>Тело запроса (JSON):</label>
+                            <textarea id="bodyInput" class="config-input" rows="4" placeholder='{"key": "value"}'></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Выполнить запрос</button>
+                    </form>
+                    <div id="testResult" style="margin-top: 15px; display: none;">
+                        <h5>Результат:</h5>
+                        <pre id="resultOutput" style="background: #0f172a; padding: 10px; border-radius: 4px; overflow: auto; max-height: 300px;"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <div id="notifications" class="notifications"></div>
 
     <div id="loadingOverlay" class="loading-overlay">
         <div class="loading-spinner"></div>
-    </div>
-</div>
+    </div></div>
 
-<div id="vulnerabilityModal" class="modal">
+    <div id="vulnerabilityModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
             <h2 id="modalTitle">Детали уязвимости</h2>

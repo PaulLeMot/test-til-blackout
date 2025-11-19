@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArraySet;
+import java.util.ArrayList;
 
 // Добавляем импорты для PDF
 import com.itextpdf.text.*;
@@ -63,6 +64,10 @@ public class WebServer {
         server.createContext("/api/v1/status", apiController.createStatusHandler());
         server.createContext("/api/v1/results", apiController.createResultsHandler());
 
+        // НОВЫЕ ENDPOINTS ДЛЯ ГРАФА API
+        server.createContext("/api/graph", new ApiGraphHandler());
+        server.createContext("/api/test", new ApiTestHandler());
+
         server.setExecutor(null);
         server.start();
         System.out.println("✅ Web server started on http://localhost:" + port);
@@ -70,6 +75,8 @@ public class WebServer {
         System.out.println("   - POST /api/v1/scan     - Start security scan");
         System.out.println("   - GET  /api/v1/status   - Check scan status");
         System.out.println("   - GET  /api/v1/results  - Get scan results");
+        System.out.println("   - GET  /api/graph       - Get API graph data");
+        System.out.println("   - POST /api/test        - Test API endpoint");
     }
 
     public void stop() {
@@ -101,6 +108,218 @@ public class WebServer {
     }
 
     static class WebSocketConnection {
+    }
+
+    // НОВЫЙ ОБРАБОТЧИК ДЛЯ ГРАФА API
+    class ApiGraphHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("GET".equals(exchange.getRequestMethod())) {
+                try {
+                    // Получаем параметры из запроса
+                    String query = exchange.getRequestURI().getQuery();
+                    String specUrl = null;
+
+                    if (query != null) {
+                        for (String pair : query.split("&")) {
+                            String[] keyValue = pair.split("=");
+                            if (keyValue.length == 2 && "spec".equals(keyValue[0])) {
+                                specUrl = URLDecoder.decode(keyValue[1], StandardCharsets.UTF_8);
+                            }
+                        }
+                    }
+
+                    if (specUrl == null) {
+                        sendResponse(exchange, 400, "{\"error\": \"Missing spec parameter\"}");
+                        return;
+                    }
+
+                    // Загружаем и парсим OpenAPI спецификацию
+                    List<ApiEndpoint> endpoints = loadEndpointsFromSpec(specUrl);
+                    Map<String, Object> graphData = buildGraphData(endpoints, specUrl);
+
+                    String response = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(graphData);
+
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                    exchange.sendResponseHeaders(200, response.getBytes().length);
+
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(response.getBytes());
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    sendResponse(exchange, 500, "{\"error\": \"Failed to load API graph: " + e.getMessage() + "\"}");
+                }
+            } else {
+                exchange.sendResponseHeaders(405, -1);
+            }
+        }
+
+        private List<ApiEndpoint> loadEndpointsFromSpec(String specUrl) {
+            try {
+                OpenApiSpecLoader loader = new OpenApiSpecLoader(specUrl);
+                return loader.extractEndpoints();
+            } catch (Exception e) {
+                System.err.println("❌ Error loading OpenAPI spec: " + e.getMessage());
+                return new ArrayList<>();
+            }
+        }
+
+        private Map<String, Object> buildGraphData(List<ApiEndpoint> endpoints, String specUrl) {
+            Map<String, Object> graph = new HashMap<>();
+
+            List<Map<String, Object>> nodes = new ArrayList<>();
+            List<Map<String, Object>> edges = new ArrayList<>();
+
+            // Группируем эндпоинты по тегам
+            Map<String, List<ApiEndpoint>> endpointsByTag = new HashMap<>();
+            for (ApiEndpoint endpoint : endpoints) {
+                List<String> tags = endpoint.getTags();
+                if (tags == null || tags.isEmpty()) {
+                    tags = java.util.List.of("default");
+                }
+
+                for (String tag : tags) {
+                    endpointsByTag.computeIfAbsent(tag, k -> new ArrayList<>()).add(endpoint);
+                }
+            }
+
+            // Создаем узлы для каждого эндпоинта
+            int nodeId = 1;
+            Map<String, Integer> nodeIdMap = new HashMap<>();
+
+            for (ApiEndpoint endpoint : endpoints) {
+                String nodeKey = endpoint.getMethod() + ":" + endpoint.getPath();
+                Map<String, Object> node = new HashMap<>();
+                node.put("id", nodeId);
+                node.put("label", endpoint.getMethod() + "\\n" + endpoint.getPath());
+                node.put("title", endpoint.getSummary() != null ? endpoint.getSummary() : endpoint.getPath());
+                node.put("method", endpoint.getMethod());
+                node.put("path", endpoint.getPath());
+                node.put("summary", endpoint.getSummary());
+                node.put("description", endpoint.getDescription());
+
+                // Определяем группу на основе тегов
+                String group = "default";
+                if (endpoint.getTags() != null && !endpoint.getTags().isEmpty()) {
+                    group = endpoint.getTags().get(0);
+                }
+                node.put("group", group);
+
+                // Цвет в зависимости от метода HTTP
+                String color = getColorForMethod(endpoint.getMethod());
+                node.put("color", color);
+
+                nodes.add(node);
+                nodeIdMap.put(nodeKey, nodeId);
+                nodeId++;
+            }
+
+            // Создаем связи между эндпоинтами с общими тегами
+            for (Map.Entry<String, List<ApiEndpoint>> entry : endpointsByTag.entrySet()) {
+                List<ApiEndpoint> tagEndpoints = entry.getValue();
+
+                // Связываем эндпоинты в пределах одной группы
+                for (int i = 0; i < tagEndpoints.size(); i++) {
+                    for (int j = i + 1; j < tagEndpoints.size(); j++) {
+                        ApiEndpoint e1 = tagEndpoints.get(i);
+                        ApiEndpoint e2 = tagEndpoints.get(j);
+
+                        String key1 = e1.getMethod() + ":" + e1.getPath();
+                        String key2 = e2.getMethod() + ":" + e2.getPath();
+
+                        Integer fromId = nodeIdMap.get(key1);
+                        Integer toId = nodeIdMap.get(key2);
+
+                        if (fromId != null && toId != null) {
+                            Map<String, Object> edge = new HashMap<>();
+                            edge.put("from", fromId);
+                            edge.put("to", toId);
+                            edge.put("value", 1);
+                            edges.add(edge);
+                        }
+                    }
+                }
+            }
+
+            graph.put("nodes", nodes);
+            graph.put("edges", edges);
+            graph.put("specUrl", specUrl);
+            graph.put("totalEndpoints", endpoints.size());
+            graph.put("totalTags", endpointsByTag.size());
+
+            return graph;
+        }
+
+        private String getColorForMethod(String method) {
+            switch (method.toUpperCase()) {
+                case "GET": return "#61affe";
+                case "POST": return "#49cc90";
+                case "PUT": return "#fca130";
+                case "DELETE": return "#f93e3e";
+                case "PATCH": return "#50e3c2";
+                default: return "#9012fe";
+            }
+        }
+
+        private void sendResponse(HttpExchange exchange, int statusCode, String response) throws IOException {
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(statusCode, response.getBytes().length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(response.getBytes());
+            }
+        }
+    }
+
+    // НОВЫЙ ОБРАБОТЧИК ДЛЯ ТЕСТИРОВАНИЯ API
+    class ApiTestHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("POST".equals(exchange.getRequestMethod())) {
+                try {
+                    String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                    Map<String, Object> testRequest = new com.fasterxml.jackson.databind.ObjectMapper().readValue(requestBody, Map.class);
+
+                    String method = (String) testRequest.get("method");
+                    String url = (String) testRequest.get("url");
+                    Map<String, String> headers = (Map<String, String>) testRequest.get("headers");
+                    String body = (String) testRequest.get("body");
+
+                    if (method == null || url == null) {
+                        sendResponse(exchange, 400, "{\"error\": \"Method and URL are required\"}");
+                        return;
+                    }
+
+                    // Используем существующий HttpApiClient
+                    HttpApiClient client = new HttpApiClient();
+                    Object response = client.executeRequest(method, url, body, headers);
+
+                    String responseJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(response);
+
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                    exchange.sendResponseHeaders(200, responseJson.getBytes().length);
+
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(responseJson.getBytes());
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    sendResponse(exchange, 500, "{\"error\": \"API test failed: " + e.getMessage() + "\"}");
+                }
+            } else {
+                exchange.sendResponseHeaders(405, -1);
+            }
+        }
+
+        private void sendResponse(HttpExchange exchange, int statusCode, String response) throws IOException {
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(statusCode, response.getBytes().length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(response.getBytes());
+            }
+        }
     }
 
     // Новый обработчик для экспорта PDF
@@ -389,6 +608,7 @@ public class WebServer {
             return value != null ? value.toString() : "N/A";
         }
     }
+
     class StaticFileHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {

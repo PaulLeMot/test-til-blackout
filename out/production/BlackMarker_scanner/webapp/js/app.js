@@ -1,5 +1,7 @@
 class SecurityDashboard {
     constructor() {
+        this.apiEndpoints = [];
+        this.currentGraph = null;
         this.currentData = [];
         this.filteredData = [];
         this.currentPage = 1;
@@ -80,6 +82,27 @@ class SecurityDashboard {
         // Сохраняем состояние при закрытии страницы
         window.addEventListener('beforeunload', () => {
             this.saveState();
+        });
+
+        document.getElementById('showApiGraph').addEventListener('click', () => {
+            this.showApiGraphSection();
+        });
+
+        document.getElementById('loadGraph').addEventListener('click', () => {
+            this.loadApiGraph();
+        });
+
+        document.getElementById('refreshGraph').addEventListener('click', () => {
+            this.loadApiGraph();
+        });
+
+        document.getElementById('closePanel').addEventListener('click', () => {
+            this.hideEndpointPanel();
+        });
+
+        document.getElementById('testForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.testEndpoint();
         });
     }
 
@@ -181,7 +204,7 @@ class SecurityDashboard {
         }
     }
 
-loadDefaultConfiguration() {
+    loadDefaultConfiguration() {
     const defaultConfig = {
         bankId: "team172",
         banks: [
@@ -205,6 +228,7 @@ loadDefaultConfiguration() {
     this.applyConfiguration(defaultConfig);
     this.showNotification('Настройки по умолчанию загружены', 'info');
 }
+
     applyConfiguration(config) {
     // Устанавливаем bankId
     document.getElementById('bankId').value = config.bankId || 'team172';
@@ -924,7 +948,6 @@ loadDefaultConfiguration() {
         this.showNotification('Данные экспортированы в CSV', 'success');
     }
 
-    // НОВЫЙ МЕТОД ДЛЯ ЭКСПОРТА В PDF
     exportToPdf() {
         if (this.filteredData.length === 0) {
             this.showNotification('Нет данных для экспорта', 'error');
@@ -1235,6 +1258,239 @@ loadDefaultConfiguration() {
     // Вспомогательные методы для сравнения
     shortenSessionName(fullName) {
         return fullName.length > 50 ? fullName.substring(0, 50) + '...' : fullName;
+    }
+
+    // Методы для графа API:
+    showApiGraphSection() {
+        document.getElementById('apiGraphSection').style.display = 'block';
+        document.querySelector('.dashboard').style.display = 'none';
+        document.getElementById('comparisonSection').style.display = 'none';
+
+        // Автоматически загружаем граф если есть URL
+        const specUrl = document.getElementById('specUrlInput').value;
+        if (specUrl) {
+            setTimeout(() => this.loadApiGraph(), 500);
+        }
+    }
+
+    async loadApiGraph() {
+        const specUrl = document.getElementById('specUrlInput').value;
+
+        if (!specUrl) {
+            this.showNotification('Введите URL OpenAPI спецификации', 'error');
+            return;
+        }
+
+        try {
+            this.showNotification('Загрузка графа API...', 'info');
+
+            const response = await fetch(`/api/graph?spec=${encodeURIComponent(specUrl)}`);
+            if (response.ok) {
+                const graphData = await response.json();
+                this.renderApiGraph(graphData);
+                this.showNotification(`Загружено ${graphData.totalEndpoints} эндпоинтов`, 'success');
+            } else {
+                throw new Error('Failed to load graph');
+            }
+        } catch (error) {
+            console.error('Error loading API graph:', error);
+            this.showNotification('Ошибка загрузки графа API', 'error');
+        }
+    }
+
+    renderApiGraph(graphData) {
+        const container = document.getElementById('network');
+        if (!container) return;
+
+        // Очищаем предыдущий граф
+        container.innerHTML = '';
+
+        if (!graphData.nodes || graphData.nodes.length === 0) {
+            container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #94a3b8;">Нет данных для отображения</div>';
+            return;
+        }
+
+        // Форматируем данные для vis.js
+        const nodes = new vis.DataSet(graphData.nodes.map(node => ({
+            id: node.id,
+            label: node.label,
+            title: node.title || node.path,
+            group: node.group,
+            color: node.color,
+            font: { color: '#ffffff', size: 12 },
+            borderWidth: 2
+        })));
+
+        const edges = new vis.DataSet(graphData.edges.map(edge => ({
+            from: edge.from,
+            to: edge.to,
+            color: edge.color,
+            width: 1
+        })));
+
+        const data = { nodes, edges };
+
+        const options = {
+            nodes: {
+                shape: 'dot',
+                size: 20,
+                font: {
+                    size: 12,
+                    face: 'Inter',
+                    color: '#ffffff'
+                },
+                borderWidth: 2,
+                shadow: true
+            },
+            edges: {
+                width: 1,
+                color: { color: '#334155' },
+                smooth: {
+                    type: 'continuous'
+                },
+                shadow: true
+            },
+            groups: {
+                default: { color: { background: '#3b82f6', border: '#2563eb' } },
+                auth: { color: { background: '#ef4444', border: '#dc2626' } },
+                accounts: { color: { background: '#10b981', border: '#059669' } },
+                payments: { color: { background: '#f59e0b', border: '#d97706' } },
+                transfers: { color: { background: '#8b5cf6', border: '#7c3aed' } }
+            },
+            physics: {
+                enabled: true,
+                stabilization: { iterations: 100 },
+                barnesHut: {
+                    gravitationalConstant: -8000,
+                    springConstant: 0.04,
+                    springLength: 95
+                }
+            },
+            interaction: {
+                hover: true,
+                tooltipDelay: 200
+            },
+            layout: {
+                improvedLayout: true
+            }
+        };
+
+        // Создаем сеть
+        this.currentGraph = new vis.Network(container, data, options);
+
+        // Обработчик клика по узлу
+        this.currentGraph.on("click", (params) => {
+            if (params.nodes.length > 0) {
+                const nodeId = params.nodes[0];
+                const node = graphData.nodes.find(n => n.id === nodeId);
+                if (node) {
+                    this.showEndpointDetails(node, graphData);
+                }
+            }
+        });
+
+        // Обработчик двойного клика - центрирование
+        this.currentGraph.on("doubleClick", (params) => {
+            if (params.nodes.length > 0) {
+                this.currentGraph.focus(params.nodes[0], { scale: 1.2 });
+            }
+        });
+    }
+
+    showEndpointDetails(node, graphData) {
+        const panel = document.getElementById('endpointPanel');
+        const info = document.getElementById('endpointInfo');
+
+        // Форматируем информацию об эндпоинте
+        let html = `
+            <div style="margin-bottom: 15px;">
+                <h4 style="color: #3b82f6; margin-bottom: 10px;">${node.method} ${node.path}</h4>
+                ${node.summary ? `<p><strong>Описание:</strong> ${this.escapeHtml(node.summary)}</p>` : ''}
+                ${node.description ? `<p><strong>Детали:</strong> ${this.escapeHtml(node.description)}</p>` : ''}
+                <p><strong>Группа:</strong> ${node.group || 'default'}</p>
+            </div>
+        `;
+
+        info.innerHTML = html;
+
+        // Устанавливаем данные для тестирования
+        document.getElementById('testMethod').value = node.method;
+        document.getElementById('testUrl').value = node.path;
+
+        panel.style.display = 'block';
+
+        // Прокручиваем к панели
+        panel.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    hideEndpointPanel() {
+        document.getElementById('endpointPanel').style.display = 'none';
+        document.getElementById('testResult').style.display = 'none';
+    }
+
+    async testEndpoint() {
+        const method = document.getElementById('testMethod').value;
+        const path = document.getElementById('testUrl').value;
+        const baseUrl = document.getElementById('baseUrlInput').value;
+        const headersText = document.getElementById('headersInput').value;
+        const bodyText = document.getElementById('bodyInput').value;
+
+        if (!baseUrl) {
+            this.showNotification('Введите базовый URL', 'error');
+            return;
+        }
+
+        const fullUrl = baseUrl + path;
+
+        try {
+            this.showNotification('Выполняю запрос...', 'info');
+
+            let headers = {};
+            if (headersText) {
+                headers = JSON.parse(headersText);
+            }
+
+            let body = null;
+            if (bodyText && method !== 'GET') {
+                body = bodyText;
+            }
+
+            const testData = {
+                method: method,
+                url: fullUrl,
+                headers: headers,
+                body: body
+            };
+
+            const response = await fetch('/api/test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(testData)
+            });
+
+            const result = await response.json();
+
+            // Показываем результат
+            const resultOutput = document.getElementById('resultOutput');
+            const testResult = document.getElementById('testResult');
+
+            resultOutput.textContent = JSON.stringify(result, null, 2);
+            testResult.style.display = 'block';
+
+            this.showNotification('Запрос выполнен', 'success');
+
+        } catch (error) {
+            console.error('Error testing endpoint:', error);
+            this.showNotification('Ошибка выполнения запроса', 'error');
+
+            const resultOutput = document.getElementById('resultOutput');
+            const testResult = document.getElementById('testResult');
+
+            resultOutput.textContent = `Error: ${error.message}`;
+            testResult.style.display = 'block';
+        }
     }
 
     getDiffClass(diff) {
