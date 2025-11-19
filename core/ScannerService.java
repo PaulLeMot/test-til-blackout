@@ -21,10 +21,10 @@ public class ScannerService {
     private String currentSessionId;
 
     // Настройки параллелизма
-    private final int SCANNER_THREAD_POOL_SIZE = 5; // Максимум 5 сканеров одновременно
-    private final int BANK_THREAD_POOL_SIZE = 2;    // Максимум 2 банка одновременно
-    private final long SCANNER_TIMEOUT_MINUTES = 5; // Таймаут на сканер
-    private final long BANK_TIMEOUT_MINUTES = 10;   // Таймаут на банк
+    private final int SCANNER_THREAD_POOL_SIZE = 5;
+    private final int BANK_THREAD_POOL_SIZE = 2;
+    private final long SCANNER_TIMEOUT_MINUTES = 5;
+    private final long BANK_TIMEOUT_MINUTES = 10;
 
     public ScannerService(WebServer webServer, PostgresManager dbManager) {
         this.webServer = webServer;
@@ -36,7 +36,6 @@ public class ScannerService {
         this.messageListener = listener;
     }
 
-    // Обновленный метод для установки конфигурации из UI
     public void setConfig(ScanConfig config) {
         this.config = config;
     }
@@ -45,8 +44,8 @@ public class ScannerService {
         if (isScanning) {
             return false;
         }
-        if (config == null || config.getBanks().isEmpty() || config.getCredentials().isEmpty()) {
-            notifyMessage("scan_error", "Конфигурация не задана. Сначала сохраните настройки в UI.");
+        if (config == null || config.getBanks().isEmpty()) {
+            notifyMessage("scan_error", "Конфигурация не задана. Укажите хотя бы один банк для сканирования.");
             return false;
         }
 
@@ -82,18 +81,33 @@ public class ScannerService {
         notifyMessage("info", "Идентификатор сессии: " + currentSessionId);
         notifyMessage("info", "Параллелизм: " + BANK_THREAD_POOL_SIZE + " банков, " + SCANNER_THREAD_POOL_SIZE + " сканеров");
 
-        // Получение токенов для пользователей ДО запуска сканеров
-        notifyMessage("info", "Получение токенов для пользователей...");
-        Map<String, String> tokens = AuthManager.getTokensForScanning(config);
+        // Получение токенов для пользователей (опционально)
+        final Map<String, String> tokens = new HashMap<>();
+        final boolean hasValidTokens;
 
-        if (tokens == null || tokens.isEmpty()) {
-            notifyMessage("error", "Не удалось получить токены для сканирования");
-            return;
+        if (hasAuthCredentials(config)) {
+            notifyMessage("info", "Попытка получения токенов для аутентифицированного сканирования...");
+            boolean tokensReceived = false;
+            try {
+                Map<String, String> receivedTokens = AuthManager.getTokensForScanning(config);
+                if (receivedTokens != null && !receivedTokens.isEmpty()) {
+                    tokens.putAll(receivedTokens);
+                    tokensReceived = true;
+                    config.setUserTokens(tokens);
+                    notifyMessage("info", "Получено токенов: " + tokens.size() + " - будет выполнено полное сканирование");
+                } else {
+                    tokensReceived = false;
+                    notifyMessage("warning", "Токены не получены. Будут запущены только сканеры, не требующие аутентификации.");
+                }
+            } catch (Exception e) {
+                tokensReceived = false;
+                notifyMessage("warning", "Ошибка при получении токенов: " + e.getMessage() + ". Будут запущены только сканеры, не требующие аутентификации.");
+            }
+            hasValidTokens = tokensReceived;
+        } else {
+            hasValidTokens = false;
+            notifyMessage("warning", "Учетные данные для аутентификации не указаны. Будут запущены только сканеры, не требующие аутентификации.");
         }
-
-        // Сохраняем токены в конфигурацию
-        config.setUserTokens(tokens);
-        notifyMessage("info", "Получено токенов: " + tokens.size());
 
         int totalVulnerabilities = 0;
         int totalScannedBanks = 0;
@@ -104,8 +118,9 @@ public class ScannerService {
 
         // Запускаем сканирование каждого банка в отдельном потоке
         for (ScanConfig.BankConfig bankConfig : config.getBanks()) {
+            final ScanConfig.BankConfig finalBankConfig = bankConfig;
             Future<BankScanResult> future = bankExecutor.submit(() -> {
-                return scanSingleBank(bankConfig, tokens);
+                return scanSingleBank(finalBankConfig, tokens, hasValidTokens);
             });
             bankFutures.add(future);
         }
@@ -149,9 +164,18 @@ public class ScannerService {
     }
 
     /**
+     * Проверяет, есть ли учетные данные для аутентификации
+     */
+    private boolean hasAuthCredentials(ScanConfig config) {
+        return (config.getClientId() != null && !config.getClientId().trim().isEmpty()) ||
+                (config.getClientSecret() != null && !config.getClientSecret().trim().isEmpty()) ||
+                (config.getCredentials() != null && !config.getCredentials().isEmpty());
+    }
+
+    /**
      * Сканирует один банк параллельно всеми сканерами
      */
-    private BankScanResult scanSingleBank(ScanConfig.BankConfig bankConfig, Map<String, String> tokens) {
+    private BankScanResult scanSingleBank(ScanConfig.BankConfig bankConfig, Map<String, String> tokens, boolean hasValidTokens) {
         String baseUrl = bankConfig.getBaseUrl();
         String specUrl = bankConfig.getSpecUrl();
 
@@ -169,11 +193,17 @@ public class ScannerService {
                 notifyMessage("warning", "Не удалось загрузить OpenAPI спецификацию для " + cleanBaseUrl);
             }
 
+            // Запускаем глубокий анализ схем
+            List<Vulnerability> deepAnalysisVulnerabilities = performDeepAnalysis(openApiSpec, cleanBaseUrl);
+
+            // Запускаем анализ ГОСТ/TLS
+            List<Vulnerability> gostTlsVulnerabilities = performGOSTTLSAnalysis(cleanBaseUrl);
+
             // Создаем конфигурацию для конкретного банка
             ScanConfig bankScanConfig = createBankScanConfig(config, cleanBaseUrl, specUrl, tokens);
 
-            // Создаем список сканеров
-            List<SecurityScanner> securityScanners = Arrays.asList(
+            // Создаем список всех сканеров
+            List<SecurityScanner> allScanners = Arrays.asList(
                     new API1_BOLAScanner(),
                     new API2_BrokenAuthScanner(),
                     new API3_BOScanner(),
@@ -187,6 +217,32 @@ public class ScannerService {
                     new Validation()
             );
 
+            // Фильтруем сканеры в зависимости от доступности токенов
+            List<SecurityScanner> securityScanners = new ArrayList<>();
+            if (hasValidTokens) {
+                // Если есть токены, запускаем все сканеры
+                securityScanners.addAll(allScanners);
+                notifyMessage("info", "Запуск всех 11 сканеров (токены доступны)");
+            } else {
+                // Если токенов нет, запускаем только сканеры, не требующие аутентификации
+                for (SecurityScanner scanner : allScanners) {
+                    if (canScannerWorkWithoutAuth(scanner)) {
+                        securityScanners.add(scanner);
+                    }
+                }
+                notifyMessage("warning", "Запуск только сканеров, не требующих аутентификации: " + securityScanners.size() + " из " + allScanners.size());
+            }
+
+            // Если нет сканеров для запуска, возвращаем результат с уже найденными уязвимостями
+            if (securityScanners.isEmpty()) {
+                List<Vulnerability> allVulnerabilities = new ArrayList<>();
+                allVulnerabilities.addAll(deepAnalysisVulnerabilities);
+                allVulnerabilities.addAll(gostTlsVulnerabilities);
+
+                notifyMessage("warning", "Нет доступных сканеров для запуска без токенов");
+                return new BankScanResult(allVulnerabilities.size(), cleanBaseUrl);
+            }
+
             // Создаем ExecutorService для параллельного выполнения сканеров
             ExecutorService scannerExecutor = Executors.newFixedThreadPool(SCANNER_THREAD_POOL_SIZE);
             List<Future<List<Vulnerability>>> scannerFutures = new ArrayList<>();
@@ -194,7 +250,7 @@ public class ScannerService {
             // Запускаем все сканеры параллельно
             for (SecurityScanner scanner : securityScanners) {
                 Future<List<Vulnerability>> future = scannerExecutor.submit(() -> {
-                    return executeScanner(scanner, openApiSpec, bankScanConfig, cleanBaseUrl);
+                    return executeScanner(scanner, openApiSpec, bankScanConfig, cleanBaseUrl, hasValidTokens);
                 });
                 scannerFutures.add(future);
             }
@@ -215,6 +271,14 @@ public class ScannerService {
                     notifyMessage("error", "Ошибка выполнения сканера для банка " + cleanBaseUrl + ": " + e.getMessage());
                 }
             }
+
+            // Добавляем результаты глубокого анализа
+            allVulnerabilities.addAll(deepAnalysisVulnerabilities);
+            allVulnerabilities.addAll(gostTlsVulnerabilities);
+
+            // Запускаем корреляцию уязвимостей
+            List<Vulnerability> correlatedVulnerabilities = performCorrelationAnalysis(allVulnerabilities);
+            allVulnerabilities.addAll(correlatedVulnerabilities);
 
             // Завершаем executor сканеров
             scannerExecutor.shutdown();
@@ -240,12 +304,34 @@ public class ScannerService {
     }
 
     /**
-     * Выполняет один сканер и сохраняет результаты
+     * Определяет, может ли сканер работать без аутентификации
      */
-    private List<Vulnerability> executeScanner(SecurityScanner scanner, Object openApiSpec, ScanConfig bankScanConfig, String bankName) {
+    private boolean canScannerWorkWithoutAuth(SecurityScanner scanner) {
+        String scannerName = scanner.getName();
+
+        // Сканеры, которые могут работать без токенов:
+        return scannerName.contains("API8") || // SecurityConfigScanner - проверяет конфигурацию
+                scannerName.contains("API9") || // InventoryScanner - инвентаризация API
+                scannerName.contains("Validation") || // Валидация контрактов
+                scannerName.contains("SecurityConfig") ||
+                scannerName.contains("Inventory");
+    }
+
+    /**
+     * Выполняет один сканер и возвращает результаты
+     */
+    private List<Vulnerability> executeScanner(SecurityScanner scanner, Object openApiSpec, ScanConfig bankScanConfig, String bankName, boolean hasValidTokens) {
         String scannerName = scanner.getName();
         notifyMessage("info", "-".repeat(40));
         notifyMessage("info", "Запуск сканера: " + scannerName + " для " + bankName);
+
+        // Проверяем, требует ли сканер токены и доступны ли они
+        boolean requiresAuth = requiresAuthentication(scanner);
+
+        if (requiresAuth && !hasValidTokens) {
+            notifyMessage("warning", "Сканер " + scannerName + " пропущен - требует аутентификации, но токены недоступны");
+            return new ArrayList<>();
+        }
 
         try {
             List<Vulnerability> scannerResults = scanner.scan(openApiSpec, bankScanConfig, new HttpApiClient());
@@ -265,20 +351,132 @@ public class ScannerService {
     }
 
     /**
+     * Определяет, требует ли сканер аутентификации
+     */
+    private boolean requiresAuthentication(SecurityScanner scanner) {
+        String scannerName = scanner.getName();
+
+        // Сканеры, требующие аутентификации:
+        return scannerName.contains("API1") || // BOLA
+                scannerName.contains("API2") || // Broken Auth
+                scannerName.contains("API3") || // BOPLA
+                scannerName.contains("API4") || // URC
+                scannerName.contains("API5") || // Broken Function Level Auth
+                scannerName.contains("API6") || // Business Flow
+                scannerName.contains("API7") || // SSRF
+                scannerName.contains("API10") || // Unsafe Consumption
+                scannerName.contains("BOLA") ||
+                scannerName.contains("SSRF") ||
+                scannerName.contains("UnsafeConsumption");
+    }
+
+    /**
+     * Выполняет глубокий анализ схем OpenAPI
+     */
+    private List<Vulnerability> performDeepAnalysis(Object openApiSpec, String bankName) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        if (openApiSpec instanceof io.swagger.v3.oas.models.OpenAPI) {
+            try {
+                notifyMessage("info", "Запуск глубокого анализа схем...");
+                DeepSchemaAnalyzer schemaAnalyzer = new DeepSchemaAnalyzer((io.swagger.v3.oas.models.OpenAPI) openApiSpec);
+                List<Vulnerability> schemaVulnerabilities = schemaAnalyzer.analyze();
+
+                // Сохраняем результаты глубокого анализа
+                for (Vulnerability vuln : schemaVulnerabilities) {
+                    saveVulnerabilityToDatabase(vuln, bankName, "DeepSchemaAnalyzer");
+                }
+
+                vulnerabilities.addAll(schemaVulnerabilities);
+                notifyMessage("info", "Глубокий анализ схем завершен. Найдено: " + schemaVulnerabilities.size());
+            } catch (Exception e) {
+                notifyMessage("error", "Ошибка при глубоком анализе схем: " + e.getMessage());
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Выполняет анализ ГОСТ/TLS безопасности
+     */
+    private List<Vulnerability> performGOSTTLSAnalysis(String bankUrl) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        try {
+            notifyMessage("info", "Запуск анализа ГОСТ/TLS...");
+            GOSTTLSAnalyzer gostAnalyzer = new GOSTTLSAnalyzer(bankUrl);
+            List<Vulnerability> gostVulnerabilities = gostAnalyzer.analyze();
+
+            // Сохраняем результаты анализа ГОСТ/TLS
+            for (Vulnerability vuln : gostVulnerabilities) {
+                saveVulnerabilityToDatabase(vuln, bankUrl, "GOSTTLSAnalyzer");
+            }
+
+            vulnerabilities.addAll(gostVulnerabilities);
+            notifyMessage("info", "Анализ ГОСТ/TLS завершен. Найдено: " + gostVulnerabilities.size());
+        } catch (Exception e) {
+            notifyMessage("error", "Ошибка при анализе ГОСТ/TLS: " + e.getMessage());
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Выполняет корреляцию уязвимостей
+     */
+    private List<Vulnerability> performCorrelationAnalysis(List<Vulnerability> allVulnerabilities) {
+        List<Vulnerability> correlatedVulnerabilities = new ArrayList<>();
+
+        try {
+            if (allVulnerabilities.size() > 1) {
+                notifyMessage("info", "Запуск корреляции уязвимостей...");
+                CorrelationEngine correlationEngine = new CorrelationEngine(allVulnerabilities);
+                correlatedVulnerabilities = correlationEngine.correlate();
+
+                // Сохраняем результаты корреляции
+                for (Vulnerability vuln : correlatedVulnerabilities) {
+                    saveVulnerabilityToDatabase(vuln, "Multiple", "CorrelationEngine");
+                }
+
+                notifyMessage("info", "Корреляция завершена. Найдено цепочек: " + correlatedVulnerabilities.size());
+            }
+        } catch (Exception e) {
+            notifyMessage("error", "Ошибка при корреляции уязвимостей: " + e.getMessage());
+        }
+
+        return correlatedVulnerabilities;
+    }
+
+    /**
      * Создает конфигурацию для сканирования конкретного банка
      */
     private ScanConfig createBankScanConfig(ScanConfig mainConfig, String baseUrl, String specUrl, Map<String, String> tokens) {
         ScanConfig bankScanConfig = new ScanConfig();
 
-        bankScanConfig.setBankId(mainConfig.getBankId());
-        bankScanConfig.setClientId(mainConfig.getClientId());
-        bankScanConfig.setClientSecret(mainConfig.getClientSecret());
+        // Копируем только необходимые поля
+        if (mainConfig.getBankId() != null) {
+            bankScanConfig.setBankId(mainConfig.getBankId());
+        }
+        if (mainConfig.getClientId() != null) {
+            bankScanConfig.setClientId(mainConfig.getClientId());
+        }
+        if (mainConfig.getClientSecret() != null) {
+            bankScanConfig.setClientSecret(mainConfig.getClientSecret());
+        }
+
         bankScanConfig.setTargetBaseUrl(baseUrl);
         bankScanConfig.setBankBaseUrl(baseUrl);
         bankScanConfig.setOpenApiSpecUrl(specUrl);
         bankScanConfig.setUserTokens(tokens);
-        bankScanConfig.setCredentials(mainConfig.getCredentials());
-        bankScanConfig.setConsentId(mainConfig.getConsentId());
+
+        if (mainConfig.getCredentials() != null) {
+            bankScanConfig.setCredentials(mainConfig.getCredentials());
+        }
+
+        if (mainConfig.getConsentId() != null) {
+            bankScanConfig.setConsentId(mainConfig.getConsentId());
+        }
 
         return bankScanConfig;
     }
@@ -312,12 +510,12 @@ public class ScannerService {
      */
     private Object loadOpenApiSpec(String specUrl) {
         if (specUrl == null || specUrl.trim().isEmpty()) {
-            System.out.println("❌ URL спецификации не указан");
+            System.out.println("URL спецификации не указан");
             return null;
         }
 
         try {
-            System.out.println("📥 Загрузка OpenAPI спецификации: " + specUrl);
+            System.out.println("Загрузка OpenAPI спецификации: " + specUrl);
 
             // Используем OpenAPIV3Parser для загрузки спецификации
             io.swagger.v3.parser.OpenAPIV3Parser parser = new io.swagger.v3.parser.OpenAPIV3Parser();
@@ -328,14 +526,14 @@ public class ScannerService {
             io.swagger.v3.parser.core.models.SwaggerParseResult result = parser.readLocation(specUrl, null, options);
 
             if (result.getOpenAPI() != null) {
-                System.out.println("✅ OpenAPI спецификация успешно загружена");
+                System.out.println("OpenAPI спецификация успешно загружена");
                 return result.getOpenAPI();
             } else {
-                System.err.println("❌ Не удалось загрузить OpenAPI спецификацию: " + result.getMessages());
+                System.err.println("Не удалось загрузить OpenAPI спецификацию: " + result.getMessages());
                 return null;
             }
         } catch (Exception e) {
-            System.err.println("❌ Ошибка при загрузке OpenAPI спецификации: " + e.getMessage());
+            System.err.println("Ошибка при загрузке OpenAPI спецификации: " + e.getMessage());
             return null;
         }
     }
@@ -344,19 +542,30 @@ public class ScannerService {
         // Простая сериализация конфигурации в JSON
         try {
             StringBuilder json = new StringBuilder("{");
-            json.append("\"bankId\":\"").append(config.getBankId()).append("\",");
             json.append("\"banks\":").append(config.getBanks().size()).append(",");
-            json.append("\"credentials\":").append(config.getCredentials().size()).append(",");
             json.append("\"bankUrls\":[");
 
             for (int i = 0; i < config.getBanks().size(); i++) {
                 if (i > 0) json.append(",");
                 json.append("\"").append(config.getBanks().get(i).getBaseUrl()).append("\"");
             }
-            json.append("]}");
+            json.append("]");
+
+            // Добавляем информацию о наличии учетных данных
+            if (config.getBankId() != null) {
+                json.append(",\"bankId\":\"").append(config.getBankId()).append("\"");
+            }
+            if (config.getClientId() != null) {
+                json.append(",\"clientId\":\"").append(config.getClientId()).append("\"");
+            }
+            if (config.getCredentials() != null) {
+                json.append(",\"credentials\":").append(config.getCredentials().size());
+            }
+
+            json.append("}");
             return json.toString();
         } catch (Exception e) {
-            return "{\"bankId\":\"unknown\",\"banks\":0,\"credentials\":0}";
+            return "{\"banks\":0,\"credentials\":0}";
         }
     }
 
@@ -364,6 +573,7 @@ public class ScannerService {
         if (vuln.getEvidence() != null && !vuln.getEvidence().isEmpty()) {
             return vuln.getEvidence();
         }
+
         StringBuilder proofBuilder = new StringBuilder();
         if (vuln.getEndpoint() != null) {
             proofBuilder.append("Эндпоинт: ").append(vuln.getEndpoint()).append("\n");
