@@ -48,7 +48,7 @@ public class Main implements core.ScanLauncher {
             return;
         }
 
-        log("GOSTGuardian Security Scanner готов к работе");
+        log("black Marker Scanner готов к работе");
         log("Откройте http://localhost:8081 и нажмите 'Запустить сканирование'");
 
         // Ожидаем завершения работы
