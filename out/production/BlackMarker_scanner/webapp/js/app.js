@@ -528,7 +528,7 @@ loadDefaultConfiguration() {
                 percent: (value / total * 100)
             }))
             .sort((a, b) => b.value - a.value)
-            .slice(0, 8);
+            .slice(0, 12);
 
         if (data.length === 0) {
             chart.innerHTML = '<div class="chart-placeholder">Нет данных</div>';
