@@ -139,6 +139,7 @@ class SecurityDashboard {
         document.querySelector('.dashboard').style.display = 'block';
         document.getElementById('comparisonSection').style.display = 'none';
         document.getElementById('apiGraphSection').style.display = 'none';
+        document.getElementById('configSection').style.display = 'block'; // Показываем настройки
 
         this.activeSection = 'dashboard';
         this.updateHeaderButtons();
@@ -152,6 +153,7 @@ class SecurityDashboard {
             document.querySelector('.dashboard').style.display = 'none';
             document.getElementById('comparisonSection').style.display = 'block';
             document.getElementById('apiGraphSection').style.display = 'none';
+            document.getElementById('configSection').style.display = 'none'; // Скрываем настройки
 
             this.activeSection = 'comparison';
             this.updateHeaderButtons();
@@ -170,6 +172,7 @@ class SecurityDashboard {
             document.querySelector('.dashboard').style.display = 'none';
             document.getElementById('comparisonSection').style.display = 'none';
             document.getElementById('apiGraphSection').style.display = 'block';
+            document.getElementById('configSection').style.display = 'none'; // Скрываем настройки
 
             this.activeSection = 'apiGraph';
             this.updateHeaderButtons();
