@@ -852,7 +852,7 @@ loadDefaultConfiguration() {
             <div class="input-group">
                 <label>Base URL:</label>
                 <input type="text" class="config-input bank-url"
-                       value="${bankData.baseUrl}" placeholder="https://vbank.open.bankingapi.ru">
+                       value="${bankData.baseUrl}" placeholder="URL">
             </div>
             <div class="input-group">
                 <label>OpenAPI Spec URL:</label>
