@@ -28,69 +28,44 @@
         </div>
     </header>
 
-    <!-- Configuration Section -->
     <section class="config-section">
         <div class="config-panel">
             <h3>Настройки сканирования</h3>
 
-            <div class="config-grid">
-                <!-- Банк 1 -->
-                <div class="bank-config">
-                    <h4>Банк 1</h4>
+            <div class="banks-header">
+                <h4>Цели сканирования</h4>
+                <button id="addBankBtn" class="btn btn-outline btn-sm">+ Добавить банк</button>
+            </div>
+
+            <div class="config-grid" id="bankCardsContainer">
+                <!-- Банк 1 (базовая карточка) -->
+                <div class="bank-config" data-bank-index="1">
+                    <div class="bank-header">
+                        <h4>Банк 1</h4>
+                        <button class="btn-remove-bank" type="button">×</button>
+                    </div>
                     <div class="input-group">
                         <label>Base URL:</label>
-                        <input type="text" id="bank1Url" class="config-input"
+                        <input type="text" class="config-input bank-url"
                                value="https://vbank.open.bankingapi.ru" placeholder="https://vbank.open.bankingapi.ru">
                     </div>
                     <div class="input-group">
                         <label>OpenAPI Spec URL:</label>
-                        <input type="text" id="bank1Spec" class="config-input"
+                        <input type="text" class="config-input bank-spec"
                                value="https://vbank.open.bankingapi.ru/openapi.json" placeholder="URL к спецификации">
-                    </div>
-                </div>
-
-                <!-- Банк 2 -->
-                <div class="bank-config">
-                    <h4>Банк 2</h4>
-                    <div class="input-group">
-                        <label>Base URL:</label>
-                        <input type="text" id="bank2Url" class="config-input"
-                               value="https://abank.open.bankingapi.ru" placeholder="https://abank.open.bankingapi.ru">
-                    </div>
-                    <div class="input-group">
-                        <label>OpenAPI Spec URL:</label>
-                        <input type="text" id="bank2Spec" class="config-input"
-                               value="https://abank.open.bankingapi.ru/openapi.json" placeholder="URL к спецификации">
-                    </div>
-                </div>
-
-                <!-- Банк 3 -->
-                <div class="bank-config">
-                    <h4>Банк 3</h4>
-                    <div class="input-group">
-                        <label>Base URL:</label>
-                        <input type="text" id="bank3Url" class="config-input"
-                               value="https://sbank.open.bankingapi.ru" placeholder="https://sbank.open.bankingapi.ru">
-                    </div>
-                    <div class="input-group">
-                        <label>OpenAPI Spec URL:</label>
-                        <input type="text" id="bank3Spec" class="config-input"
-                               value="https://sbank.open.bankingapi.ru/openapi.json" placeholder="URL к спецификации">
                     </div>
                 </div>
             </div>
 
             <div class="credentials-config">
+                <!-- Остальная часть с учетными данными без изменений -->
                 <h4>Учетные данные</h4>
-
-                <!-- Добавляем новое поле для Bank ID -->
                 <div class="credential-group">
                     <div class="input-group">
                         <label>Bank ID (Team ID):</label>
                         <input type="text" id="bankId" class="config-input" value="team172" placeholder="Идентификатор банка или команды">
                     </div>
                 </div>
-
                 <div class="credential-pairs">
                     <div class="credential-group">
                         <div class="input-group">
@@ -102,7 +77,6 @@
                             <input type="password" id="password1" class="config-input" value="" placeholder="Пароль">
                         </div>
                     </div>
-
                     <div class="credential-group">
                         <div class="input-group">
                             <label>Пользователь 2:</label>

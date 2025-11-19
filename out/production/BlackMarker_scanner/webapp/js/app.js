@@ -18,6 +18,7 @@ class SecurityDashboard {
     init() {
         this.setupEventListeners();
         this.setupConfigListeners();
+        this.setupBankCards();
         this.connectWebSocket();
         this.loadInitialData();
         this.restoreState();
@@ -129,22 +130,25 @@ class SecurityDashboard {
     }
 
     saveConfiguration() {
+    // Собираем данные банков из всех карточек
+    const bankCards = document.querySelectorAll('.bank-config');
+    const banks = [];
+
+    bankCards.forEach(card => {
+        const baseUrl = card.querySelector('.bank-url').value.trim();
+        const specUrl = card.querySelector('.bank-spec').value.trim();
+
+        if (baseUrl || specUrl) { // Добавляем только если есть данные
+            banks.push({
+                baseUrl: baseUrl,
+                specUrl: specUrl
+            });
+        }
+    });
+
     const config = {
         bankId: document.getElementById('bankId').value.trim(),
-        banks: [
-            {
-                baseUrl: document.getElementById('bank1Url').value.trim(),
-                specUrl: document.getElementById('bank1Spec').value.trim()
-            },
-            {
-                baseUrl: document.getElementById('bank2Url').value.trim(),
-                specUrl: document.getElementById('bank2Spec').value.trim()
-            },
-            {
-                baseUrl: document.getElementById('bank3Url').value.trim(),
-                specUrl: document.getElementById('bank3Spec').value.trim()
-            }
-        ],
+        banks: banks,
         credentials: [
             {
                 username: document.getElementById('user1').value.trim(),
@@ -157,12 +161,10 @@ class SecurityDashboard {
         ]
     };
 
-    // Валидация
     if (!this.validateConfiguration(config)) {
         return;
     }
 
-    // Сохраняем в localStorage
     localStorage.setItem('scanConfig', JSON.stringify(config));
     this.showNotification('Настройки сохранены', 'success');
 }
@@ -179,54 +181,54 @@ class SecurityDashboard {
         }
     }
 
-    loadDefaultConfiguration() {
-        const defaultConfig = {
-            bankId: "team172", // добавляем bankId по умолчанию
-            banks: [
-                {
-                    baseUrl: "https://vbank.open.bankingapi.ru",
-                    specUrl: "https://vbank.open.bankingapi.ru/openapi.json"
-                },
-                {
-                    baseUrl: "https://abank.open.bankingapi.ru",
-                    specUrl: "https://abank.open.bankingapi.ru/openapi.json"
-                },
-                {
-                    baseUrl: "https://sbank.open.bankingapi.ru",
-                    specUrl: "https://sbank.open.bankingapi.ru/openapi.json"
-                }
-            ],
-            credentials: [
-                {
-                    username: "team172-8",
-                    password: "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY"
-                },
-                {
-                    username: "team172-9",
-                    password: "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY"
-                }
-            ]
-        };
+loadDefaultConfiguration() {
+    const defaultConfig = {
+        bankId: "team172",
+        banks: [
+            {
+                baseUrl: "https://vbank.open.bankingapi.ru",
+                specUrl: "https://vbank.open.bankingapi.ru/openapi.json"
+            }
+        ],
+        credentials: [
+            {
+                username: "team172-8",
+                password: ""
+            },
+            {
+                username: "team172-9",
+                password: ""
+            }
+        ]
+    };
 
-        this.applyConfiguration(defaultConfig);
-        this.showNotification('Настройки по умолчанию загружены', 'info');
-    }
-
+    this.applyConfiguration(defaultConfig);
+    this.showNotification('Настройки по умолчанию загружены', 'info');
+}
     applyConfiguration(config) {
-        // Устанавливаем bankId
-        document.getElementById('bankId').value = config.bankId || 'team172';
+    // Устанавливаем bankId
+    document.getElementById('bankId').value = config.bankId || 'team172';
 
-        // Применяем настройки к форме
-        config.banks.forEach((bank, index) => {
-            document.getElementById(`bank${index + 1}Url`).value = bank.baseUrl;
-            document.getElementById(`bank${index + 1}Spec`).value = bank.specUrl;
-        });
+    // Очищаем и пересоздаем карточки банков
+    const container = document.getElementById('bankCardsContainer');
+    container.innerHTML = '';
 
-        config.credentials.forEach((cred, index) => {
-            document.getElementById(`user${index + 1}`).value = cred.username;
-            document.getElementById(`password${index + 1}`).value = cred.password;
-        });
+    // Создаем карточки для каждого банка из конфигурации
+    config.banks.forEach(bank => {
+        this.addBankCard(bank);
+    });
+
+    // Если нет банков в конфиге, создаем одну пустую карточку
+    if (config.banks.length === 0) {
+        this.addBankCard();
     }
+
+    // Учетные данные
+    config.credentials.forEach((cred, index) => {
+        document.getElementById(`user${index + 1}`).value = cred.username;
+        document.getElementById(`password${index + 1}`).value = cred.password;
+    });
+}
 
     validateConfiguration(config) {
         // Проверяем bankId
@@ -813,6 +815,79 @@ class SecurityDashboard {
                 notification.parentNode.removeChild(notification);
             }
         }, 5000);
+    }
+
+    setupBankCards() {
+        // Обработчик для кнопки добавления банка
+        document.getElementById('addBankBtn').addEventListener('click', () => {
+            this.addBankCard();
+        });
+
+        // Обработчики для удаления банков (делегирование событий)
+        document.getElementById('bankCardsContainer').addEventListener('click', (e) => {
+            if (e.target.classList.contains('btn-remove-bank')) {
+                this.removeBankCard(e.target.closest('.bank-config'));
+            }
+        });
+
+        // Инициализация одной карточки по умолчанию
+        if (document.getElementById('bankCardsContainer').children.length === 0) {
+            this.addBankCard();
+        }
+    }
+
+    addBankCard(bankData = { baseUrl: '', specUrl: '' }) {
+        const container = document.getElementById('bankCardsContainer');
+        const bankIndex = container.children.length + 1;
+
+        const bankCard = document.createElement('div');
+        bankCard.className = 'bank-config';
+        bankCard.setAttribute('data-bank-index', bankIndex);
+
+        bankCard.innerHTML = `
+            <div class="bank-header">
+                <h4>Банк ${bankIndex}</h4>
+                ${bankIndex > 1 ? '<button class="btn-remove-bank" type="button">×</button>' : ''}
+            </div>
+            <div class="input-group">
+                <label>Base URL:</label>
+                <input type="text" class="config-input bank-url"
+                       value="${bankData.baseUrl}" placeholder="https://vbank.open.bankingapi.ru">
+            </div>
+            <div class="input-group">
+                <label>OpenAPI Spec URL:</label>
+                <input type="text" class="config-input bank-spec"
+                       value="${bankData.specUrl}" placeholder="URL к спецификации">
+            </div>
+        `;
+
+        container.appendChild(bankCard);
+    }
+
+    removeBankCard(bankCard) {
+        if (document.getElementById('bankCardsContainer').children.length > 1) {
+            bankCard.remove();
+            this.renumberBankCards();
+        } else {
+            this.showNotification('Должен остаться хотя бы один банк', 'warning');
+        }
+    }
+
+    renumberBankCards() {
+        const container = document.getElementById('bankCardsContainer');
+        const bankCards = container.querySelectorAll('.bank-config');
+
+        bankCards.forEach((card, index) => {
+            const newIndex = index + 1;
+            card.setAttribute('data-bank-index', newIndex);
+            card.querySelector('h4').textContent = `Банк ${newIndex}`;
+
+            // Показываем/скрываем кнопку удаления
+            const removeBtn = card.querySelector('.btn-remove-bank');
+            if (removeBtn) {
+                removeBtn.style.display = newIndex > 1 ? 'block' : 'none';
+            }
+        });
     }
 
     exportToCsv() {
