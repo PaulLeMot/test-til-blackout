@@ -1,3 +1,5 @@
+package core;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.HttpURLConnection;
@@ -14,7 +16,7 @@ public class ApiTester {
     
     // Хардкод credentials
     private static final String CLIENT_ID = "team172";
-    private static final String CLIENT_SECRET = "";
+    private static final String CLIENT_SECRET = "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
     private static final String TOKEN_URL = "https://auth.bankingapi.ru/auth/realms/kubernetes/protocol/openid-connect/token";
     
     private static ObjectMapper mapper = new ObjectMapper();
