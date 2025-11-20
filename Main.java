@@ -114,9 +114,22 @@ public class Main implements core.ScanLauncher {
                 log("    - " + cred.getUsername() + " : " + (cred.getPassword() != null ? "***" : "null"));
             }
 
-            if (config.getBanks().isEmpty() || config.getCredentials().isEmpty()) {
-                log("❌ Неверная конфигурация: отсутствуют банки или учетные данные");
-                webServer.broadcastMessage("scan_error", "Неверная конфигурация: отсутствуют банки или учетные данные");
+//            if (config.getBanks().isEmpty() || config.getCredentials().isEmpty()) {
+//                log("❌ Неверная конфигурация: отсутствуют банки или учетные данные");
+//                webServer.broadcastMessage("scan_error", "Неверная конфигурация: отсутствуют банки или учетные данные");
+//                return;
+//            }
+
+            if (config.getCredentials().isEmpty()) {
+                System.out.println("[+] ❌ Неверная конфигурация: отсутствуют учетные данные");
+                webServer.broadcastMessage("scan_error", "Неверная конфигурация: отсутствуют учетные данные");
+                return;
+            }
+
+            // В статическом режиме банки не обязательны
+            if (config.getBanks().isEmpty() && config.getAnalysisMode() != ScanConfig.AnalysisMode.STATIC_ONLY) {
+                System.out.println("[+] ❌ Неверная конфигурация: отсутствуют банки");
+                webServer.broadcastMessage("scan_error", "Неверная конфигурация: отсутствуют банки");
                 return;
             }
 

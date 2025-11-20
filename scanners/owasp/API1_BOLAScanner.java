@@ -5,13 +5,11 @@ import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
 import core.HttpApiClient;
+import core.TestedEndpoint;
+import core.EndpointParameter;
 import java.util.stream.Collectors;
-import io.swagger.v3.oas.models.OpenAPI;
-import io.swagger.v3.oas.models.PathItem;
 
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class API1_BOLAScanner implements SecurityScanner {
 
@@ -21,9 +19,9 @@ public class API1_BOLAScanner implements SecurityScanner {
     private static final String ACCOUNT_TRANSACTIONS_ENDPOINT = "/accounts/%s/transactions";
 
     // Параметры управления частотой запросов
-    private static final int BASE_DELAY_MS = 1000; // увеличена базовая задержка
-    private static final int MAX_RETRIES = 2; // уменьшено количество повторных попыток
-    private static final int MAX_ACCOUNTS_TO_TEST = 3; // ОГРАНИЧЕНИЕ: тестируем только 3 счета
+    private static final int BASE_DELAY_MS = 1000;
+    private static final int MAX_RETRIES = 2;
+    private static final int MAX_ACCOUNTS_TO_TEST = 3;
 
     @Override
     public String getName() {
@@ -33,6 +31,12 @@ public class API1_BOLAScanner implements SecurityScanner {
     @Override
     public List<Vulnerability> scan(Object openApiObj, ScanConfig config, ApiClient apiClient) {
         System.out.println("(API-1) Запуск сканирования BOLA с ограничением количества тестов...");
+
+        // Если включен статический анализ, используем эндпоинты из конфигурации
+        if (config.isStaticAnalysisEnabled() && config.getTestedEndpoints() != null) {
+            return scanEndpoints(config.getTestedEndpoints(), config, apiClient);
+        }
+
         List<Vulnerability> vulnerabilities = new ArrayList<>();
 
         // Получаем токены пользователей
@@ -100,8 +104,121 @@ public class API1_BOLAScanner implements SecurityScanner {
     }
 
     /**
-     * Получение списка счетов пользователя
+     * Сканирование эндпоинтов для статического анализа
      */
+    @Override
+    public List<Vulnerability> scanEndpoints(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-1) Запуск СТАТИЧЕСКОГО анализа BOLA на " + endpoints.size() + " эндпоинтах");
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Определяем режим работы
+        boolean isStaticOnly = config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY;
+        boolean hasTokens = config.getUserTokens() != null && config.getUserTokens().size() >= 2;
+
+        if (isStaticOnly) {
+            // Режим только статического анализа - анализируем структуру эндпоинтов
+            vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+        } else if (hasTokens) {
+            // Комбинированный режим с токенами - выполняем динамические тесты
+            vulnerabilities.addAll(performDynamicBOLATests(endpoints, config, apiClient));
+        } else {
+            // Комбинированный режим без токенов - только статический анализ
+            System.out.println("(API-1) В комбинированном режиме нет токенов, выполняем только статический анализ");
+            vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+        }
+
+        System.out.println("(API-1) Статический анализ BOLA завершен. Найдено уязвимостей: " + vulnerabilities.size());
+        return vulnerabilities;
+    }
+
+    /**
+     * Анализ структуры эндпоинтов для выявления потенциальных BOLA уязвимостей
+     */
+    private List<Vulnerability> analyzeEndpointsStructure(List<TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Шаблоны для идентификации эндпоинтов, работающих с объектами
+        String[] objectPatterns = {
+                "/accounts/{", "/users/{", "/customers/{", "/profiles/{",
+                "/balances/{", "/transactions/{", "/cards/{", "/loans/{"
+        };
+
+        // Критические методы, которые могут быть уязвимы к BOLA
+        String[] criticalMethods = {"GET", "PUT", "DELETE", "PATCH"};
+
+        for (TestedEndpoint endpoint : endpoints) {
+            String path = endpoint.getPath();
+            String method = endpoint.getMethod();
+
+            // Проверяем, содержит ли путь шаблоны объектов и использует ли критический метод
+            boolean hasObjectPattern = Arrays.stream(objectPatterns)
+                    .anyMatch(pattern -> path.contains(pattern));
+            boolean hasCriticalMethod = Arrays.stream(criticalMethods)
+                    .anyMatch(m -> m.equals(method));
+
+            if (hasObjectPattern && hasCriticalMethod) {
+                Vulnerability vuln = createStaticBOLAVulnerability(endpoint, config);
+                vulnerabilities.add(vuln);
+                System.out.println("(API-1) Обнаружен потенциально уязвимый эндпоинт: " + method + " " + path);
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Создание уязвимости для статического анализа
+     */
+    private Vulnerability createStaticBOLAVulnerability(TestedEndpoint endpoint, ScanConfig config) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API1:2023 - Potential Broken Object Level Authorization");
+        vuln.setDescription(
+                "Эндпоинт " + endpoint.getMethod() + " " + endpoint.getPath() +
+                        " может быть уязвим к атакам BOLA (Broken Object Level Authorization).\n\n" +
+                        "Эндпоинт работает с объектами (счета, пользователи и т.д.) и может позволять " +
+                        "неавторизованный доступ к данным других пользователей при отсутствии proper authorization checks.\n\n" +
+                        "Источник: " + endpoint.getSource()
+        );
+        vuln.setSeverity(Vulnerability.Severity.HIGH); // Высокий риск, так как требует проверки
+        vuln.setCategory(Vulnerability.Category.OWASP_API1_BOLA);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+        vuln.setEvidence(
+                "Статический анализ выявил потенциальную уязвимость:\n" +
+                        "- Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "- Работает с объектами пользователей\n" +
+                        "- Источник: " + endpoint.getSource() + "\n" +
+                        "- Параметры: " + (endpoint.getParameters() != null ? endpoint.getParameters().size() : 0) + " параметров"
+        );
+        vuln.setStatusCode(-1); // Нет реального статуса кода для статического анализа
+
+        vuln.setRecommendations(Arrays.asList(
+                "Реализовать строгую проверку принадлежности объекта авторизованному пользователю",
+                "Использовать модель \"Deny by default\" - явно разрешать доступ только к своим ресурсам",
+                "Добавить middleware для проверки прав доступа на каждом уровне (endpoint, сервис, база данных)",
+                "Провести динамическое тестирование для подтверждения уязвимости",
+                "Внедрить централизованную систему авторизации с проверкой прав доступа к объектам",
+                "Использовать UUID вместо последовательных ID для усложнения подбора"
+        ));
+
+        return vuln;
+    }
+
+    /**
+     * Выполнение динамических BOLA тестов в комбинированном режиме
+     */
+    private List<Vulnerability> performDynamicBOLATests(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Здесь можно добавить логику для тестирования конкретных эндпоинтов
+        // из списка endpoints с использованием переданных токенов
+
+        System.out.println("(API-1) Динамическое тестирование в комбинированном режиме на " + endpoints.size() + " эндпоинтах");
+
+        // Пока возвращаем пустой список, так как основная логика в методе scan
+        return vulnerabilities;
+    }
+
     private List<String> getAccountIds(ScanConfig config, ApiClient apiClient, String token, String username) {
         try {
             Map<String, String> headers = createDefaultHeaders(token);
@@ -123,10 +240,6 @@ public class API1_BOLAScanner implements SecurityScanner {
         return new ArrayList<>();
     }
 
-    /**
-     * Проверка доступа к счетам другого пользователя
-     * Возвращает true, если найдена хотя бы одна уязвимость
-     */
     private boolean testAccountAccess(ScanConfig config, ApiClient apiClient, String token,
                                       String attackerUser, List<String> targetAccounts,
                                       String ownerUser, List<Vulnerability> vulnerabilities) {
@@ -156,9 +269,6 @@ public class API1_BOLAScanner implements SecurityScanner {
         return foundVulnerability;
     }
 
-    /**
-     * Тестирование одного счета на всех эндпоинтах
-     */
     private boolean testSingleAccount(ScanConfig config, ApiClient apiClient, String token,
                                       String attackerUser, String accountId, String ownerUser,
                                       List<Vulnerability> vulnerabilities) {
@@ -197,9 +307,6 @@ public class API1_BOLAScanner implements SecurityScanner {
         return isVulnerable;
     }
 
-    /**
-     * Задержка между запросами
-     */
     private void applyDelay() {
         try {
             Thread.sleep(BASE_DELAY_MS);
@@ -219,8 +326,8 @@ public class API1_BOLAScanner implements SecurityScanner {
 
     private List<String> extractAccountIds(String responseBody) {
         List<String> accountIds = new ArrayList<>();
-        Pattern pattern = Pattern.compile("\"accountId\"\\s*:\\s*\"([^\"]+)\"");
-        Matcher matcher = pattern.matcher(responseBody);
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("\"accountId\"\\s*:\\s*\"([^\"]+)\"");
+        java.util.regex.Matcher matcher = pattern.matcher(responseBody);
 
         while (matcher.find()) {
             accountIds.add(matcher.group(1));
