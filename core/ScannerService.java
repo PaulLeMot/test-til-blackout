@@ -11,6 +11,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 import java.text.SimpleDateFormat;
+import java.util.stream.Collectors;
 
 public class ScannerService {
     private final WebServer webServer;
@@ -20,6 +21,7 @@ public class ScannerService {
     private Consumer<String> messageListener;
     private ScanConfig config;
     private String currentSessionId;
+    private List<TestedEndpoint> collectedEndpoints;
 
     // Настройки параллелизма
     private final int SCANNER_THREAD_POOL_SIZE = 5;
@@ -39,6 +41,10 @@ public class ScannerService {
 
     public void setConfig(ScanConfig config) {
         this.config = config;
+    }
+
+    public void setCollectedEndpoints(List<TestedEndpoint> endpoints) {
+        this.collectedEndpoints = endpoints;
     }
 
     public synchronized boolean startScan() {
@@ -78,8 +84,14 @@ public class ScannerService {
             return;
         }
 
+        // Собираем эндпоинты если они еще не собраны
+        if (collectedEndpoints == null || collectedEndpoints.isEmpty()) {
+            collectedEndpoints = ApiEndpointCollector.collectAllEndpoints();
+        }
+
         notifyMessage("info", "Зарегистрировано сканеров: 11");
         notifyMessage("info", "Идентификатор сессии: " + currentSessionId);
+        notifyMessage("info", "Собрано эндпоинтов для сканирования: " + collectedEndpoints.size());
         notifyMessage("info", "Параллелизм: " + BANK_THREAD_POOL_SIZE + " банков, " + SCANNER_THREAD_POOL_SIZE + " сканеров");
 
         // Получение токенов для пользователей (опционально)
@@ -182,10 +194,10 @@ public class ScannerService {
 
         notifyMessage("info", "=".repeat(50));
         notifyMessage("info", "Сканирование: " + baseUrl);
+        notifyMessage("info", "Доступно эндпоинтов: " + collectedEndpoints.size());
         notifyMessage("info", "=".repeat(50));
 
         String cleanBaseUrl = baseUrl.trim();
-        notifyMessage("info", "Загрузка OpenAPI-спецификации: " + specUrl);
 
         try {
             // Загружаем OpenAPI спецификацию
@@ -199,6 +211,7 @@ public class ScannerService {
 
             // Создаем конфигурацию для конкретного банка
             ScanConfig bankScanConfig = createBankScanConfig(config, cleanBaseUrl, specUrl, tokens);
+            bankScanConfig.setTestedEndpoints(collectedEndpoints);
 
             // Создаем список всех сканеров
             List<SecurityScanner> allScanners = Arrays.asList(
@@ -231,61 +244,17 @@ public class ScannerService {
                 notifyMessage("warning", "Запуск только сканеров, не требующих аутентификации: " + securityScanners.size() + " из " + allScanners.size());
             }
 
-            // Если нет сканеров для запуска, возвращаем результат с уже найденными уязвимостями
-            if (securityScanners.isEmpty()) {
-                List<Vulnerability> allVulnerabilities = new ArrayList<>();
-                allVulnerabilities.addAll(deepAnalysisVulnerabilities);
-                notifyMessage("warning", "Нет доступных сканеров для запуска без токенов");
-                return new BankScanResult(allVulnerabilities.size(), cleanBaseUrl);
-            }
-
-            // Создаем ExecutorService для параллельного выполнения сканеров
-            ExecutorService scannerExecutor = Executors.newFixedThreadPool(SCANNER_THREAD_POOL_SIZE);
-            List<Future<List<Vulnerability>>> scannerFutures = new ArrayList<>();
-
-            // Запускаем все сканеры параллельно
-            for (SecurityScanner scanner : securityScanners) {
-                Future<List<Vulnerability>> future = scannerExecutor.submit(() -> {
-                    return executeScanner(scanner, openApiSpec, bankScanConfig, cleanBaseUrl, hasValidTokens);
-                });
-                scannerFutures.add(future);
-            }
-
-            // Собираем результаты от всех сканеров
-            List<Vulnerability> allVulnerabilities = new ArrayList<>();
-            int completedScanners = 0;
-
-            for (Future<List<Vulnerability>> future : scannerFutures) {
-                try {
-                    List<Vulnerability> scannerResults = future.get(SCANNER_TIMEOUT_MINUTES, TimeUnit.MINUTES);
-                    allVulnerabilities.addAll(scannerResults);
-                    completedScanners++;
-                } catch (TimeoutException e) {
-                    notifyMessage("warning", "Сканер превысил время выполнения (" + SCANNER_TIMEOUT_MINUTES + " минут) для банка " + cleanBaseUrl);
-                    future.cancel(true);
-                } catch (Exception e) {
-                    notifyMessage("error", "Ошибка выполнения сканера для банка " + cleanBaseUrl + ": " + e.getMessage());
-                }
-            }
+            // Запускаем сканеры с собранными эндпоинтами
+            List<Vulnerability> allVulnerabilities = runScannersWithEndpoints(securityScanners, bankScanConfig, cleanBaseUrl, hasValidTokens);
 
             // Добавляем результаты глубокого анализа
             allVulnerabilities.addAll(deepAnalysisVulnerabilities);
+
             // Запускаем корреляцию уязвимостей
             List<Vulnerability> correlatedVulnerabilities = performCorrelationAnalysis(allVulnerabilities);
             allVulnerabilities.addAll(correlatedVulnerabilities);
 
-            // Завершаем executor сканеров
-            scannerExecutor.shutdown();
-            try {
-                if (!scannerExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
-                    scannerExecutor.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                scannerExecutor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-
-            notifyMessage("info", "Банк " + cleanBaseUrl + ": завершено сканеров " + completedScanners + "/" + securityScanners.size() +
+            notifyMessage("info", "Банк " + cleanBaseUrl + ": завершено сканеров " + securityScanners.size() +
                     ", найдено уязвимостей: " + allVulnerabilities.size());
 
             return new BankScanResult(allVulnerabilities.size(), cleanBaseUrl);
@@ -294,6 +263,95 @@ public class ScannerService {
             notifyMessage("error", "Критическая ошибка при сканировании банка " + cleanBaseUrl + ": " + e.getMessage());
             e.printStackTrace();
             return new BankScanResult(0, cleanBaseUrl);
+        }
+    }
+
+    /**
+     * Запуск сканеров с использованием собранных эндпоинтов
+     */
+    private List<Vulnerability> runScannersWithEndpoints(List<SecurityScanner> scanners, ScanConfig bankScanConfig,
+                                                         String bankName, boolean hasValidTokens) {
+        List<Vulnerability> allVulnerabilities = new ArrayList<>();
+
+        // Создаем ExecutorService для параллельного выполнения сканеров
+        ExecutorService scannerExecutor = Executors.newFixedThreadPool(SCANNER_THREAD_POOL_SIZE);
+        List<Future<List<Vulnerability>>> scannerFutures = new ArrayList<>();
+
+        // Запускаем все сканеры параллельно
+        for (SecurityScanner scanner : scanners) {
+            Future<List<Vulnerability>> future = scannerExecutor.submit(() -> {
+                return executeScannerWithEndpoints(scanner, bankScanConfig, bankName, hasValidTokens);
+            });
+            scannerFutures.add(future);
+        }
+
+        // Собираем результаты от всех сканеров
+        int completedScanners = 0;
+        for (Future<List<Vulnerability>> future : scannerFutures) {
+            try {
+                List<Vulnerability> scannerResults = future.get(SCANNER_TIMEOUT_MINUTES, TimeUnit.MINUTES);
+                allVulnerabilities.addAll(scannerResults);
+                completedScanners++;
+            } catch (TimeoutException e) {
+                notifyMessage("warning", "Сканер превысил время выполнения (" + SCANNER_TIMEOUT_MINUTES + " минут) для банка " + bankName);
+                future.cancel(true);
+            } catch (Exception e) {
+                notifyMessage("error", "Ошибка выполнения сканера для банка " + bankName + ": " + e.getMessage());
+            }
+        }
+
+        // Завершаем executor сканеров
+        scannerExecutor.shutdown();
+        try {
+            if (!scannerExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+                scannerExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            scannerExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+
+        notifyMessage("info", "Завершено сканеров: " + completedScanners + "/" + scanners.size());
+        return allVulnerabilities;
+    }
+
+    /**
+     * Выполняет один сканер с использованием собранных эндпоинтов
+     */
+    private List<Vulnerability> executeScannerWithEndpoints(SecurityScanner scanner, ScanConfig bankScanConfig,
+                                                            String bankName, boolean hasValidTokens) {
+        String scannerName = scanner.getName();
+        notifyMessage("info", "-".repeat(40));
+        notifyMessage("info", "Запуск сканера: " + scannerName + " для " + bankName);
+
+        // Проверяем, требует ли сканер токены и доступны ли они
+        boolean requiresAuth = requiresAuthentication(scanner);
+
+        if (requiresAuth && !hasValidTokens) {
+            notifyMessage("warning", "Сканер " + scannerName + " пропущен - требует аутентификации, но токены недоступны");
+            return new ArrayList<>();
+        }
+
+        try {
+            // Используем новый метод scanEndpoints если доступен, иначе старый метод
+            List<Vulnerability> scannerResults;
+            if (collectedEndpoints != null && !collectedEndpoints.isEmpty()) {
+                scannerResults = scanner.scanEndpoints(collectedEndpoints, bankScanConfig, new HttpApiClient());
+            } else {
+                scannerResults = scanner.scan(null, bankScanConfig, new HttpApiClient());
+            }
+
+            // Сохраняем результаты в базу данных
+            for (Vulnerability vuln : scannerResults) {
+                saveVulnerabilityToDatabase(vuln, bankName, scannerName);
+            }
+
+            notifyMessage("info", "Сканер " + scannerName + " завершен. Найдено: " + scannerResults.size() + " уязвимостей");
+            return scannerResults;
+
+        } catch (Exception e) {
+            notifyMessage("error", "Ошибка в сканере " + scannerName + " для " + bankName + ": " + e.getMessage());
+            return new ArrayList<>();
         }
     }
 
@@ -309,39 +367,6 @@ public class ScannerService {
                 scannerName.contains("Validation") || // Валидация контрактов
                 scannerName.contains("SecurityConfig") ||
                 scannerName.contains("Inventory");
-    }
-
-    /**
-     * Выполняет один сканер и возвращает результаты
-     */
-    private List<Vulnerability> executeScanner(SecurityScanner scanner, Object openApiSpec, ScanConfig bankScanConfig, String bankName, boolean hasValidTokens) {
-        String scannerName = scanner.getName();
-        notifyMessage("info", "-".repeat(40));
-        notifyMessage("info", "Запуск сканера: " + scannerName + " для " + bankName);
-
-        // Проверяем, требует ли сканер токены и доступны ли они
-        boolean requiresAuth = requiresAuthentication(scanner);
-
-        if (requiresAuth && !hasValidTokens) {
-            notifyMessage("warning", "Сканер " + scannerName + " пропущен - требует аутентификации, но токены недоступны");
-            return new ArrayList<>();
-        }
-
-        try {
-            List<Vulnerability> scannerResults = scanner.scan(openApiSpec, bankScanConfig, new HttpApiClient());
-
-            // Сохраняем результаты в базу данных
-            for (Vulnerability vuln : scannerResults) {
-                saveVulnerabilityToDatabase(vuln, bankName, scannerName);
-            }
-
-            notifyMessage("info", "Сканер " + scannerName + " завершен. Найдено: " + scannerResults.size() + " уязвимостей");
-            return scannerResults;
-
-        } catch (Exception e) {
-            notifyMessage("error", "Ошибка в сканере " + scannerName + " для " + bankName + ": " + e.getMessage());
-            return new ArrayList<>();
-        }
     }
 
     /**
@@ -390,7 +415,6 @@ public class ScannerService {
 
         return vulnerabilities;
     }
-
 
     /**
      * Выполняет корреляцию уязвимостей

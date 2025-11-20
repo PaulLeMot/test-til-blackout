@@ -17,6 +17,7 @@ public class ScanConfig {
     private List<UserCredentials> credentials = new ArrayList<>();
     private Map<String, String> userTokens = new HashMap<>();
     private Map<String, Object> realData = new HashMap<>();
+    private List<TestedEndpoint> testedEndpoints = new ArrayList<>();
 
     // Конструктор по умолчанию
     public ScanConfig() {}
@@ -55,6 +56,10 @@ public class ScanConfig {
     // Геттер и сеттер для realData
     public Map<String, Object> getRealData() { return realData; }
     public void setRealData(Map<String, Object> realData) { this.realData = realData; }
+
+    // Геттер и сеттер для testedEndpoints
+    public List<TestedEndpoint> getTestedEndpoints() { return testedEndpoints; }
+    public void setTestedEndpoints(List<TestedEndpoint> testedEndpoints) { this.testedEndpoints = testedEndpoints; }
 
     // Методы для работы с токенами
 
