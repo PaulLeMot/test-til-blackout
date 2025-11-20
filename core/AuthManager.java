@@ -230,6 +230,12 @@ public class AuthManager {
     public static Map<String, String> getTokensForScanning(ScanConfig config) {
         Map<String, String> tokens = new HashMap<>();
 
+        // ПРОВЕРКА РЕЖИМА АНАЛИЗА: если статический режим, пропускаем получение токенов
+        if (config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY) {
+            logger.info("📋 СТАТИЧЕСКИЙ РЕЖИМ: пропуск получения токенов");
+            return tokens;
+        }
+
         // ДИАГНОСТИКА: проверяем состояние конфигурации
         logger.info("=== ДИАГНОСТИКА КОНФИГУРАЦИИ ===");
         logger.info("Bank ID: " + config.getBankId());
@@ -244,7 +250,7 @@ public class AuthManager {
             }
         }
         logger.info("=================================");
-        
+
         String baseUrl = config.getBankBaseUrl();
         String bankId = config.getBankId();
         String clientId = config.getClientId();
