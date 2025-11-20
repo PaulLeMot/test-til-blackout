@@ -57,6 +57,33 @@
                 </div>
             </div>
 
+            <div class="analysis-mode-config">
+                <h4>Режим анализа</h4>
+                <div class="mode-selector">
+                    <div class="mode-option">
+                        <input type="radio" id="modeDynamic" name="analysisMode" value="DYNAMIC_ONLY" checked>
+                        <label for="modeDynamic">Только динамический анализ</label>
+                        <div class="mode-description">Спецификация загружается по URL, запросы отправляются на целевой URL</div>
+                    </div>
+
+                    <div class="mode-option">
+                        <input type="radio" id="modeStatic" name="analysisMode" value="STATIC_ONLY">
+                        <label for="modeStatic">Только статический анализ</label>
+                        <div class="mode-description">Анализ только на основе локальных спецификаций из папки Specifications</div>
+                    </div>
+
+                    <div class="mode-option">
+                        <input type="radio" id="modeCombined" name="analysisMode" value="COMBINED">
+                        <label for="modeCombined">Комбинированный анализ</label>
+                        <div class="mode-description">Локальные спецификации + запросы на указанный URL</div>
+                    </div>
+                </div>
+
+                <div id="modeInfo" class="mode-info" style="display: none;">
+                    <!-- Информационные сообщения будут здесь -->
+                </div>
+            </div>
+
             <div class="credentials-config">
                 <!-- Остальная часть с учетными данными без изменений -->
                 <h4>Учетные данные</h4>
@@ -78,6 +105,16 @@
                         </div>
                     </div>
                     <div class="credential-group">
+                        <div class="credential-group">
+                            <div class="input-group">
+                                <label>Client ID:</label>
+                                <input type="text" id="clientId" class="config-input" value="team172" placeholder="Client ID">
+                            </div>
+                            <div class="input-group">
+                                <label>Client Secret:</label>
+                                <input type="password" id="clientSecret" class="config-input" value="" placeholder="Client Secret">
+                            </div>
+                        </div>
                         <div class="input-group">
                             <label>Пользователь 2:</label>
                             <input type="text" id="user2" class="config-input" value="team172-9" placeholder="Логин">

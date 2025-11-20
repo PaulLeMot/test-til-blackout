@@ -11,7 +11,7 @@ import java.util.*;
 public class ApiEndpointCollector {
     private static ObjectMapper mapper = new ObjectMapper();
 
-    public static List<TestedEndpoint> collectAllEndpoints() {
+    public static List<TestedEndpoint> collectAllEndpoints(String clientId, String clientSecret) {
         List<TestedEndpoint> endpoints = new ArrayList<>();
 
         try {
@@ -19,12 +19,43 @@ public class ApiEndpointCollector {
             endpoints.addAll(collectFromSpecifications());
 
             // 2. Собираем эндпоинты из реальных тестов ApiTester
-            endpoints.addAll(collectFromApiTester());
+            endpoints.addAll(collectFromApiTester(clientId, clientSecret));
 
             System.out.println("✅ Собрано всего эндпоинтов: " + endpoints.size());
 
         } catch (Exception e) {
             System.err.println("❌ Ошибка при сборе эндпоинтов: " + e.getMessage());
+        }
+
+        return endpoints;
+    }
+
+    /**
+     * Сбор эндпоинтов из одного файла спецификации
+     */
+    public static List<TestedEndpoint> collectFromSpecificationFile(File specFile) {
+        List<TestedEndpoint> endpoints = new ArrayList<>();
+
+        try {
+            JsonNode root = mapper.readTree(specFile);
+            JsonNode paths = root.path("paths");
+
+            if (paths.isObject()) {
+                Iterator<Map.Entry<String, JsonNode>> pathFields = paths.fields();
+                while (pathFields.hasNext()) {
+                    Map.Entry<String, JsonNode> pathEntry = pathFields.next();
+                    String path = pathEntry.getKey();
+                    JsonNode pathMethods = pathEntry.getValue();
+
+                    // Обрабатываем методы для этого пути
+                    processPathMethods(endpoints, path, pathMethods, "Local: " + specFile.getName());
+                }
+            }
+
+            System.out.println("✅ Обработан файл " + specFile.getName() + " - " + endpoints.size() + " эндпоинтов");
+        } catch (Exception e) {
+            System.err.println("❌ Ошибка при обработке файла " + specFile.getName() + ": " + e.getMessage());
+            throw new RuntimeException("Ошибка при обработке файла спецификации", e);
         }
 
         return endpoints;
@@ -67,15 +98,15 @@ public class ApiEndpointCollector {
     /**
      * Сбор эндпоинтов из реальных тестов ApiTester
      */
-    private static List<TestedEndpoint> collectFromApiTester() {
+    private static List<TestedEndpoint> collectFromApiTester(String clientId, String clientSecret) {
         List<TestedEndpoint> endpoints = new ArrayList<>();
 
         try {
             // Запускаем ApiTester и получаем реальные результаты
             System.out.println("🚀 Запуск ApiTester для сбора реальных эндпоинтов...");
 
-            // Создаем экземпляр ApiTester и запускаем тестирование
-            ApiTester tester = new ApiTester();
+            // Создаем экземпляр ApiTester с переданными учетными данными
+            ApiTester tester = new ApiTester(clientId, clientSecret);
             List<ApiTester.TestedApiCall> testResults = tester.executeFullTestSuite();
 
             // Конвертируем результаты ApiTester в TestedEndpoint
@@ -176,5 +207,35 @@ public class ApiEndpointCollector {
                 endpoints.add(endpoint);
             }
         }
+    }
+
+    /**
+     * Конвертирует TestedApiCall в TestedEndpoint
+     */
+    private static TestedEndpoint convertToTestedEndpoint(ApiTester.TestedApiCall testCall) {
+        TestedEndpoint endpoint = new TestedEndpoint();
+        endpoint.setMethod(testCall.getMethod());
+        endpoint.setPath(testCall.getPath());
+        endpoint.setSource("ApiTester - Dynamic Test");
+        endpoint.setStatusCode(testCall.getStatusCode());
+        endpoint.setResponseBody(testCall.getResponseBody());
+        endpoint.setRequestBody(testCall.getRequestBody());
+        endpoint.setTested(true);
+        endpoint.setResponseTime(testCall.getResponseTime());
+
+        // Добавляем параметры из запроса
+        if (testCall.getRequestParameters() != null) {
+            List<EndpointParameter> parameters = new ArrayList<>();
+            for (Map.Entry<String, String> param : testCall.getRequestParameters().entrySet()) {
+                EndpointParameter endpointParam = new EndpointParameter();
+                endpointParam.setName(param.getKey());
+                endpointParam.setValue(param.getValue());
+                endpointParam.setIn(determineParameterLocation(param.getKey(), testCall.getPath()));
+                parameters.add(endpointParam);
+            }
+            endpoint.setParameters(parameters);
+        }
+
+        return endpoint;
     }
 }

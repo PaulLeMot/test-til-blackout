@@ -23,14 +23,71 @@ class SecurityDashboard {
         this.setupEventListeners();
         this.setupConfigListeners();
         this.setupBankCards();
+        this.setupModeSelector();
         this.connectWebSocket();
         this.loadInitialData();
         this.restoreState();
         this.setupLogoClick();
-        this.startScanStatusPolling(); // ДОБАВЛЕНО: Запуск проверки статуса
+        this.startScanStatusPolling();
     }
 
-    // ДОБАВЛЕНО: Метод для запуска опроса статуса сканирования
+    setupModeSelector() {
+        const modeRadios = document.querySelectorAll('input[name="analysisMode"]');
+        const modeInfo = document.getElementById('modeInfo');
+
+        modeRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                this.handleModeChange(e.target.value);
+            });
+        });
+
+        // Инициализируем начальное состояние
+        this.handleModeChange('DYNAMIC_ONLY');
+    }
+
+    handleModeChange(selectedMode) {
+        const modeInfo = document.getElementById('modeInfo');
+        const bankCards = document.querySelectorAll('.bank-config');
+
+        // Сбрасываем информационные сообщения
+        modeInfo.innerHTML = '';
+        modeInfo.style.display = 'block';
+
+        // Показываем/скрываем элементы в зависимости от режима
+        switch(selectedMode) {
+            case 'STATIC_ONLY':
+                // Скрываем поля URL банков
+                bankCards.forEach(card => {
+                    card.querySelector('.bank-url').closest('.input-group').style.display = 'none';
+                    card.querySelector('.bank-spec').closest('.input-group').style.display = 'none';
+                });
+                modeInfo.innerHTML = '<div class="info-message">📁 Будут проанализированы спецификации из папки Specifications</div>';
+                modeInfo.className = 'mode-info info-static';
+                break;
+
+            case 'COMBINED':
+                // Показываем только URL цели, скрываем URL спецификации
+                bankCards.forEach(card => {
+                    card.querySelector('.bank-url').closest('.input-group').style.display = 'block';
+                    card.querySelector('.bank-spec').closest('.input-group').style.display = 'none';
+                });
+                modeInfo.innerHTML = '<div class="info-message">🔗 Будут проанализированы локальные спецификации с отправкой запросов на указанный URL</div>';
+                modeInfo.className = 'mode-info info-combined';
+                break;
+
+            case 'DYNAMIC_ONLY':
+            default:
+                // Показываем все поля
+                bankCards.forEach(card => {
+                    card.querySelector('.bank-url').closest('.input-group').style.display = 'block';
+                    card.querySelector('.bank-spec').closest('.input-group').style.display = 'block';
+                });
+                modeInfo.innerHTML = '<div class="info-message">🌐 Спецификация загружается по URL, запросы отправляются на целевой URL</div>';
+                modeInfo.className = 'mode-info info-dynamic';
+                break;
+        }
+    }
+
     startScanStatusPolling() {
         // Проверяем статус каждые 3 секунды
         this.scanStatusCheckInterval = setInterval(() => {
@@ -337,17 +394,17 @@ class SecurityDashboard {
         bankId: "team172",
         banks: [
             {
-                baseUrl: "https://vbank.open.bankingapi.ru",
-                specUrl: "https://vbank.open.bankingapi.ru/openapi.json"
+                baseUrl: "",
+                specUrl: ""
             }
         ],
         credentials: [
             {
-                username: "team172-8",
+                username: "",
                 password: ""
             },
             {
-                username: "team172-9",
+                username: "",
                 password: ""
             }
         ]
@@ -360,6 +417,10 @@ class SecurityDashboard {
     applyConfiguration(config) {
     // Устанавливаем bankId
     document.getElementById('bankId').value = config.bankId || 'team172';
+
+    // ДОБАВЛЕНО: устанавливаем API credentials
+    document.getElementById('clientId').value = config.clientId || 'team172';
+    document.getElementById('clientSecret').value = config.clientSecret || '';
 
     // Очищаем и пересоздаем карточки банков
     const container = document.getElementById('bankCardsContainer');
@@ -380,6 +441,12 @@ class SecurityDashboard {
         document.getElementById(`user${index + 1}`).value = cred.username;
         document.getElementById(`password${index + 1}`).value = cred.password;
     });
+
+    // Устанавливаем режим анализа
+    if (config.analysisMode) {
+        document.querySelector(`input[name="analysisMode"][value="${config.analysisMode}"]`).checked = true;
+        this.handleModeChange(config.analysisMode);
+    }
 }
 
     validateConfiguration(config) {
@@ -417,13 +484,49 @@ class SecurityDashboard {
     }
 
     getCurrentConfiguration() {
-        try {
-            const saved = localStorage.getItem('scanConfig');
-            return saved ? JSON.parse(saved) : null;
-        } catch (e) {
-            return null;
-        }
+    try {
+        const bankCards = document.querySelectorAll('.bank-config');
+        const banks = [];
+
+        bankCards.forEach(card => {
+            const baseUrl = card.querySelector('.bank-url').value.trim();
+            const specUrl = card.querySelector('.bank-spec').value.trim();
+
+            if (baseUrl || specUrl) {
+                banks.push({
+                    baseUrl: baseUrl,
+                    specUrl: specUrl
+                });
+            }
+        });
+
+        const selectedMode = document.querySelector('input[name="analysisMode"]:checked').value;
+
+        const config = {
+            bankId: document.getElementById('bankId').value.trim(),
+            banks: banks,
+            credentials: [
+                {
+                    username: document.getElementById('user1').value.trim(),
+                    password: document.getElementById('password1').value
+                },
+                {
+                    username: document.getElementById('user2').value.trim(),
+                    password: document.getElementById('password2').value
+                }
+            ],
+            analysisMode: selectedMode,
+            // ДОБАВЛЕНО: credentials для API
+            clientId: document.getElementById('clientId').value.trim(),
+            clientSecret: document.getElementById('clientSecret').value
+        };
+
+        return config;
+    } catch (e) {
+        console.error('Error getting configuration:', e);
+        return null;
     }
+}
 
     connectWebSocket() {
         // Используем HTTP polling вместо WebSocket (для простоты)

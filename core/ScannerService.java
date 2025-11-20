@@ -12,6 +12,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 import java.text.SimpleDateFormat;
 import java.util.stream.Collectors;
+import java.io.File; // Добавлен импорт
 
 public class ScannerService {
     private final WebServer webServer;
@@ -84,10 +85,21 @@ public class ScannerService {
             return;
         }
 
-        // Собираем эндпоинты если они еще не собраны
-        if (collectedEndpoints == null || collectedEndpoints.isEmpty()) {
-            collectedEndpoints = ApiEndpointCollector.collectAllEndpoints();
+        // Уведомляем о выбранном режиме
+        switch (config.getAnalysisMode()) {
+            case STATIC_ONLY:
+                notifyMessage("info", "🔍 Режим: Только статический анализ");
+                break;
+            case DYNAMIC_ONLY:
+                notifyMessage("info", "🌐 Режим: Только динамический анализ");
+                break;
+            case COMBINED:
+                notifyMessage("info", "🚀 Режим: Комбинированный анализ (статический + динамический)");
+                break;
         }
+
+        // Собираем эндпоинты в зависимости от режима
+        collectedEndpoints = collectEndpointsBasedOnMode();
 
         notifyMessage("info", "Зарегистрировано сканеров: 11");
         notifyMessage("info", "Идентификатор сессии: " + currentSessionId);
@@ -177,6 +189,174 @@ public class ScannerService {
     }
 
     /**
+     * Собирает эндпоинты в зависимости от выбранного режима анализа
+     */
+    private List<TestedEndpoint> collectEndpointsBasedOnMode() {
+        List<TestedEndpoint> endpoints = new ArrayList<>();
+
+        if (config.isStaticAnalysisEnabled()) {
+            notifyMessage("info", "🔄 Сбор эндпоинтов из локальных спецификаций...");
+            List<TestedEndpoint> staticEndpoints = collectEndpointsFromLocalSpecs();
+            endpoints.addAll(staticEndpoints);
+            notifyMessage("info", "✅ Собрано статических эндпоинтов: " + staticEndpoints.size());
+        }
+
+        if (config.isDynamicAnalysisEnabled()) {
+            notifyMessage("info", "🔄 Сбор эндпоинтов через динамическое тестирование...");
+            List<TestedEndpoint> dynamicEndpoints = collectEndpointsFromApiTester();
+            endpoints.addAll(dynamicEndpoints);
+            notifyMessage("info", "✅ Собрано динамических эндпоинтов: " + dynamicEndpoints.size());
+        }
+
+        // Удаляем дубликаты (одинаковые метод + путь)
+        List<TestedEndpoint> uniqueEndpoints = removeDuplicateEndpoints(endpoints);
+        notifyMessage("info", "📊 Всего уникальных эндпоинтов: " + uniqueEndpoints.size());
+
+        return uniqueEndpoints;
+    }
+
+    /**
+     * Сбор эндпоинтов из локальных спецификаций
+     */
+    private List<TestedEndpoint> collectEndpointsFromLocalSpecs() {
+        List<TestedEndpoint> endpoints = new ArrayList<>();
+        File specsDir = new File("Specifications");
+
+        if (!specsDir.exists() || !specsDir.isDirectory()) {
+            notifyMessage("warning", "⚠️ Папка Specifications не найдена");
+            return endpoints;
+        }
+
+        File[] specFiles = specsDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".json"));
+
+        if (specFiles == null || specFiles.length == 0) {
+            notifyMessage("warning", "⚠️ В папке Specifications не найдено JSON файлов");
+            return endpoints;
+        }
+
+        for (File specFile : specFiles) {
+            try {
+                List<TestedEndpoint> specEndpoints = ApiEndpointCollector.collectFromSpecificationFile(specFile);
+                endpoints.addAll(specEndpoints);
+                config.getLocalSpecFiles().add(specFile.getName());
+                notifyMessage("debug", "📄 Обработан файл: " + specFile.getName() + " (" + specEndpoints.size() + " эндпоинтов)");
+            } catch (Exception e) {
+                notifyMessage("error", "❌ Ошибка при обработке файла " + specFile.getName() + ": " + e.getMessage());
+            }
+        }
+
+        return endpoints;
+    }
+
+    /**
+     * Сбор эндпоинтов через ApiTester
+     */
+    private List<TestedEndpoint> collectEndpointsFromApiTester() {
+        try {
+            // Получаем clientId и clientSecret из конфигурации
+            String clientId = config.getClientId();
+            String clientSecret = config.getClientSecret();
+
+            if (clientId == null || clientSecret == null) {
+                notifyMessage("error", "❌ Не указаны clientId и clientSecret для ApiTester");
+                return new ArrayList<>();
+            }
+
+            ApiTester tester = new ApiTester(clientId, clientSecret);
+
+            // В комбинированном режиме используем targetBaseUrl для тестирования
+            if (config.getAnalysisMode() == ScanConfig.AnalysisMode.COMBINED && !config.getBanks().isEmpty()) {
+                String targetUrl = config.getBanks().get(0).getBaseUrl();
+                if (targetUrl != null && !targetUrl.trim().isEmpty()) {
+                    tester.setBaseUrl(targetUrl);
+                    notifyMessage("info", "🎯 Комбинированный режим: тестирование на " + targetUrl);
+                }
+            }
+
+            List<ApiTester.TestedApiCall> testResults = tester.executeFullTestSuite();
+            List<TestedEndpoint> endpoints = new ArrayList<>();
+
+            for (ApiTester.TestedApiCall testCall : testResults) {
+                TestedEndpoint endpoint = convertTestCallToEndpoint(testCall);
+                endpoints.add(endpoint);
+            }
+
+            return endpoints;
+        } catch (Exception e) {
+            notifyMessage("error", "❌ Ошибка при динамическом тестировании: " + e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Конвертирует TestedApiCall в TestedEndpoint
+     */
+    private TestedEndpoint convertTestCallToEndpoint(ApiTester.TestedApiCall testCall) {
+        TestedEndpoint endpoint = new TestedEndpoint();
+        endpoint.setMethod(testCall.getMethod());
+        endpoint.setPath(testCall.getPath());
+        endpoint.setSource("ApiTester - Dynamic Test");
+        endpoint.setStatusCode(testCall.getStatusCode());
+        endpoint.setResponseBody(testCall.getResponseBody());
+        endpoint.setRequestBody(testCall.getRequestBody());
+        endpoint.setTested(true);
+        endpoint.setResponseTime(testCall.getResponseTime());
+
+        // Добавляем параметры из запроса
+        if (testCall.getRequestParameters() != null) {
+            List<EndpointParameter> parameters = new ArrayList<>();
+            for (Map.Entry<String, String> param : testCall.getRequestParameters().entrySet()) {
+                EndpointParameter endpointParam = new EndpointParameter();
+                endpointParam.setName(param.getKey());
+                endpointParam.setValue(param.getValue());
+                endpointParam.setIn(determineParameterLocation(param.getKey(), testCall.getPath()));
+                parameters.add(endpointParam);
+            }
+            endpoint.setParameters(parameters);
+        }
+
+        return endpoint;
+    }
+
+    /**
+     * Удаляет дублирующиеся эндпоинты
+     */
+    private List<TestedEndpoint> removeDuplicateEndpoints(List<TestedEndpoint> endpoints) {
+        Map<String, TestedEndpoint> uniqueMap = new HashMap<>();
+
+        for (TestedEndpoint endpoint : endpoints) {
+            String key = endpoint.getMethod() + ":" + endpoint.getPath();
+            // Предпочтение отдается протестированным эндпоинтам
+            if (!uniqueMap.containsKey(key) || endpoint.isTested()) {
+                uniqueMap.put(key, endpoint);
+            }
+        }
+
+        return new ArrayList<>(uniqueMap.values());
+    }
+
+    /**
+     * Определяет местоположение параметра (path, query, header, body)
+     */
+    private String determineParameterLocation(String paramName, String path) {
+        // Если параметр в пути URL
+        if (path.contains("{" + paramName + "}")) {
+            return "path";
+        }
+
+        // Если параметр похож на заголовок
+        if (paramName.toLowerCase().startsWith("x-") ||
+                paramName.equalsIgnoreCase("authorization") ||
+                paramName.equalsIgnoreCase("content-type") ||
+                paramName.equalsIgnoreCase("accept")) {
+            return "header";
+        }
+
+        // По умолчанию считаем query параметром
+        return "query";
+    }
+
+    /**
      * Проверяет, есть ли учетные данные для аутентификации
      */
     private boolean hasAuthCredentials(ScanConfig config) {
@@ -200,10 +380,13 @@ public class ScannerService {
         String cleanBaseUrl = baseUrl.trim();
 
         try {
-            // Загружаем OpenAPI спецификацию
-            Object openApiSpec = loadOpenApiSpec(specUrl);
-            if (openApiSpec == null) {
-                notifyMessage("warning", "Не удалось загрузить OpenAPI спецификацию для " + cleanBaseUrl);
+            // Загружаем OpenAPI спецификацию (только для динамического режима)
+            Object openApiSpec = null;
+            if (config.isDynamicAnalysisEnabled()) {
+                openApiSpec = loadOpenApiSpec(specUrl);
+                if (openApiSpec == null) {
+                    notifyMessage("warning", "Не удалось загрузить OpenAPI спецификацию для " + cleanBaseUrl);
+                }
             }
 
             // Запускаем глубокий анализ схем
@@ -463,6 +646,8 @@ public class ScannerService {
         bankScanConfig.setBankBaseUrl(baseUrl);
         bankScanConfig.setOpenApiSpecUrl(specUrl);
         bankScanConfig.setUserTokens(tokens);
+        bankScanConfig.setAnalysisMode(mainConfig.getAnalysisMode());
+        bankScanConfig.setLocalSpecFiles(mainConfig.getLocalSpecFiles());
 
         if (mainConfig.getCredentials() != null) {
             bankScanConfig.setCredentials(mainConfig.getCredentials());
@@ -536,7 +721,9 @@ public class ScannerService {
         // Простая сериализация конфигурации в JSON
         try {
             StringBuilder json = new StringBuilder("{");
+            json.append("\"analysisMode\":\"").append(config.getAnalysisMode()).append("\",");
             json.append("\"banks\":").append(config.getBanks().size()).append(",");
+            json.append("\"localSpecFiles\":").append(config.getLocalSpecFiles().size()).append(",");
             json.append("\"bankUrls\":[");
 
             for (int i = 0; i < config.getBanks().size(); i++) {
@@ -559,7 +746,7 @@ public class ScannerService {
             json.append("}");
             return json.toString();
         } catch (Exception e) {
-            return "{\"banks\":0,\"credentials\":0}";
+            return "{\"analysisMode\":\"DYNAMIC_ONLY\",\"banks\":0,\"localSpecFiles\":0,\"credentials\":0}";
         }
     }
 

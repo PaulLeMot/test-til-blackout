@@ -19,8 +19,19 @@ public class ScanConfig {
     private Map<String, Object> realData = new HashMap<>();
     private List<TestedEndpoint> testedEndpoints = new ArrayList<>();
 
+    // Новые поля
+    private AnalysisMode analysisMode = AnalysisMode.DYNAMIC_ONLY;
+    private List<String> localSpecFiles = new ArrayList<>();
+
     // Конструктор по умолчанию
     public ScanConfig() {}
+
+    // Enum для режимов анализа
+    public enum AnalysisMode {
+        DYNAMIC_ONLY,      // Только динамический анализ
+        STATIC_ONLY,       // Только статический анализ
+        COMBINED           // Комбинированный анализ
+    }
 
     // Геттеры и сеттеры для основных полей
     public String getBankId() { return bankId; }
@@ -53,13 +64,27 @@ public class ScanConfig {
     public Map<String, String> getUserTokens() { return userTokens; }
     public void setUserTokens(Map<String, String> userTokens) { this.userTokens = userTokens; }
 
-    // Геттер и сеттер для realData
     public Map<String, Object> getRealData() { return realData; }
     public void setRealData(Map<String, Object> realData) { this.realData = realData; }
 
-    // Геттер и сеттер для testedEndpoints
     public List<TestedEndpoint> getTestedEndpoints() { return testedEndpoints; }
     public void setTestedEndpoints(List<TestedEndpoint> testedEndpoints) { this.testedEndpoints = testedEndpoints; }
+
+    // Геттеры и сеттеры для новых полей
+    public AnalysisMode getAnalysisMode() { return analysisMode; }
+    public void setAnalysisMode(AnalysisMode analysisMode) { this.analysisMode = analysisMode; }
+
+    public List<String> getLocalSpecFiles() { return localSpecFiles; }
+    public void setLocalSpecFiles(List<String> localSpecFiles) { this.localSpecFiles = localSpecFiles; }
+
+    // Вспомогательные методы
+    public boolean isDynamicAnalysisEnabled() {
+        return analysisMode == AnalysisMode.DYNAMIC_ONLY || analysisMode == AnalysisMode.COMBINED;
+    }
+
+    public boolean isStaticAnalysisEnabled() {
+        return analysisMode == AnalysisMode.STATIC_ONLY || analysisMode == AnalysisMode.COMBINED;
+    }
 
     // Методы для работы с токенами
 

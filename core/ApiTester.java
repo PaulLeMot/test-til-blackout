@@ -4,31 +4,58 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URI;
 import java.io.*;
 import java.util.*;
 
 /**
  * Тестер API - выполняет реальные запросы к API
- * Компиляция: javac -cp "lib/*" ApiTester.java
- * Запуск: java -cp ".:lib/*" ApiTester
  */
 public class ApiTester {
 
-    // Хардкод credentials
-    private static final String CLIENT_ID = "team172";
-    private static final String CLIENT_SECRET = "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
+    // Убраны хардкод credentials - теперь передаются извне
     private static final String TOKEN_URL = "https://auth.bankingapi.ru/auth/realms/kubernetes/protocol/openid-connect/token";
 
     private static ObjectMapper mapper = new ObjectMapper();
-    private static String accessToken = null;
-    private static int responseCode = 0;
+    private String accessToken = null;
+    private int responseCode = 0;
+    private String baseUrl;
+    private String clientId;
+    private String clientSecret;
+
+    // Конструкторы с credentials
+    public ApiTester(String clientId, String clientSecret) {
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
+        this.baseUrl = null;
+    }
+
+    public ApiTester(String clientId, String clientSecret, String baseUrl) {
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
+        this.baseUrl = baseUrl;
+    }
+
+    // Сеттеры для credentials
+    public void setCredentials(String clientId, String clientSecret) {
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
+    }
+
+    public void setBaseUrl(String baseUrl) {
+        this.baseUrl = baseUrl;
+    }
 
     public static void main(String[] args) {
         try {
             System.out.println("🚀 Запуск тестирования API");
             System.out.println("=" .repeat(60));
 
-            ApiTester tester = new ApiTester();
+            // Для совместимости со старым кодом - использовать значения по умолчанию или из аргументов
+            String clientId = args.length > 0 ? args[0] : "team172";
+            String clientSecret = args.length > 1 ? args[1] : "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
+
+            ApiTester tester = new ApiTester(clientId, clientSecret);
             List<TestedApiCall> results = tester.executeFullTestSuite();
 
             System.out.println("\n🎉 Тестирование завершено! Собрано результатов: " + results.size());
@@ -114,6 +141,12 @@ public class ApiTester {
         try {
             System.out.println("🚀 Запуск тестирования API для сбора эндпоинтов...");
 
+            // Проверяем наличие credentials
+            if (clientId == null || clientSecret == null) {
+                System.err.println("❌ Не указаны clientId и clientSecret");
+                return testResults;
+            }
+
             // 1. Получаем токен
             accessToken = getAccessToken();
             if (accessToken == null) {
@@ -155,12 +188,16 @@ public class ApiTester {
     private List<TestedApiCall> executeApiRequestsForSpec(ApiSpec spec, String accessToken) {
         List<TestedApiCall> results = new ArrayList<>();
 
-        if (spec.baseUrls.isEmpty()) {
-            System.out.println("❌ Нет базовых URL для тестирования");
-            return results;
+        // Используем установленный baseUrl или из спецификации
+        String baseUrlToUse = this.baseUrl;
+        if (baseUrlToUse == null && !spec.baseUrls.isEmpty()) {
+            baseUrlToUse = spec.baseUrls.get(0);
         }
 
-        String baseUrl = spec.baseUrls.get(0);
+        if (baseUrlToUse == null) {
+            System.out.println("❌ Нет базового URL для тестирования");
+            return results;
+        }
 
         for (ApiEndpoint endpoint : spec.endpoints) {
             try {
@@ -173,7 +210,7 @@ public class ApiTester {
                 testCall.setPath(endpoint.path);
 
                 // Подготавливаем URL и параметры
-                String fullUrl = prepareUrl(baseUrl, endpoint, testCall);
+                String fullUrl = prepareUrl(baseUrlToUse, endpoint, testCall);
                 testCall.addHeader("Authorization", "Bearer " + accessToken);
                 testCall.addHeader("Content-Type", "application/json");
                 testCall.addHeader("X-Caller-Id", "team172");
@@ -232,7 +269,13 @@ public class ApiTester {
      * Получение access token через OAuth2 client_credentials
      */
     private String getAccessToken() throws Exception {
-        URL url = new URL(TOKEN_URL);
+        // Проверяем наличие credentials
+        if (clientId == null || clientSecret == null) {
+            throw new IllegalStateException("Client ID and Client Secret must be set before getting access token");
+        }
+
+        // Исправлено: используем URI вместо deprecated конструктора URL
+        URL url = new URI(TOKEN_URL).toURL();
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
 
         // Настраиваем запрос
@@ -240,8 +283,8 @@ public class ApiTester {
         conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
         conn.setDoOutput(true);
 
-        // Формируем тело запроса
-        String formData = "grant_type=client_credentials&client_id=" + CLIENT_ID + "&client_secret=" + CLIENT_SECRET;
+        // Формируем тело запроса с переданными credentials
+        String formData = "grant_type=client_credentials&client_id=" + clientId + "&client_secret=" + clientSecret;
 
         // Отправляем данные
         try (OutputStream os = conn.getOutputStream()) {
@@ -448,7 +491,8 @@ public class ApiTester {
      * Выполнение HTTP запроса
      */
     private String executeRequest(String method, String url, ApiEndpoint endpoint, String requestBody, TestedApiCall testCall) throws Exception {
-        URL requestUrl = new URL(url);
+        // Исправлено: используем URI вместо deprecated конструктора URL
+        URL requestUrl = new URI(url).toURL();
         HttpURLConnection conn = (HttpURLConnection) requestUrl.openConnection();
 
         // Настраиваем метод
@@ -475,6 +519,49 @@ public class ApiTester {
 
         // Для POST/PUT запросов с телом
         if (("POST".equals(method) || "PUT".equals(method)) && endpoint.hasRequestBody && requestBody != null) {
+            conn.setDoOutput(true);
+
+            try (OutputStream os = conn.getOutputStream()) {
+                byte[] input = requestBody.getBytes("utf-8");
+                os.write(input, 0, input.length);
+            }
+        }
+
+        // Выполняем запрос
+        responseCode = conn.getResponseCode();
+
+        // Читаем ответ
+        StringBuilder response = new StringBuilder();
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(
+                responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream()))) {
+
+            String inputLine;
+            while ((inputLine = in.readLine()) != null) {
+                response.append(inputLine);
+            }
+        }
+
+        return response.toString();
+    }
+
+    /**
+     * Упрощенная версия executeRequest для тестирования отдельных эндпоинтов
+     */
+    private String executeRequest(String method, String url, ApiEndpoint endpoint, String requestBody) throws Exception {
+        // Исправлено: используем URI вместо deprecated конструктора URL
+        URL requestUrl = new URI(url).toURL();
+        HttpURLConnection conn = (HttpURLConnection) requestUrl.openConnection();
+
+        // Настраиваем метод
+        conn.setRequestMethod(method);
+
+        // Добавляем заголовки
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + accessToken);
+        conn.setRequestProperty("X-Caller-Id", "team172");
+
+        // Для POST/PUT запросов с телом
+        if (("POST".equals(method) || "PUT".equals(method)) && requestBody != null) {
             conn.setDoOutput(true);
 
             try (OutputStream os = conn.getOutputStream()) {

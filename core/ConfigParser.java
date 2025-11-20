@@ -14,6 +14,18 @@ public class ConfigParser {
             JSONObject jsonObject = new JSONObject(jsonConfig);
             logger.info("[CONFIG_PARSER] Исходный JSON: " + jsonConfig);
 
+            // Парсинг режима анализа
+            if (jsonObject.has("analysisMode")) {
+                String analysisModeStr = jsonObject.getString("analysisMode");
+                try {
+                    ScanConfig.AnalysisMode analysisMode = ScanConfig.AnalysisMode.valueOf(analysisModeStr);
+                    config.setAnalysisMode(analysisMode);
+                    logger.info("[CONFIG_PARSER] Set analysis mode: " + analysisMode);
+                } catch (IllegalArgumentException e) {
+                    logger.warning("[CONFIG_PARSER] Invalid analysis mode: " + analysisModeStr + ", using default");
+                }
+            }
+
             // Парсинг банков
             if (jsonObject.has("banks")) {
                 JSONArray banksArray = jsonObject.getJSONArray("banks");
@@ -45,7 +57,6 @@ public class ConfigParser {
                     logger.info("[CONFIG_PARSER] Parsed credential - username: " + username + ", password: ***");
                 }
             } else {
-                // Если credentials отсутствуют в JSON, создаем их из токенов
                 logger.info("[CONFIG_PARSER] No credentials in config, will use tokens directly");
             }
 
@@ -55,7 +66,6 @@ public class ConfigParser {
                 config.setBankId(bankId);
                 logger.info("[CONFIG_PARSER] Set bankId from config: " + bankId);
             } else {
-                // Вычисляем bankId из первого пользователя или используем по умолчанию
                 if (!config.getCredentials().isEmpty()) {
                     String firstUsername = config.getCredentials().get(0).getUsername();
                     if (firstUsername != null && firstUsername.contains("-")) {
@@ -78,7 +88,7 @@ public class ConfigParser {
                 config.setClientId(firstUsername);
                 logger.info("[CONFIG_PARSER] Set clientId from first user: " + firstUsername);
             } else {
-                config.setClientId("default"); // значение по умолчанию
+                config.setClientId("default");
                 logger.info("[CONFIG_PARSER] Set default clientId: default");
             }
 
@@ -88,7 +98,7 @@ public class ConfigParser {
                 config.setClientSecret(firstPassword);
                 logger.info("[CONFIG_PARSER] Set clientSecret from first user");
             } else {
-                config.setClientSecret("password"); // значение по умолчанию
+                config.setClientSecret("password");
                 logger.info("[CONFIG_PARSER] Set default clientSecret");
             }
 
@@ -101,7 +111,7 @@ public class ConfigParser {
             }
 
             // Устанавливаем OpenAPI spec URL из первого банка
-            if (!config.getBanks().isEmpty()) {
+            if (!config.getBanks().isEmpty() && config.isDynamicAnalysisEnabled()) {
                 String firstSpecUrl = config.getBanks().get(0).getSpecUrl();
                 config.setOpenApiSpecUrl(firstSpecUrl);
                 logger.info("[CONFIG_PARSER] Set openApiSpecUrl from first bank: " + firstSpecUrl);

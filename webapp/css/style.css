@@ -1017,3 +1017,93 @@ body {
 .graph-header h3 {
     margin: 0;
 }
+
+/* Стили для переключателя режимов анализа */
+.analysis-mode-config {
+    margin: 20px 0;
+    padding: 15px;
+    background: #1e293b;
+    border-radius: 8px;
+    border: 1px solid #334155;
+}
+
+.mode-selector {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.mode-option {
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.mode-option:hover {
+    background: #2d3748;
+    border-color: #3b82f6;
+}
+
+.mode-option input[type="radio"] {
+    margin-right: 10px;
+}
+
+.mode-option label {
+    font-weight: 600;
+    color: #f1f5f9;
+    cursor: pointer;
+    margin-bottom: 5px;
+}
+
+.mode-description {
+    font-size: 0.85em;
+    color: #94a3b8;
+    margin-left: 24px;
+}
+
+.mode-info {
+    margin-top: 15px;
+    padding: 12px;
+    border-radius: 6px;
+    font-size: 0.9em;
+}
+
+.mode-info.info-static {
+    background: #0f766e;
+    border: 1px solid #0d9488;
+    color: #ccfbf1;
+}
+
+.mode-info.info-dynamic {
+    background: #1e40af;
+    border: 1px solid #2563eb;
+    color: #dbeafe;
+}
+
+.mode-info.info-combined {
+    background: #7c2d12;
+    border: 1px solid #ea580c;
+    color: #ffedd5;
+}
+
+.info-message {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Адаптивность для мобильных устройств */
+@media (max-width: 768px) {
+    .mode-option {
+        padding: 10px;
+    }
+
+    .mode-description {
+        margin-left: 0;
+        margin-top: 5px;
+    }
+}
