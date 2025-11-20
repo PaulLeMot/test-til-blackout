@@ -150,6 +150,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setEndpoint(endpoint);
                     vuln.setMethod("GET");
                     vuln.setEvidence("Status " + response.getStatus() + " without Authorization header");
+                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
                     vuln.setRecommendations(Arrays.asList(
                             "Implement proper authentication checks",
                             "Require valid JWT tokens for all protected endpoints",
@@ -201,6 +202,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setEndpoint("/health");
                     vuln.setMethod("GET");
                     vuln.setEvidence("Accepted invalid token and returned status " + response.getStatus());
+                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
                     vuln.setRecommendations(Arrays.asList(
                             "Validate JWT signature and expiration",
                             "Reject tokens with invalid format",
@@ -256,6 +258,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setEndpoint("/health");
                     vuln.setMethod("GET");
                     vuln.setEvidence("Accepted non-standard header: " + test.getKey() + " with status " + response.getStatus());
+                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
                     vuln.setRecommendations(Arrays.asList(
                             "Use only standard Authorization header with Bearer scheme",
                             "Reject authentication via non-standard headers",
@@ -309,6 +312,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setEndpoint(endpoint);
                     vuln.setMethod("GET");
                     vuln.setEvidence("Status " + response.getStatus() + " for sensitive endpoint without auth");
+                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
                     vuln.setRecommendations(Arrays.asList(
                             "Implement strict authentication for all sensitive endpoints",
                             "Use role-based access control",
@@ -360,6 +364,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setEndpoint(endpoint);
                     vuln.setMethod("GET");
                     vuln.setEvidence("Status 403 with valid token");
+                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
                     vuln.setRecommendations(Arrays.asList(
                             "Check token validation logic",
                             "Ensure proper scope/permission validation",
@@ -416,6 +421,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setEndpoint("/auth/bank-token");
                     vuln.setMethod("POST");
                     vuln.setEvidence("Still returns " + response.getStatus() + " after " + i + " failed attempts");
+                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
                     vuln.setRecommendations(Arrays.asList(
                             "Implement account lockout after 5-10 failed attempts",
                             "Add rate limiting for authentication endpoints",
@@ -482,6 +488,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
             vuln.setEndpoint("/health");
             vuln.setMethod("GET");
             vuln.setEvidence("No 429 responses after " + rapidRequests + " requests");
+            vuln.setStatusCode(200);  // Используем 200, так как запросы прошли успешно
             vuln.setRecommendations(Arrays.asList(
                     "Implement rate limiting for all API endpoints",
                     "Use sliding window or token bucket algorithm",
@@ -506,6 +513,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
             vuln.setSeverity(Vulnerability.Severity.LOW);
             vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
             vuln.setEvidence("Token length: " + cachedValidToken.length() + " characters");
+            vuln.setStatusCode(200);  // Это статический анализ, используем 200
             vuln.setRecommendations(Arrays.asList(
                     "Use longer JWT tokens (minimum 128 characters)",
                     "Ensure proper entropy in token generation"
@@ -525,6 +533,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setSeverity(Vulnerability.Severity.LOW);
                     vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
                     vuln.setEvidence("JWT payload missing standard claims");
+                    vuln.setStatusCode(200);  // Это статический анализ, используем 200
                     vuln.setRecommendations(Arrays.asList(
                             "Include standard JWT claims: iss, aud, exp, iat",
                             "Follow JWT best practices for claim structure"
@@ -558,6 +567,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                         vuln.setSeverity(Vulnerability.Severity.MEDIUM);
                         vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
                         vuln.setEvidence("JWT header: " + header);
+                        vuln.setStatusCode(200);  // Это статический анализ, используем 200
                         vuln.setRecommendations(Arrays.asList(
                                 "Use strong signature algorithms like RS256",
                                 "Avoid 'none' algorithm in production",
@@ -575,6 +585,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                         vuln.setSeverity(Vulnerability.Severity.MEDIUM);
                         vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
                         vuln.setEvidence("JWT payload missing 'exp' claim");
+                        vuln.setStatusCode(200);  // Это статический анализ, используем 200
                         vuln.setRecommendations(Arrays.asList(
                                 "Always set expiration time for JWT tokens",
                                 "Use reasonable token lifetime (e.g., 15-60 minutes)",
@@ -591,6 +602,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                         vuln.setSeverity(Vulnerability.Severity.HIGH);
                         vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
                         vuln.setEvidence("JWT payload contains sensitive fields");
+                        vuln.setStatusCode(200);  // Это статический анализ, используем 200
                         vuln.setRecommendations(Arrays.asList(
                                 "Never store sensitive data in JWT payload",
                                 "Use reference tokens for sensitive information",

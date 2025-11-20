@@ -5,11 +5,6 @@ import scanners.SecurityScanner;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.net.URI;
-import java.time.Duration;
 import java.util.*;
 
 public class API3_BOScanner implements SecurityScanner {
@@ -42,13 +37,15 @@ public class API3_BOScanner implements SecurityScanner {
 
             System.out.println("API3_BOScanner: Starting comprehensive Mass Assignment tests for " + baseUrl);
 
-            // Получаем токены через AuthManager
-            Map<String, String> tokens = AuthManager.getTokensForScanning(config);
+            // ИСПРАВЛЕНИЕ: Используем токены из конфигурации, а не получаем их заново
+            Map<String, String> tokens = config.getUserTokens();
 
-            if (tokens.isEmpty()) {
-                System.out.println("API3_BOScanner: No tokens obtained, skipping scan");
+            if (tokens == null || tokens.isEmpty()) {
+                System.out.println("API3_BOScanner: No tokens in config, skipping scan");
                 return vulnerabilities;
             }
+
+            System.out.println("API3_BOScanner: Using " + tokens.size() + " tokens from config");
 
             // Тестируем все возможные эндпоинты с разными комбинациями
             vulnerabilities.addAll(testAllEndpoints(baseUrl, tokens, apiClient, mapper));
@@ -75,6 +72,11 @@ public class API3_BOScanner implements SecurityScanner {
             String tokenType = tokenEntry.getKey();
             String token = tokenEntry.getValue();
 
+            // Пропускаем служебные токены
+            if (tokenType.equals("bank") || tokenType.equals("default")) {
+                continue;
+            }
+
             System.out.println("API3: Testing with token: " + tokenType);
 
             // Тестируем все эндпоинты с этим токеном
@@ -94,7 +96,7 @@ public class API3_BOScanner implements SecurityScanner {
         try {
             Map<String, String> headers = createHeaders(token);
 
-            // Тест 1: Создание счета с Mass Assignment (полная версия как в curl)
+            // Тест 1: Создание счета с Mass Assignment
             Map<String, Object> accountPayload = new HashMap<>();
             accountPayload.put("account_type", "checking");
             accountPayload.put("initial_balance", 9999999.00);
@@ -102,38 +104,18 @@ public class API3_BOScanner implements SecurityScanner {
             accountPayload.put("admin_override", true);
             accountPayload.put("premium_features", true);
             accountPayload.put("overdraft_limit", 9999999.00);
-            accountPayload.put("interest_rate", 0.15);
-            accountPayload.put("status", "premium");
-            accountPayload.put("creation_date", "2024-01-01");
-            accountPayload.put("bank_code", "vbank");
 
             String payload = mapper.writeValueAsString(accountPayload);
 
-            System.out.println("API3: Testing account creation (full payload) with " + tokenType);
+            System.out.println("API3: Testing account creation with " + tokenType);
             Object response = apiClient.executeRequest("POST", baseUrl + "/accounts", payload, headers);
 
             vulnerabilities.addAll(analyzeResponse(response,
-                    "Mass Assignment в создании счета (полная версия)",
-                    "Эндпоинт /accounts уязвим к Mass Assignment с полным набором административных полей",
+                    "Mass Assignment в создании счета",
+                    "Эндпоинт /accounts уязвим к Mass Assignment с административными полями",
                     baseUrl + "/accounts", "POST", payload, tokenType));
 
-            // Тест 2: Создание счета с минимальным Mass Assignment
-            Map<String, Object> minimalPayload = new HashMap<>();
-            minimalPayload.put("account_type", "checking");
-            minimalPayload.put("initial_balance", 1000.00);
-            minimalPayload.put("admin_override", true); // Только одно подозрительное поле
-
-            String minimalPayloadStr = mapper.writeValueAsString(minimalPayload);
-
-            System.out.println("API3: Testing account creation (minimal) with " + tokenType);
-            Object response2 = apiClient.executeRequest("POST", baseUrl + "/accounts", minimalPayloadStr, headers);
-
-            vulnerabilities.addAll(analyzeResponse(response2,
-                    "Mass Assignment в создании счета (минимальная версия)",
-                    "Эндпоинт /accounts уязвим к Mass Assignment даже с одним административным полем",
-                    baseUrl + "/accounts", "POST", minimalPayloadStr, tokenType));
-
-            // Тест 3: Получение списка счетов (для проверки доступа)
+            // Тест 2: Получение списка счетов (для проверки доступа)
             System.out.println("API3: Testing account list access with " + tokenType);
             Object listResponse = apiClient.executeRequest("GET", baseUrl + "/accounts", null, headers);
 
@@ -166,7 +148,6 @@ public class API3_BOScanner implements SecurityScanner {
             statusPayload.put("status", "closed");
             statusPayload.put("force_close", true);
             statusPayload.put("admin_override", true);
-            statusPayload.put("bypass_checks", true);
 
             String payload = mapper.writeValueAsString(statusPayload);
 
@@ -178,24 +159,6 @@ public class API3_BOScanner implements SecurityScanner {
                     "Mass Assignment в изменении статуса счета",
                     "Эндпоинт /accounts/{id}/status уязвим к Mass Assignment",
                     baseUrl + "/accounts/" + accountId + "/status", "PUT", payload, tokenType));
-
-            // Тест закрытия счета с Mass Assignment
-            Map<String, Object> closePayload = new HashMap<>();
-            closePayload.put("action", "transfer");
-            closePayload.put("destination_account_id", "acc-4698");
-            closePayload.put("force_transfer", true);
-            closePayload.put("admin_approval", true);
-
-            String closePayloadStr = mapper.writeValueAsString(closePayload);
-
-            System.out.println("API3: Testing account close with " + tokenType);
-            Object closeResponse = apiClient.executeRequest("PUT",
-                    baseUrl + "/accounts/" + accountId + "/close", closePayloadStr, headers);
-
-            vulnerabilities.addAll(analyzeResponse(closeResponse,
-                    "Mass Assignment в закрытии счета",
-                    "Эндпоинт /accounts/{id}/close уязвим к Mass Assignment",
-                    baseUrl + "/accounts/" + accountId + "/close", "PUT", closePayloadStr, tokenType));
 
         } catch (Exception e) {
             System.err.println("API3: Error testing account modification with " + tokenType + ": " + e.getMessage());
@@ -211,19 +174,23 @@ public class API3_BOScanner implements SecurityScanner {
         try {
             Map<String, String> headers = createHeaders(token);
 
-            // Тест Account Consent с Mass Assignment (полная версия)
+            // ИСПРАВЛЕНИЕ: Используем clientId из конфигурации или username из токена
+            String clientId = config.getClientId();
+            if (clientId == null) {
+                clientId = tokenType; // Используем имя токена как clientId
+            }
+
+            // Тест Account Consent с Mass Assignment
             Map<String, Object> accountConsentPayload = new HashMap<>();
-            accountConsentPayload.put("client_id", config.getClientId());
+            accountConsentPayload.put("client_id", clientId);
             accountConsentPayload.put("permissions", Arrays.asList(
                     "ReadAccountsDetail", "ReadBalances", "ReadTransactionsDetail",
-                    "AdminAccess", "WriteAccess", "DeleteAccess", "SystemOverride", "BypassLimits"
+                    "AdminAccess", "WriteAccess", "DeleteAccess"
             ));
             accountConsentPayload.put("reason", "Mass Assignment Test");
             accountConsentPayload.put("requesting_bank", config.getBankId());
-            accountConsentPayload.put("requesting_bank_name", "Security Test");
             accountConsentPayload.put("max_access_level", "super_admin");
             accountConsentPayload.put("unlimited_duration", true);
-            accountConsentPayload.put("bypass_approval", true);
 
             String accountConsentStr = mapper.writeValueAsString(accountConsentPayload);
 
@@ -235,34 +202,6 @@ public class API3_BOScanner implements SecurityScanner {
                     "Mass Assignment в согласии на доступ к счетам",
                     "Эндпоинт /account-consents/request уязвим к Mass Assignment",
                     baseUrl + "/account-consents/request", "POST", accountConsentStr, tokenType));
-
-            // Тест Payment Consent с Mass Assignment (полная версия)
-            Map<String, Object> paymentConsentPayload = new HashMap<>();
-            paymentConsentPayload.put("requesting_bank", config.getBankId());
-            paymentConsentPayload.put("client_id", config.getClientId());
-            paymentConsentPayload.put("debtor_account", "4084fcf5c6cfb514fe");
-            paymentConsentPayload.put("consent_type", "multi_use");
-            paymentConsentPayload.put("max_uses", 999);
-            paymentConsentPayload.put("max_amount_per_payment", 9999999.00);
-            paymentConsentPayload.put("max_total_amount", 999999999.00);
-            paymentConsentPayload.put("allowed_creditor_accounts", Arrays.asList("40808e72397159347f", "408b4a2caf1b669427"));
-            paymentConsentPayload.put("vrp_max_individual_amount", 50000.00);
-            paymentConsentPayload.put("vrp_daily_limit", 1000000.00);
-            paymentConsentPayload.put("vrp_monthly_limit", 30000000.00);
-            paymentConsentPayload.put("valid_until", "2026-12-31T23:59:59");
-            paymentConsentPayload.put("admin_override", true);
-            paymentConsentPayload.put("unlimited_access", true);
-
-            String paymentConsentStr = mapper.writeValueAsString(paymentConsentPayload);
-
-            System.out.println("API3: Testing payment consent with " + tokenType);
-            Object paymentResponse = apiClient.executeRequest("POST",
-                    baseUrl + "/payment-consents/request", paymentConsentStr, headers);
-
-            vulnerabilities.addAll(analyzeResponse(paymentResponse,
-                    "Mass Assignment в платежном согласии",
-                    "Эндпоинт /payment-consents/request уязвим к Mass Assignment",
-                    baseUrl + "/payment-consents/request", "POST", paymentConsentStr, tokenType));
 
         } catch (Exception e) {
             System.err.println("API3: Error testing consent endpoints with " + tokenType + ": " + e.getMessage());
@@ -293,20 +232,14 @@ public class API3_BOScanner implements SecurityScanner {
                             "instructionIdentification", "mass-assignment-test",
                             "endToEndIdentification", "bypass-test",
                             "instructedAmount", Map.of("amount", "9999999.00", "currency", "RUB"),
-                            "debtorAccount", Map.of("identification", "4084fcf5c6cfb514fe", "name", "Our Account"),
-                            "creditorAccount", Map.of("identification", "40808e72397159347f", "name", "Our Other Account", "bank_code", "vbank"),
+                            "debtorAccount", Map.of("identification", "4084fcf5c6cfb514fe", "name", "Test Account"),
+                            "creditorAccount", Map.of("identification", "40808e72397159347f", "name", "Test Account 2"),
                             "remittanceInformation", Map.of("reference", "Mass Assignment Test")
                     )
             ));
             paymentPayload.put("risk", Map.of(
                     "bypass_risk_check", true,
-                    "admin_override", true,
-                    "high_risk_approved", true
-            ));
-            paymentPayload.put("admin_parameters", Map.of(
-                    "skip_balance_check", true,
-                    "force_approval", true,
-                    "limit_override", true
+                    "admin_override", true
             ));
 
             String payload = mapper.writeValueAsString(paymentPayload);
@@ -335,7 +268,6 @@ public class API3_BOScanner implements SecurityScanner {
 
             // Тестируем другие возможные эндпоинты
             String[] otherEndpoints = {
-                    "/product-agreements",
                     "/transactions",
                     "/balances",
                     "/beneficiaries"
@@ -345,7 +277,6 @@ public class API3_BOScanner implements SecurityScanner {
                 Map<String, Object> testPayload = new HashMap<>();
                 testPayload.put("test", "data");
                 testPayload.put("admin_override", true);
-                testPayload.put("bypass_checks", true);
 
                 String payload = mapper.writeValueAsString(testPayload);
 
@@ -367,9 +298,14 @@ public class API3_BOScanner implements SecurityScanner {
 
     private String createSimpleConsent(String baseUrl, String token, ApiClient apiClient, ObjectMapper mapper) {
         try {
+            String clientId = config.getClientId();
+            if (clientId == null) {
+                return null; // Не можем создать consent без clientId
+            }
+
             Map<String, Object> consentPayload = new HashMap<>();
             consentPayload.put("requesting_bank", config.getBankId());
-            consentPayload.put("client_id", config.getClientId());
+            consentPayload.put("client_id", clientId);
             consentPayload.put("debtor_account", "4084fcf5c6cfb514fe");
             consentPayload.put("consent_type", "single_use");
             consentPayload.put("max_amount_per_payment", 1000.00);
@@ -380,7 +316,7 @@ public class API3_BOScanner implements SecurityScanner {
             Object response = apiClient.executeRequest("POST",
                     baseUrl + "/payment-consents/request", payload, headers);
 
-            if (response != null) {
+            if (response != null && extractStatusCode(response) == 200) {
                 String responseBody = extractResponseBody(response);
                 if (responseBody != null && responseBody.contains("consent_id")) {
                     JsonNode json = mapper.readTree(responseBody);
@@ -410,9 +346,13 @@ public class API3_BOScanner implements SecurityScanner {
         if (statusCode == 200 || statusCode == 201) {
             // Успешный запрос - проверяем, приняты ли подозрительные поля
             if (containsSuspiciousFields(responseBody) ||
-                    responseBody.contains("auto_approved") ||
-                    responseBody.contains("admin_override") ||
-                    responseBody.contains("bypass")) {
+                    (responseBody != null && (
+                            responseBody.contains("auto_approved") ||
+                                    responseBody.contains("admin_override") ||
+                                    responseBody.contains("bypass") ||
+                                    responseBody.contains("premium") ||
+                                    responseBody.contains("unlimited"))
+                    )) {
 
                 Vulnerability vuln = createVulnerability(
                         title + " (" + tokenType + ")",
@@ -420,12 +360,25 @@ public class API3_BOScanner implements SecurityScanner {
                         endpoint,
                         method,
                         requestPayload,
-                        responseBody
+                        responseBody,
+                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
                 );
                 vulnerabilities.add(vuln);
             }
         } else if (statusCode == 403) {
             System.out.println("API3: 403 Forbidden for " + endpoint + " with " + tokenType);
+            // ДОБАВЛЕНО: Создаем уязвимость даже для 403, если это показывает проблему безопасности
+            Vulnerability vuln = createVulnerability(
+                    "Mass Assignment Attempt Blocked (" + tokenType + ")",
+                    "Попытка Mass Assignment была заблокирована с кодом 403",
+                    endpoint,
+                    method,
+                    requestPayload,
+                    responseBody,
+                    statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД 403
+            );
+            vuln.setSeverity(Vulnerability.Severity.LOW);
+            vulnerabilities.add(vuln);
         } else if (statusCode >= 400) {
             System.out.println("API3: Error " + statusCode + " for " + endpoint + " with " + tokenType);
         }
@@ -447,6 +400,12 @@ public class API3_BOScanner implements SecurityScanner {
             }
             if (json.has("account")) {
                 JsonNode accounts = json.get("account");
+                if (accounts.isArray() && accounts.size() > 0) {
+                    return accounts.get(0).get("accountId").asText();
+                }
+            }
+            if (json.has("accounts")) {
+                JsonNode accounts = json.get("accounts");
                 if (accounts.isArray() && accounts.size() > 0) {
                     return accounts.get(0).get("accountId").asText();
                 }
@@ -507,7 +466,7 @@ public class API3_BOScanner implements SecurityScanner {
     }
 
     private Vulnerability createVulnerability(String title, String description, String endpoint,
-                                              String method, String requestPayload, String responseBody) {
+                                              String method, String requestPayload, String responseBody, int statusCode) {
         Vulnerability vuln = new Vulnerability();
         vuln.setTitle(title);
         vuln.setDescription(description);
@@ -515,6 +474,7 @@ public class API3_BOScanner implements SecurityScanner {
         vuln.setCategory(Vulnerability.Category.OWASP_API3_BOPLA);
         vuln.setEndpoint(endpoint);
         vuln.setMethod(method);
+        vuln.setStatusCode(statusCode);  // УСТАНАВЛИВАЕМ РЕАЛЬНЫЙ СТАТУС КОД
 
         String evidence = "Запрос (" + method + " " + endpoint + "):\n" +
                 requestPayload + "\n\nОтвет:\n" +

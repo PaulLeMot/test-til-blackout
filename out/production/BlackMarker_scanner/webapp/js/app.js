@@ -1,5 +1,7 @@
 class SecurityDashboard {
     constructor() {
+        this.apiEndpoints = [];
+        this.currentGraph = null;
         this.currentData = [];
         this.filteredData = [];
         this.currentPage = 1;
@@ -12,15 +14,120 @@ class SecurityDashboard {
         this.isScanning = false;
         this.lastDataCount = 0;
         this.sessions = [];
+        this.activeSection = 'dashboard'; // 'dashboard', 'comparison', 'apiGraph'
+        this.scanStatusCheckInterval = null; // ДОБАВЛЕНО: Интервал для проверки статуса
         this.init();
     }
 
     init() {
         this.setupEventListeners();
         this.setupConfigListeners();
+        this.setupBankCards();
+        this.setupModeSelector();
         this.connectWebSocket();
         this.loadInitialData();
         this.restoreState();
+        this.setupLogoClick();
+        this.startScanStatusPolling();
+    }
+
+    setupModeSelector() {
+        const modeRadios = document.querySelectorAll('input[name="analysisMode"]');
+        const modeInfo = document.getElementById('modeInfo');
+
+        modeRadios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                this.handleModeChange(e.target.value);
+            });
+        });
+
+        // Инициализируем начальное состояние
+        this.handleModeChange('DYNAMIC_ONLY');
+    }
+
+    handleModeChange(selectedMode) {
+        const modeInfo = document.getElementById('modeInfo');
+        const bankCards = document.querySelectorAll('.bank-config');
+
+        // Сбрасываем информационные сообщения
+        modeInfo.innerHTML = '';
+        modeInfo.style.display = 'block';
+
+        // Показываем/скрываем элементы в зависимости от режима
+        switch(selectedMode) {
+            case 'STATIC_ONLY':
+                // Скрываем поля URL банков
+                bankCards.forEach(card => {
+                    card.querySelector('.bank-url').closest('.input-group').style.display = 'none';
+                    card.querySelector('.bank-spec').closest('.input-group').style.display = 'none';
+                });
+                modeInfo.innerHTML = '<div class="info-message">📁 Будут проанализированы спецификации из папки Specifications</div>';
+                modeInfo.className = 'mode-info info-static';
+                break;
+
+            case 'COMBINED':
+                // Показываем только URL цели, скрываем URL спецификации
+                bankCards.forEach(card => {
+                    card.querySelector('.bank-url').closest('.input-group').style.display = 'block';
+                    card.querySelector('.bank-spec').closest('.input-group').style.display = 'none';
+                });
+                modeInfo.innerHTML = '<div class="info-message">🔗 Будут проанализированы локальные спецификации с отправкой запросов на указанный URL</div>';
+                modeInfo.className = 'mode-info info-combined';
+                break;
+
+            case 'DYNAMIC_ONLY':
+            default:
+                // Показываем все поля
+                bankCards.forEach(card => {
+                    card.querySelector('.bank-url').closest('.input-group').style.display = 'block';
+                    card.querySelector('.bank-spec').closest('.input-group').style.display = 'block';
+                });
+                modeInfo.innerHTML = '<div class="info-message">🌐 Спецификация загружается по URL, запросы отправляются на целевой URL</div>';
+                modeInfo.className = 'mode-info info-dynamic';
+                break;
+        }
+    }
+
+    startScanStatusPolling() {
+        // Проверяем статус каждые 3 секунды
+        this.scanStatusCheckInterval = setInterval(() => {
+            this.checkScanStatus();
+        }, 3000);
+    }
+
+    // ДОБАВЛЕНО: Метод для проверки статуса сканирования
+    async checkScanStatus() {
+        try {
+            const response = await fetch('/api/scan/status');
+            if (response.ok) {
+                const status = await response.json();
+
+                // Обновляем статус только если он изменился
+                if (this.isScanning !== status.scanning) {
+                    this.isScanning = status.scanning;
+                    this.updateScanButton(this.isScanning);
+
+                    // Показываем уведомление при завершении сканирования
+                    if (!this.isScanning && this.wasScanning) {
+                        this.showNotification('Сканирование завершено', 'success');
+                    }
+
+                    this.wasScanning = this.isScanning;
+                }
+            }
+        } catch (error) {
+            console.error('Error checking scan status:', error);
+        }
+    }
+
+    setupLogoClick() {
+        const logo = document.querySelector('.app-title');
+        if (logo) {
+            logo.style.cursor = 'pointer';
+            logo.addEventListener('click', () => {
+                this.showMainDashboard();
+            });
+        }
     }
 
     setupEventListeners() {
@@ -48,7 +155,6 @@ class SecurityDashboard {
             this.exportToCsv();
         });
 
-        // НОВЫЙ ОБРАБОТЧИК ДЛЯ PDF
         document.getElementById('exportPdf').addEventListener('click', () => {
             this.exportToPdf();
         });
@@ -63,9 +169,13 @@ class SecurityDashboard {
             }
         });
 
-        // Новые обработчики для сравнения
+        // Обновленные обработчики для кнопок переключения
         document.getElementById('showComparison').addEventListener('click', () => {
-            this.showComparisonSection();
+            this.toggleComparisonSection();
+        });
+
+        document.getElementById('showApiGraph').addEventListener('click', () => {
+            this.toggleApiGraphSection();
         });
 
         document.getElementById('compareSessions').addEventListener('click', () => {
@@ -79,6 +189,23 @@ class SecurityDashboard {
         // Сохраняем состояние при закрытии страницы
         window.addEventListener('beforeunload', () => {
             this.saveState();
+        });
+
+        document.getElementById('loadGraph').addEventListener('click', () => {
+            this.loadApiGraph();
+        });
+
+        document.getElementById('refreshGraph').addEventListener('click', () => {
+            this.loadApiGraph();
+        });
+
+        document.getElementById('closePanel').addEventListener('click', () => {
+            this.hideEndpointPanel();
+        });
+
+        document.getElementById('testForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.testEndpoint();
         });
     }
 
@@ -97,6 +224,88 @@ class SecurityDashboard {
 
         // Загружаем сохраненные настройки при инициализации
         this.loadSavedConfiguration();
+    }
+
+    // Новый метод для показа главной панели
+    showMainDashboard() {
+        document.querySelector('.dashboard').style.display = 'block';
+        document.getElementById('comparisonSection').style.display = 'none';
+        document.getElementById('apiGraphSection').style.display = 'none';
+        document.getElementById('configSection').style.display = 'block'; // Показываем настройки
+
+        this.activeSection = 'dashboard';
+        this.updateHeaderButtons();
+    }
+
+    // Обновленный метод для переключения секции сравнения
+    toggleComparisonSection() {
+        if (this.activeSection === 'comparison') {
+            this.showMainDashboard();
+        } else {
+            document.querySelector('.dashboard').style.display = 'none';
+            document.getElementById('comparisonSection').style.display = 'block';
+            document.getElementById('apiGraphSection').style.display = 'none';
+            document.getElementById('configSection').style.display = 'none'; // Скрываем настройки
+
+            this.activeSection = 'comparison';
+            this.updateHeaderButtons();
+
+            // Загружаем список сессий при открытии
+            this.loadSessionsList();
+            this.showNotification('Выберите две сессии для сравнения', 'info');
+        }
+    }
+
+    // Обновленный метод для переключения секции графа API
+    toggleApiGraphSection() {
+        if (this.activeSection === 'apiGraph') {
+            this.showMainDashboard();
+        } else {
+            document.querySelector('.dashboard').style.display = 'none';
+            document.getElementById('comparisonSection').style.display = 'none';
+            document.getElementById('apiGraphSection').style.display = 'block';
+            document.getElementById('configSection').style.display = 'none'; // Скрываем настройки
+
+            this.activeSection = 'apiGraph';
+            this.updateHeaderButtons();
+
+            // Автоматически загружаем граф если есть URL
+            const specUrl = document.getElementById('specUrlInput').value;
+            if (specUrl) {
+                setTimeout(() => this.loadApiGraph(), 500);
+            }
+        }
+    }
+
+    // Новый метод для обновления состояния кнопок в заголовке
+    updateHeaderButtons() {
+        const comparisonBtn = document.getElementById('showComparison');
+        const apiGraphBtn = document.getElementById('showApiGraph');
+
+        // Сбрасываем все кнопки к обычному состоянию
+        comparisonBtn.classList.remove('btn-primary');
+        comparisonBtn.classList.add('btn-secondary');
+        apiGraphBtn.classList.remove('btn-primary');
+        apiGraphBtn.classList.add('btn-secondary');
+
+        // Подсвечиваем активную кнопку
+        if (this.activeSection === 'comparison') {
+            comparisonBtn.classList.remove('btn-secondary');
+            comparisonBtn.classList.add('btn-primary');
+        } else if (this.activeSection === 'apiGraph') {
+            apiGraphBtn.classList.remove('btn-secondary');
+            apiGraphBtn.classList.add('btn-primary');
+        }
+    }
+
+    // Обновляем метод hideComparisonSection
+    hideComparisonSection() {
+        this.showMainDashboard();
+    }
+
+    // Добавляем метод hideApiGraphSection для кнопки закрытия в графе API
+    hideApiGraphSection() {
+        this.showMainDashboard();
     }
 
     async clearDatabase() {
@@ -129,43 +338,44 @@ class SecurityDashboard {
     }
 
     saveConfiguration() {
-        const config = {
-            bankId: document.getElementById('bankId').value.trim(), // добавляем bankId
-            banks: [
-                {
-                    baseUrl: document.getElementById('bank1Url').value.trim(),
-                    specUrl: document.getElementById('bank1Spec').value.trim()
-                },
-                {
-                    baseUrl: document.getElementById('bank2Url').value.trim(),
-                    specUrl: document.getElementById('bank2Spec').value.trim()
-                },
-                {
-                    baseUrl: document.getElementById('bank3Url').value.trim(),
-                    specUrl: document.getElementById('bank3Spec').value.trim()
-                }
-            ],
-            credentials: [
-                {
-                    username: document.getElementById('user1').value.trim(),
-                    password: document.getElementById('password1').value
-                },
-                {
-                    username: document.getElementById('user2').value.trim(),
-                    password: document.getElementById('password2').value
-                }
-            ]
-        };
+    // Собираем данные банков из всех карточек
+    const bankCards = document.querySelectorAll('.bank-config');
+    const banks = [];
 
-        // Валидация
-        if (!this.validateConfiguration(config)) {
-            return;
+    bankCards.forEach(card => {
+        const baseUrl = card.querySelector('.bank-url').value.trim();
+        const specUrl = card.querySelector('.bank-spec').value.trim();
+
+        if (baseUrl || specUrl) { // Добавляем только если есть данные
+            banks.push({
+                baseUrl: baseUrl,
+                specUrl: specUrl
+            });
         }
+    });
 
-        // Сохраняем в localStorage
-        localStorage.setItem('scanConfig', JSON.stringify(config));
-        this.showNotification('Настройки сохранены', 'success');
+    const config = {
+        bankId: document.getElementById('bankId').value.trim(),
+        banks: banks,
+        credentials: [
+            {
+                username: document.getElementById('user1').value.trim(),
+                password: document.getElementById('password1').value
+            },
+            {
+                username: document.getElementById('user2').value.trim(),
+                password: document.getElementById('password2').value
+            }
+        ]
+    };
+
+    if (!this.validateConfiguration(config)) {
+        return;
     }
+
+    localStorage.setItem('scanConfig', JSON.stringify(config));
+    this.showNotification('Настройки сохранены', 'success');
+}
 
     loadSavedConfiguration() {
         try {
@@ -180,53 +390,64 @@ class SecurityDashboard {
     }
 
     loadDefaultConfiguration() {
-        const defaultConfig = {
-            bankId: "team172", // добавляем bankId по умолчанию
-            banks: [
-                {
-                    baseUrl: "https://vbank.open.bankingapi.ru",
-                    specUrl: "https://vbank.open.bankingapi.ru/openapi.json"
-                },
-                {
-                    baseUrl: "https://abank.open.bankingapi.ru",
-                    specUrl: "https://abank.open.bankingapi.ru/openapi.json"
-                },
-                {
-                    baseUrl: "https://sbank.open.bankingapi.ru",
-                    specUrl: "https://sbank.open.bankingapi.ru/openapi.json"
-                }
-            ],
-            credentials: [
-                {
-                    username: "team172-8",
-                    password: "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY"
-                },
-                {
-                    username: "team172-9",
-                    password: "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY"
-                }
-            ]
-        };
+    const defaultConfig = {
+        bankId: "team172",
+        banks: [
+            {
+                baseUrl: "",
+                specUrl: ""
+            }
+        ],
+        credentials: [
+            {
+                username: "",
+                password: ""
+            },
+            {
+                username: "",
+                password: ""
+            }
+        ]
+    };
 
-        this.applyConfiguration(defaultConfig);
-        this.showNotification('Настройки по умолчанию загружены', 'info');
-    }
+    this.applyConfiguration(defaultConfig);
+    this.showNotification('Настройки по умолчанию загружены', 'info');
+}
 
     applyConfiguration(config) {
-        // Устанавливаем bankId
-        document.getElementById('bankId').value = config.bankId || 'team172';
+    // Устанавливаем bankId
+    document.getElementById('bankId').value = config.bankId || 'team172';
 
-        // Применяем настройки к форме
-        config.banks.forEach((bank, index) => {
-            document.getElementById(`bank${index + 1}Url`).value = bank.baseUrl;
-            document.getElementById(`bank${index + 1}Spec`).value = bank.specUrl;
-        });
+    // ДОБАВЛЕНО: устанавливаем API credentials
+    document.getElementById('clientId').value = config.clientId || 'team172';
+    document.getElementById('clientSecret').value = config.clientSecret || '';
 
-        config.credentials.forEach((cred, index) => {
-            document.getElementById(`user${index + 1}`).value = cred.username;
-            document.getElementById(`password${index + 1}`).value = cred.password;
-        });
+    // Очищаем и пересоздаем карточки банков
+    const container = document.getElementById('bankCardsContainer');
+    container.innerHTML = '';
+
+    // Создаем карточки для каждого банка из конфигурации
+    config.banks.forEach(bank => {
+        this.addBankCard(bank);
+    });
+
+    // Если нет банков в конфиге, создаем одну пустую карточку
+    if (config.banks.length === 0) {
+        this.addBankCard();
     }
+
+    // Учетные данные
+    config.credentials.forEach((cred, index) => {
+        document.getElementById(`user${index + 1}`).value = cred.username;
+        document.getElementById(`password${index + 1}`).value = cred.password;
+    });
+
+    // Устанавливаем режим анализа
+    if (config.analysisMode) {
+        document.querySelector(`input[name="analysisMode"][value="${config.analysisMode}"]`).checked = true;
+        this.handleModeChange(config.analysisMode);
+    }
+}
 
     validateConfiguration(config) {
         // Проверяем bankId
@@ -263,13 +484,49 @@ class SecurityDashboard {
     }
 
     getCurrentConfiguration() {
-        try {
-            const saved = localStorage.getItem('scanConfig');
-            return saved ? JSON.parse(saved) : null;
-        } catch (e) {
-            return null;
-        }
+    try {
+        const bankCards = document.querySelectorAll('.bank-config');
+        const banks = [];
+
+        bankCards.forEach(card => {
+            const baseUrl = card.querySelector('.bank-url').value.trim();
+            const specUrl = card.querySelector('.bank-spec').value.trim();
+
+            if (baseUrl || specUrl) {
+                banks.push({
+                    baseUrl: baseUrl,
+                    specUrl: specUrl
+                });
+            }
+        });
+
+        const selectedMode = document.querySelector('input[name="analysisMode"]:checked').value;
+
+        const config = {
+            bankId: document.getElementById('bankId').value.trim(),
+            banks: banks,
+            credentials: [
+                {
+                    username: document.getElementById('user1').value.trim(),
+                    password: document.getElementById('password1').value
+                },
+                {
+                    username: document.getElementById('user2').value.trim(),
+                    password: document.getElementById('password2').value
+                }
+            ],
+            analysisMode: selectedMode,
+            // ДОБАВЛЕНО: credentials для API
+            clientId: document.getElementById('clientId').value.trim(),
+            clientSecret: document.getElementById('clientSecret').value
+        };
+
+        return config;
+    } catch (e) {
+        console.error('Error getting configuration:', e);
+        return null;
     }
+}
 
     connectWebSocket() {
         // Используем HTTP polling вместо WebSocket (для простоты)
@@ -372,6 +629,7 @@ class SecurityDashboard {
         }
 
         try {
+            // Устанавливаем локальный статус сканирования
             this.isScanning = true;
             this.updateScanButton(true);
             this.showNotification('Запущено расширенное сканирование с новыми типами атак', 'success');
@@ -394,6 +652,7 @@ class SecurityDashboard {
         } catch (error) {
             console.error('Error starting scan:', error);
             this.showNotification('Ошибка запуска сканирования', 'error');
+            // Сбрасываем статус при ошибке
             this.isScanning = false;
             this.updateScanButton(false);
         }
@@ -404,9 +663,11 @@ class SecurityDashboard {
         if (scanning) {
             btn.innerHTML = '<span class="scanning-indicator"><span class="pulse">⏳</span> Расширенное сканирование...</span>';
             btn.disabled = true;
+            btn.classList.add('scanning');
         } else {
             btn.innerHTML = 'Запустить расширенное сканирование';
             btn.disabled = false;
+            btn.classList.remove('scanning');
         }
         this.updateConnectionStatus();
     }
@@ -526,7 +787,7 @@ class SecurityDashboard {
                 percent: (value / total * 100)
             }))
             .sort((a, b) => b.value - a.value)
-            .slice(0, 8);
+            .slice(0, 12);
 
         if (data.length === 0) {
             chart.innerHTML = '<div class="chart-placeholder">Нет данных</div>';
@@ -709,6 +970,22 @@ class SecurityDashboard {
         if (!modal || !modalTitle || !modalContent) return;
 
         modalTitle.textContent = item.vulnerabilityTitle;
+
+        // Форматируем рекомендации с поддержкой многострочности
+        const formatRecommendations = (recText) => {
+            if (!recText) return 'Нет рекомендаций';
+
+            // Если рекомендации содержат маркированный список
+            if (recText.includes('\n') || recText.includes('•') || recText.includes('-')) {
+                let formatted = recText
+                    .replace(/\n/g, '<br>')
+                    .replace(/•/g, '•')
+                    .replace(/-/g, '•');
+                return formatted;
+            }
+            return recText;
+        };
+
         modalContent.innerHTML = `
             <div class="vulnerability-details">
                 <div class="detail-group">
@@ -725,7 +1002,7 @@ class SecurityDashboard {
                 </div>
                 <div class="detail-group">
                     <label>Статус код:</label>
-                    <span>${this.escapeHtml(item.statusCode || 'N/A')}</span>
+                    <span>${this.escapeHtml(item.statusCode === "-1" ? "N/A" : item.statusCode)}</span>
                 </div>
                 <div class="detail-group">
                     <label>Сканер:</label>
@@ -741,7 +1018,7 @@ class SecurityDashboard {
                 </div>
                 <div class="detail-group">
                     <label>Рекомендации:</label>
-                    <div class="recommendation">${this.escapeHtml(item.recommendation || 'Нет рекомендаций')}</div>
+                    <div class="recommendation" style="white-space: pre-line; line-height: 1.5;">${formatRecommendations(item.recommendation)}</div>
                 </div>
             </div>
         `;
@@ -799,6 +1076,79 @@ class SecurityDashboard {
         }, 5000);
     }
 
+    setupBankCards() {
+        // Обработчик для кнопки добавления банка
+        document.getElementById('addBankBtn').addEventListener('click', () => {
+            this.addBankCard();
+        });
+
+        // Обработчики для удаления банков (делегирование событий)
+        document.getElementById('bankCardsContainer').addEventListener('click', (e) => {
+            if (e.target.classList.contains('btn-remove-bank')) {
+                this.removeBankCard(e.target.closest('.bank-config'));
+            }
+        });
+
+        // Инициализация одной карточки по умолчанию
+        if (document.getElementById('bankCardsContainer').children.length === 0) {
+            this.addBankCard();
+        }
+    }
+
+    addBankCard(bankData = { baseUrl: '', specUrl: '' }) {
+        const container = document.getElementById('bankCardsContainer');
+        const bankIndex = container.children.length + 1;
+
+        const bankCard = document.createElement('div');
+        bankCard.className = 'bank-config';
+        bankCard.setAttribute('data-bank-index', bankIndex);
+
+        bankCard.innerHTML = `
+            <div class="bank-header">
+                <h4>Банк ${bankIndex}</h4>
+                ${bankIndex > 1 ? '<button class="btn-remove-bank" type="button">×</button>' : ''}
+            </div>
+            <div class="input-group">
+                <label>Base URL:</label>
+                <input type="text" class="config-input bank-url"
+                       value="${bankData.baseUrl}" placeholder="URL">
+            </div>
+            <div class="input-group">
+                <label>OpenAPI Spec URL:</label>
+                <input type="text" class="config-input bank-spec"
+                       value="${bankData.specUrl}" placeholder="URL к спецификации">
+            </div>
+        `;
+
+        container.appendChild(bankCard);
+    }
+
+    removeBankCard(bankCard) {
+        if (document.getElementById('bankCardsContainer').children.length > 1) {
+            bankCard.remove();
+            this.renumberBankCards();
+        } else {
+            this.showNotification('Должен остаться хотя бы один банк', 'warning');
+        }
+    }
+
+    renumberBankCards() {
+        const container = document.getElementById('bankCardsContainer');
+        const bankCards = container.querySelectorAll('.bank-config');
+
+        bankCards.forEach((card, index) => {
+            const newIndex = index + 1;
+            card.setAttribute('data-bank-index', newIndex);
+            card.querySelector('h4').textContent = `Банк ${newIndex}`;
+
+            // Показываем/скрываем кнопку удаления
+            const removeBtn = card.querySelector('.btn-remove-bank');
+            if (removeBtn) {
+                removeBtn.style.display = newIndex > 1 ? 'block' : 'none';
+            }
+        });
+    }
+
     exportToCsv() {
         if (this.filteredData.length === 0) {
             this.showNotification('Нет данных для экспорта', 'error');
@@ -833,7 +1183,6 @@ class SecurityDashboard {
         this.showNotification('Данные экспортированы в CSV', 'success');
     }
 
-    // НОВЫЙ МЕТОД ДЛЯ ЭКСПОРТА В PDF
     exportToPdf() {
         if (this.filteredData.length === 0) {
             this.showNotification('Нет данных для экспорта', 'error');
@@ -896,22 +1245,6 @@ class SecurityDashboard {
     }
 
     // Методы для сравнения сессий
-
-    // Метод для показа секции сравнения
-    async showComparisonSection() {
-        document.getElementById('comparisonSection').style.display = 'block';
-        document.querySelector('.dashboard').style.display = 'none';
-
-        await this.loadSessionsList();
-        this.showNotification('Выберите две сессии для сравнения', 'info');
-    }
-
-    // Метод для скрытия секции сравнения
-    hideComparisonSection() {
-        document.getElementById('comparisonSection').style.display = 'none';
-        document.querySelector('.dashboard').style.display = 'block';
-        document.getElementById('comparisonResults').style.display = 'none';
-    }
 
     // Загрузка списка сессий
     async loadSessionsList() {
@@ -1144,6 +1477,227 @@ class SecurityDashboard {
     // Вспомогательные методы для сравнения
     shortenSessionName(fullName) {
         return fullName.length > 50 ? fullName.substring(0, 50) + '...' : fullName;
+    }
+
+    // Методы для графа API:
+    async loadApiGraph() {
+        const specUrl = document.getElementById('specUrlInput').value;
+
+        if (!specUrl) {
+            this.showNotification('Введите URL OpenAPI спецификации', 'error');
+            return;
+        }
+
+        try {
+            this.showNotification('Загрузка графа API...', 'info');
+
+            const response = await fetch(`/api/graph?spec=${encodeURIComponent(specUrl)}`);
+            if (response.ok) {
+                const graphData = await response.json();
+                this.renderApiGraph(graphData);
+                this.showNotification(`Загружено ${graphData.totalEndpoints} эндпоинтов`, 'success');
+            } else {
+                throw new Error('Failed to load graph');
+            }
+        } catch (error) {
+            console.error('Error loading API graph:', error);
+            this.showNotification('Ошибка загрузки графа API', 'error');
+        }
+    }
+
+    renderApiGraph(graphData) {
+        const container = document.getElementById('network');
+        if (!container) return;
+
+        // Очищаем предыдущий граф
+        container.innerHTML = '';
+
+        if (!graphData.nodes || graphData.nodes.length === 0) {
+            container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #94a3b8;">Нет данных для отображения</div>';
+            return;
+        }
+
+        // Форматируем данные для vis.js
+        const nodes = new vis.DataSet(graphData.nodes.map(node => ({
+            id: node.id,
+            label: node.label,
+            title: node.title || node.path,
+            group: node.group,
+            color: node.color,
+            font: { color: '#ffffff', size: 12 },
+            borderWidth: 2
+        })));
+
+        const edges = new vis.DataSet(graphData.edges.map(edge => ({
+            from: edge.from,
+            to: edge.to,
+            color: edge.color,
+            width: 1
+        })));
+
+        const data = { nodes, edges };
+
+        const options = {
+            nodes: {
+                shape: 'dot',
+                size: 20,
+                font: {
+                    size: 12,
+                    face: 'Inter',
+                    color: '#ffffff'
+                },
+                borderWidth: 2,
+                shadow: true
+            },
+            edges: {
+                width: 1,
+                color: { color: '#334155' },
+                smooth: {
+                    type: 'continuous'
+                },
+                shadow: true
+            },
+            groups: {
+                default: { color: { background: '#3b82f6', border: '#2563eb' } },
+                auth: { color: { background: '#ef4444', border: '#dc2626' } },
+                accounts: { color: { background: '#10b981', border: '#059669' } },
+                payments: { color: { background: '#f59e0b', border: '#d97706' } },
+                transfers: { color: { background: '#8b5cf6', border: '#7c3aed' } }
+            },
+            physics: {
+                enabled: true,
+                stabilization: { iterations: 100 },
+                barnesHut: {
+                    gravitationalConstant: -8000,
+                    springConstant: 0.04,
+                    springLength: 95
+                }
+            },
+            interaction: {
+                hover: true,
+                tooltipDelay: 200
+            },
+            layout: {
+                improvedLayout: true
+            }
+        };
+
+        // Создаем сеть
+        this.currentGraph = new vis.Network(container, data, options);
+
+        // Обработчик клика по узлу
+        this.currentGraph.on("click", (params) => {
+            if (params.nodes.length > 0) {
+                const nodeId = params.nodes[0];
+                const node = graphData.nodes.find(n => n.id === nodeId);
+                if (node) {
+                    this.showEndpointDetails(node, graphData);
+                }
+            }
+        });
+
+        // Обработчик двойного клика - центрирование
+        this.currentGraph.on("doubleClick", (params) => {
+            if (params.nodes.length > 0) {
+                this.currentGraph.focus(params.nodes[0], { scale: 1.2 });
+            }
+        });
+    }
+
+    showEndpointDetails(node, graphData) {
+        const panel = document.getElementById('endpointPanel');
+        const info = document.getElementById('endpointInfo');
+
+        // Форматируем информацию об эндпоинте
+        let html = `
+            <div style="margin-bottom: 15px;">
+                <h4 style="color: #3b82f6; margin-bottom: 10px;">${node.method} ${node.path}</h4>
+                ${node.summary ? `<p><strong>Описание:</strong> ${this.escapeHtml(node.summary)}</p>` : ''}
+                ${node.description ? `<p><strong>Детали:</strong> ${this.escapeHtml(node.description)}</p>` : ''}
+                <p><strong>Группа:</strong> ${node.group || 'default'}</p>
+            </div>
+        `;
+
+        info.innerHTML = html;
+
+        // Устанавливаем данные для тестирования
+        document.getElementById('testMethod').value = node.method;
+        document.getElementById('testUrl').value = node.path;
+
+        panel.style.display = 'block';
+
+        // Прокручиваем к панели
+        panel.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    hideEndpointPanel() {
+        document.getElementById('endpointPanel').style.display = 'none';
+        document.getElementById('testResult').style.display = 'none';
+    }
+
+    async testEndpoint() {
+        const method = document.getElementById('testMethod').value;
+        const path = document.getElementById('testUrl').value;
+        const baseUrl = document.getElementById('baseUrlInput').value;
+        const headersText = document.getElementById('headersInput').value;
+        const bodyText = document.getElementById('bodyInput').value;
+
+        if (!baseUrl) {
+            this.showNotification('Введите базовый URL', 'error');
+            return;
+        }
+
+        const fullUrl = baseUrl + path;
+
+        try {
+            this.showNotification('Выполняю запрос...', 'info');
+
+            let headers = {};
+            if (headersText) {
+                headers = JSON.parse(headersText);
+            }
+
+            let body = null;
+            if (bodyText && method !== 'GET') {
+                body = bodyText;
+            }
+
+            const testData = {
+                method: method,
+                url: fullUrl,
+                headers: headers,
+                body: body
+            };
+
+            const response = await fetch('/api/test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(testData)
+            });
+
+            const result = await response.json();
+
+            // Показываем результат
+            const resultOutput = document.getElementById('resultOutput');
+            const testResult = document.getElementById('testResult');
+
+            resultOutput.textContent = JSON.stringify(result, null, 2);
+            testResult.style.display = 'block';
+
+            this.showNotification('Запрос выполнен', 'success');
+
+        } catch (error) {
+            console.error('Error testing endpoint:', error);
+            this.showNotification('Ошибка выполнения запроса', 'error');
+
+            const resultOutput = document.getElementById('resultOutput');
+            const testResult = document.getElementById('testResult');
+
+            resultOutput.textContent = `Error: ${error.message}`;
+            testResult.style.display = 'block';
+        }
     }
 
     getDiffClass(diff) {

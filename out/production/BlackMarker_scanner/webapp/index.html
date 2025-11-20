@@ -6,91 +6,93 @@
     <title>black Marker scanner</title>
     <link rel="stylesheet" href="css/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
-<div class="app-container">
-    <!-- Header -->
-    <header class="app-header">
-        <div class="header-content">
+    <div class="app-container">
+
+        <div class="header-actions">
             <h1 class="app-title">
                 <span class="logo">🛡️</span>
                 black Marker scanner
             </h1>
-            <div class="header-actions">
-                <button id="startScanBtn" class="btn btn-primary">
-                    Запустить сканирование
-                </button>
-                <button id="showComparison" class="btn btn-secondary">Сравнить сканирования</button>
-                <div class="connection-status">
-                    <span id="connectionStatus" class="status-offline">Офлайн</span>
-                </div>
+            <button id="startScanBtn" class="btn btn-primary">
+                Запустить сканирование
+            </button>
+            <button id="showComparison" class="btn btn-secondary">Сравнить сканирования</button>
+
+            <button id="showApiGraph" class="btn btn-secondary">Граф API</button>
+            <div class="connection-status">
+                <span id="connectionStatus" class="status-offline">Офлайн</span>
             </div>
         </div>
-    </header>
 
-    <!-- Configuration Section -->
-    <section class="config-section">
+
+        <section class="config-section" id="configSection">
         <div class="config-panel">
             <h3>Настройки сканирования</h3>
 
-            <div class="config-grid">
-                <!-- Банк 1 -->
-                <div class="bank-config">
-                    <h4>Банк 1</h4>
+            <div class="banks-header">
+                <h4>Цели сканирования</h4>
+                <button id="addBankBtn" class="btn btn-outline btn-sm">+ Добавить банк</button>
+            </div>
+
+            <div class="config-grid" id="bankCardsContainer">
+                <!-- Банк 1 (базовая карточка) -->
+                <div class="bank-config" data-bank-index="1">
+                    <div class="bank-header">
+                        <h4>Банк 1</h4>
+                        <button class="btn-remove-bank" type="button">×</button>
+                    </div>
                     <div class="input-group">
                         <label>Base URL:</label>
-                        <input type="text" id="bank1Url" class="config-input"
-                               value="https://vbank.open.bankingapi.ru" placeholder="https://vbank.open.bankingapi.ru">
+                        <input type="text" class="config-input bank-url"
+                               value="https://vbank.open.bankingapi.ru" placeholder="URL">
                     </div>
                     <div class="input-group">
                         <label>OpenAPI Spec URL:</label>
-                        <input type="text" id="bank1Spec" class="config-input"
+                        <input type="text" class="config-input bank-spec"
                                value="https://vbank.open.bankingapi.ru/openapi.json" placeholder="URL к спецификации">
                     </div>
                 </div>
+            </div>
 
-                <!-- Банк 2 -->
-                <div class="bank-config">
-                    <h4>Банк 2</h4>
-                    <div class="input-group">
-                        <label>Base URL:</label>
-                        <input type="text" id="bank2Url" class="config-input"
-                               value="https://abank.open.bankingapi.ru" placeholder="https://abank.open.bankingapi.ru">
+            <div class="analysis-mode-config">
+                <h4>Режим анализа</h4>
+                <div class="mode-selector">
+                    <div class="mode-option">
+                        <input type="radio" id="modeDynamic" name="analysisMode" value="DYNAMIC_ONLY" checked>
+                        <label for="modeDynamic">Только динамический анализ</label>
+                        <div class="mode-description">Спецификация загружается по URL, запросы отправляются на целевой URL</div>
                     </div>
-                    <div class="input-group">
-                        <label>OpenAPI Spec URL:</label>
-                        <input type="text" id="bank2Spec" class="config-input"
-                               value="https://abank.open.bankingapi.ru/openapi.json" placeholder="URL к спецификации">
+
+                    <div class="mode-option">
+                        <input type="radio" id="modeStatic" name="analysisMode" value="STATIC_ONLY">
+                        <label for="modeStatic">Только статический анализ</label>
+                        <div class="mode-description">Анализ только на основе локальных спецификаций из папки Specifications</div>
+                    </div>
+
+                    <div class="mode-option">
+                        <input type="radio" id="modeCombined" name="analysisMode" value="COMBINED">
+                        <label for="modeCombined">Комбинированный анализ</label>
+                        <div class="mode-description">Локальные спецификации + запросы на указанный URL</div>
                     </div>
                 </div>
 
-                <!-- Банк 3 -->
-                <div class="bank-config">
-                    <h4>Банк 3</h4>
-                    <div class="input-group">
-                        <label>Base URL:</label>
-                        <input type="text" id="bank3Url" class="config-input"
-                               value="https://sbank.open.bankingapi.ru" placeholder="https://sbank.open.bankingapi.ru">
-                    </div>
-                    <div class="input-group">
-                        <label>OpenAPI Spec URL:</label>
-                        <input type="text" id="bank3Spec" class="config-input"
-                               value="https://sbank.open.bankingapi.ru/openapi.json" placeholder="URL к спецификации">
-                    </div>
+                <div id="modeInfo" class="mode-info" style="display: none;">
+                    <!-- Информационные сообщения будут здесь -->
                 </div>
             </div>
 
             <div class="credentials-config">
+                <!-- Остальная часть с учетными данными без изменений -->
                 <h4>Учетные данные</h4>
-
-                <!-- Добавляем новое поле для Bank ID -->
                 <div class="credential-group">
                     <div class="input-group">
                         <label>Bank ID (Team ID):</label>
                         <input type="text" id="bankId" class="config-input" value="team172" placeholder="Идентификатор банка или команды">
                     </div>
                 </div>
-
                 <div class="credential-pairs">
                     <div class="credential-group">
                         <div class="input-group">
@@ -102,8 +104,17 @@
                             <input type="password" id="password1" class="config-input" value="" placeholder="Пароль">
                         </div>
                     </div>
-
                     <div class="credential-group">
+                        <div class="credential-group">
+                            <div class="input-group">
+                                <label>Client ID:</label>
+                                <input type="text" id="clientId" class="config-input" value="team172" placeholder="Client ID">
+                            </div>
+                            <div class="input-group">
+                                <label>Client Secret:</label>
+                                <input type="password" id="clientSecret" class="config-input" value="" placeholder="Client Secret">
+                            </div>
+                        </div>
                         <div class="input-group">
                             <label>Пользователь 2:</label>
                             <input type="text" id="user2" class="config-input" value="team172-9" placeholder="Логин">
@@ -280,14 +291,69 @@
         </div>
     </section>
 
+    <section id="apiGraphSection" class="config-section" style="display: none;">
+        <div class="config-panel">
+            <div class="banks-header">
+                <h3>Визуализация API</h3>
+                <button id="refreshGraph" class="btn btn-outline btn-sm">Обновить граф</button>
+            </div>
+
+            <div class="graph-controls">
+                <div class="input-group">
+                    <label>OpenAPI Spec URL:</label>
+                    <input type="text" id="specUrlInput" class="config-input"
+                           value="https://vbank.open.bankingapi.ru/openapi.json"
+                           placeholder="URL к OpenAPI спецификации">
+                </div>
+                <button id="loadGraph" class="btn btn-primary">Загрузить граф</button>
+            </div>
+
+            <div id="graphContainer" style="margin-top: 20px;">
+                <div id="network" style="width: 100%; height: 600px; border: 1px solid #334155; border-radius: 8px;"></div>
+            </div>
+
+            <div id="endpointPanel" class="panel" style="display: none; margin-top: 20px; background: #1e293b; padding: 20px; border-radius: 8px; border: 1px solid #334155;">
+                <div class="panel-header">
+                    <h3>Детали эндпоинта</h3>
+                    <button id="closePanel" class="btn btn-outline btn-sm">×</button>
+                </div>
+                <div id="endpointInfo" style="margin: 15px 0;"></div>
+                <div class="test-form">
+                    <h4>Тестирование эндпоинта</h4>
+                    <form id="testForm">
+                        <input type="hidden" id="testUrl">
+                        <input type="hidden" id="testMethod">
+                        <div class="input-group">
+                            <label>Base URL:</label>
+                            <input type="text" id="baseUrlInput" class="config-input"
+                                   value="https://vbank.open.bankingapi.ru" placeholder="Базовый URL">
+                        </div>
+                        <div class="input-group">
+                            <label>Заголовки (JSON):</label>
+                            <textarea id="headersInput" class="config-input" rows="3" placeholder='{"Content-Type": "application/json", "Authorization": "Bearer token"}'></textarea>
+                        </div>
+                        <div class="input-group">
+                            <label>Тело запроса (JSON):</label>
+                            <textarea id="bodyInput" class="config-input" rows="4" placeholder='{"key": "value"}'></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Выполнить запрос</button>
+                    </form>
+                    <div id="testResult" style="margin-top: 15px; display: none;">
+                        <h5>Результат:</h5>
+                        <pre id="resultOutput" style="background: #0f172a; padding: 10px; border-radius: 4px; overflow: auto; max-height: 300px;"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <div id="notifications" class="notifications"></div>
 
     <div id="loadingOverlay" class="loading-overlay">
         <div class="loading-spinner"></div>
-    </div>
-</div>
+    </div></div>
 
-<div id="vulnerabilityModal" class="modal">
+    <div id="vulnerabilityModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
             <h2 id="modalTitle">Детали уязвимости</h2>
@@ -298,7 +364,6 @@
         </div>
     </div>
 </div>
-
 <script src="js/app.js"></script>
 </body>
 </html>

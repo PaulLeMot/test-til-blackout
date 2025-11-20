@@ -1,220 +1,127 @@
 package core;
 
-import java.util.*;
-import java.text.SimpleDateFormat;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.util.logging.Logger;
 
 public class ConfigParser {
-    public static ScanConfig parseConfig(String json) {
+    private static final Logger logger = Logger.getLogger(ConfigParser.class.getName());
+
+    public static ScanConfig parseConfig(String jsonConfig) {
         ScanConfig config = new ScanConfig();
 
         try {
-            log("Исходный JSON: " + json);
+            JSONObject jsonObject = new JSONObject(jsonConfig);
+            logger.info("[CONFIG_PARSER] Исходный JSON: " + jsonConfig);
 
-            // Удаляем пробелы и переносы строк для упрощения парсинга
-            json = json.trim().replaceAll("\\s+", " ");
-
-            if (json.startsWith("{") && json.endsWith("}")) {
-                json = json.substring(1, json.length() - 1).trim();
-
-                // Парсим bankId
-                String bankId = extractValueFromObject(json, "bankId");
-                if (bankId != null) {
-                    config.setBankId(bankId.trim());
-                    log("Parsed bankId: " + bankId);
+            // Парсинг режима анализа
+            if (jsonObject.has("analysisMode")) {
+                String analysisModeStr = jsonObject.getString("analysisMode");
+                try {
+                    ScanConfig.AnalysisMode analysisMode = ScanConfig.AnalysisMode.valueOf(analysisModeStr);
+                    config.setAnalysisMode(analysisMode);
+                    logger.info("[CONFIG_PARSER] Set analysis mode: " + analysisMode);
+                } catch (IllegalArgumentException e) {
+                    logger.warning("[CONFIG_PARSER] Invalid analysis mode: " + analysisModeStr + ", using default");
                 }
-
-                List<ScanConfig.BankConfig> banks = new ArrayList<>();
-                List<ScanConfig.UserCredentials> credentials = new ArrayList<>();
-
-                // Парсим банки
-                String banksPart = extractPart(json, "banks");
-                if (banksPart != null && banksPart.startsWith("[") && banksPart.endsWith("]")) {
-                    banksPart = banksPart.substring(1, banksPart.length() - 1).trim();
-                    log("Banks part: " + banksPart);
-
-                    if (!banksPart.isEmpty()) {
-                        String[] bankObjects = splitObjects(banksPart);
-                        log("Found " + bankObjects.length + " bank objects");
-
-                        for (String bankObj : bankObjects) {
-                            bankObj = bankObj.trim();
-                            if (bankObj.startsWith("{") && bankObj.endsWith("}")) {
-                                String baseUrl = extractValueFromObject(bankObj, "baseUrl");
-                                String specUrl = extractValueFromObject(bankObj, "specUrl");
-                                // Убираем пробелы в конце URL
-                                if (baseUrl != null) baseUrl = baseUrl.trim();
-                                if (specUrl != null) specUrl = specUrl.trim();
-                                log("Parsed bank - baseUrl: " + baseUrl + ", specUrl: " + specUrl);
-                                if (baseUrl != null && specUrl != null) {
-                                    banks.add(new ScanConfig.BankConfig(baseUrl, specUrl));
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Парсим учетные данные
-                String credsPart = extractPart(json, "credentials");
-                if (credsPart != null && credsPart.startsWith("[") && credsPart.endsWith("]")) {
-                    credsPart = credsPart.substring(1, credsPart.length() - 1).trim();
-                    log("Credentials part: " + credsPart);
-
-                    if (!credsPart.isEmpty()) {
-                        String[] credObjects = splitObjects(credsPart);
-                        log("Found " + credObjects.length + " credential objects");
-
-                        for (String credObj : credObjects) {
-                            credObj = credObj.trim();
-                            if (credObj.startsWith("{") && credObj.endsWith("}")) {
-                                String username = extractValueFromObject(credObj, "username");
-                                String password = extractValueFromObject(credObj, "password");
-                                log("Parsed credential - username: " + username + ", password: " + (password != null ? "***" : "null"));
-                                if (username != null && password != null) {
-                                    credentials.add(new ScanConfig.UserCredentials(username, password));
-                                }
-                            }
-                        }
-                    }
-                }
-
-                config.setBanks(banks);
-                config.setCredentials(credentials);
             }
+
+            // Парсинг банков
+            if (jsonObject.has("banks")) {
+                JSONArray banksArray = jsonObject.getJSONArray("banks");
+                logger.info("[CONFIG_PARSER] Found " + banksArray.length() + " bank objects");
+
+                for (int i = 0; i < banksArray.length(); i++) {
+                    JSONObject bankObj = banksArray.getJSONObject(i);
+                    String baseUrl = bankObj.getString("baseUrl");
+                    String specUrl = bankObj.getString("specUrl");
+
+                    ScanConfig.BankConfig bankConfig = new ScanConfig.BankConfig(baseUrl, specUrl);
+                    config.getBanks().add(bankConfig);
+                    logger.info("[CONFIG_PARSER] Parsed bank - baseUrl: " + baseUrl + ", specUrl: " + specUrl);
+                }
+            }
+
+            // Парсинг учетных данных
+            if (jsonObject.has("credentials")) {
+                JSONArray credentialsArray = jsonObject.getJSONArray("credentials");
+                logger.info("[CONFIG_PARSER] Found " + credentialsArray.length() + " credential objects");
+
+                for (int i = 0; i < credentialsArray.length(); i++) {
+                    JSONObject credObj = credentialsArray.getJSONObject(i);
+                    String username = credObj.getString("username");
+                    String password = credObj.getString("password");
+
+                    ScanConfig.UserCredentials userCred = new ScanConfig.UserCredentials(username, password);
+                    config.getCredentials().add(userCred);
+                    logger.info("[CONFIG_PARSER] Parsed credential - username: " + username + ", password: ***");
+                }
+            } else {
+                logger.info("[CONFIG_PARSER] No credentials in config, will use tokens directly");
+            }
+
+            // Устанавливаем bankId
+            if (jsonObject.has("bankId")) {
+                String bankId = jsonObject.getString("bankId");
+                config.setBankId(bankId);
+                logger.info("[CONFIG_PARSER] Set bankId from config: " + bankId);
+            } else {
+                if (!config.getCredentials().isEmpty()) {
+                    String firstUsername = config.getCredentials().get(0).getUsername();
+                    if (firstUsername != null && firstUsername.contains("-")) {
+                        String calculatedBankId = firstUsername.split("-")[0];
+                        config.setBankId(calculatedBankId);
+                        logger.info("[CONFIG_PARSER] Calculated bankId from username: " + calculatedBankId);
+                    } else {
+                        config.setBankId("def");
+                        logger.info("[CONFIG_PARSER] Set default bankId: def");
+                    }
+                } else {
+                    config.setBankId("def");
+                    logger.info("[CONFIG_PARSER] Set default bankId: def (no credentials)");
+                }
+            }
+
+            // Устанавливаем clientId из первого пользователя
+            if (!config.getCredentials().isEmpty()) {
+                String firstUsername = config.getCredentials().get(0).getUsername();
+                config.setClientId(firstUsername);
+                logger.info("[CONFIG_PARSER] Set clientId from first user: " + firstUsername);
+            } else {
+                config.setClientId("default");
+                logger.info("[CONFIG_PARSER] Set default clientId: default");
+            }
+
+            // Устанавливаем clientSecret из первого пользователя
+            if (!config.getCredentials().isEmpty()) {
+                String firstPassword = config.getCredentials().get(0).getPassword();
+                config.setClientSecret(firstPassword);
+                logger.info("[CONFIG_PARSER] Set clientSecret from first user");
+            } else {
+                config.setClientSecret("password");
+                logger.info("[CONFIG_PARSER] Set default clientSecret");
+            }
+
+            // Устанавливаем базовый URL из первого банка
+            if (!config.getBanks().isEmpty()) {
+                String firstBankUrl = config.getBanks().get(0).getBaseUrl();
+                config.setBankBaseUrl(firstBankUrl);
+                config.setTargetBaseUrl(firstBankUrl);
+                logger.info("[CONFIG_PARSER] Set bankBaseUrl from first bank: " + firstBankUrl);
+            }
+
+            // Устанавливаем OpenAPI spec URL из первого банка
+            if (!config.getBanks().isEmpty() && config.isDynamicAnalysisEnabled()) {
+                String firstSpecUrl = config.getBanks().get(0).getSpecUrl();
+                config.setOpenApiSpecUrl(firstSpecUrl);
+                logger.info("[CONFIG_PARSER] Set openApiSpecUrl from first bank: " + firstSpecUrl);
+            }
+
         } catch (Exception e) {
-            System.err.println("Error parsing config: " + e.getMessage());
-            e.printStackTrace();
+            logger.severe("[CONFIG_PARSER] Ошибка парсинга конфигурации: " + e.getMessage());
+            throw new RuntimeException("Ошибка парсинга конфигурации", e);
         }
 
         return config;
-    }
-
-    // Остальные методы ConfigParser остаются без изменений...
-    private static String extractPart(String json, String key) {
-        String searchKey = "\"" + key + "\":";
-        int start = json.indexOf(searchKey);
-        if (start == -1) {
-            log("Key '" + key + "' not found in JSON");
-            return null;
-        }
-
-        start += searchKey.length();
-        int braceCount = 0;
-        boolean inQuotes = false;
-        char quoteChar = '"';
-        int contentStart = -1;
-
-        for (int i = start; i < json.length(); i++) {
-            char c = json.charAt(i);
-
-            if (c == '"' && (i == 0 || json.charAt(i-1) != '\\')) {
-                if (!inQuotes) {
-                    inQuotes = true;
-                    quoteChar = c;
-                } else if (c == quoteChar) {
-                    inQuotes = false;
-                }
-            }
-
-            if (!inQuotes) {
-                if (c == '[' || c == '{') {
-                    if (braceCount == 0) {
-                        contentStart = i;
-                    }
-                    braceCount++;
-                } else if (c == ']' || c == '}') {
-                    braceCount--;
-                    if (braceCount == 0 && contentStart != -1) {
-                        return json.substring(contentStart, i + 1);
-                    }
-                } else if (braceCount == 0 && c == ',') {
-                    // Достигнули конца текущего элемента
-                    break;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private static String[] splitObjects(String arrayContent) {
-        List<String> objects = new ArrayList<>();
-        int braceCount = 0;
-        boolean inQuotes = false;
-        char quoteChar = '"';
-        int start = -1;
-
-        for (int i = 0; i < arrayContent.length(); i++) {
-            char c = arrayContent.charAt(i);
-
-            if (c == '"' && (i == 0 || arrayContent.charAt(i-1) != '\\')) {
-                if (!inQuotes) {
-                    inQuotes = true;
-                    quoteChar = c;
-                } else if (c == quoteChar) {
-                    inQuotes = false;
-                }
-            }
-
-            if (!inQuotes) {
-                if (c == '{') {
-                    if (braceCount == 0) {
-                        start = i;
-                    }
-                    braceCount++;
-                } else if (c == '}') {
-                    braceCount--;
-                    if (braceCount == 0 && start != -1) {
-                        objects.add(arrayContent.substring(start, i + 1));
-                        start = -1;
-                    }
-                }
-            }
-        }
-
-        return objects.toArray(new String[0]);
-    }
-
-    private static String extractValueFromObject(String obj, String key) {
-        // Ищем ключ в кавычках
-        String search = "\"" + key + "\":";
-        int keyStart = obj.indexOf(search);
-        if (keyStart == -1) return null;
-
-        int valueStart = keyStart + search.length();
-
-        // Пропускаем пробелы
-        while (valueStart < obj.length() && Character.isWhitespace(obj.charAt(valueStart))) {
-            valueStart++;
-        }
-
-        if (valueStart >= obj.length()) return null;
-
-        char firstChar = obj.charAt(valueStart);
-        if (firstChar == '"') {
-            // Строковое значение в кавычках
-            int stringStart = valueStart + 1;
-            int stringEnd = stringStart;
-            boolean inEscape = false;
-
-            while (stringEnd < obj.length()) {
-                char c = obj.charAt(stringEnd);
-                if (inEscape) {
-                    inEscape = false;
-                } else if (c == '\\') {
-                    inEscape = true;
-                } else if (c == '"') {
-                    return obj.substring(stringStart, stringEnd);
-                }
-                stringEnd++;
-            }
-        }
-
-        return null;
-    }
-
-    private static void log(String message) {
-        String timestamp = new SimpleDateFormat("HH:mm:ss").format(new Date());
-        String logMessage = "[CONFIG_PARSER][" + timestamp + "] " + message;
-        System.out.println(logMessage);
     }
 }

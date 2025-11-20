@@ -1,48 +1,41 @@
 package core;
 
-import java.util.Map;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.ArrayList;
+import java.util.Map;
 
 public class ScanConfig {
-    private String targetBaseUrl;
-    private String password;
-    private String accessToken;
-    private String bankBaseUrl;
+    private String bankId;
     private String clientId;
     private String clientSecret;
-    private String targetUrl;
+    private String bankBaseUrl;
+    private String targetBaseUrl;
     private String openApiSpecUrl;
-    private String consentId; // Новое поле для хранения ID согласия
-
-    // Добавляем поля для хранения токенов пользователей
-    private Map<String, String> userTokens = new HashMap<>();
-
-    // Новые поля для конфигурации из UI
+    private String consentId;
     private List<BankConfig> banks = new ArrayList<>();
     private List<UserCredentials> credentials = new ArrayList<>();
+    private Map<String, String> userTokens = new HashMap<>();
+    private Map<String, Object> realData = new HashMap<>();
+    private List<TestedEndpoint> testedEndpoints = new ArrayList<>();
 
-    // Добавляем поле для bankId из UI
-    private String bankId;
+    // Новые поля
+    private AnalysisMode analysisMode = AnalysisMode.DYNAMIC_ONLY;
+    private List<String> localSpecFiles = new ArrayList<>();
 
+    // Конструктор по умолчанию
     public ScanConfig() {}
 
-    // Getters and Setters
-    public String getTargetBaseUrl() { return targetBaseUrl; }
-    public void setTargetBaseUrl(String targetBaseUrl) { this.targetBaseUrl = targetBaseUrl; }
-
-    public String getPassword() { return password; }
-    public void setPassword(String password) { this.password = password; }
-
-    public String getAccessToken() { return accessToken; }
-    public void setAccessToken(String accessToken) { this.accessToken = accessToken; }
-
-    public String getBankBaseUrl() {
-        if (bankBaseUrl != null) return bankBaseUrl;
-        return targetBaseUrl;
+    // Enum для режимов анализа
+    public enum AnalysisMode {
+        DYNAMIC_ONLY,      // Только динамический анализ
+        STATIC_ONLY,       // Только статический анализ
+        COMBINED           // Комбинированный анализ
     }
-    public void setBankBaseUrl(String bankBaseUrl) { this.bankBaseUrl = bankBaseUrl; }
+
+    // Геттеры и сеттеры для основных полей
+    public String getBankId() { return bankId; }
+    public void setBankId(String bankId) { this.bankId = bankId; }
 
     public String getClientId() { return clientId; }
     public void setClientId(String clientId) { this.clientId = clientId; }
@@ -50,108 +43,138 @@ public class ScanConfig {
     public String getClientSecret() { return clientSecret; }
     public void setClientSecret(String clientSecret) { this.clientSecret = clientSecret; }
 
-    public String getTargetUrl() { return targetUrl; }
-    public void setTargetUrl(String targetUrl) { this.targetUrl = targetUrl; }
+    public String getBankBaseUrl() { return bankBaseUrl; }
+    public void setBankBaseUrl(String bankBaseUrl) { this.bankBaseUrl = bankBaseUrl; }
+
+    public String getTargetBaseUrl() { return targetBaseUrl; }
+    public void setTargetBaseUrl(String targetBaseUrl) { this.targetBaseUrl = targetBaseUrl; }
 
     public String getOpenApiSpecUrl() { return openApiSpecUrl; }
-    public void setOpenApiSpecUrl(String specUrl) { this.openApiSpecUrl = specUrl; }
+    public void setOpenApiSpecUrl(String openApiSpecUrl) { this.openApiSpecUrl = openApiSpecUrl; }
 
-    // Геттер и сеттер для consentId
-    public String getConsentId() {
-        return consentId;
-    }
+    public String getConsentId() { return consentId; }
+    public void setConsentId(String consentId) { this.consentId = consentId; }
 
-    public void setConsentId(String consentId) {
-        this.consentId = consentId;
-    }
-
-    // Новые методы для работы с токенами пользователей
-    public Map<String, String> getUserTokens() { return userTokens; }
-    public void setUserTokens(Map<String, String> userTokens) { this.userTokens = userTokens; }
-
-    public void addUserToken(String username, String token) {
-        this.userTokens.put(username, token);
-    }
-
-    public String getUserToken(String username) {
-        return this.userTokens.get(username);
-    }
-
-    public boolean hasUserTokens() {
-        return !this.userTokens.isEmpty();
-    }
-
-    public boolean hasMultipleUserTokens() {
-        return this.userTokens.size() >= 2;
-    }
-
-    // Геттер и сеттер для bankId
-    public String getBankId() {
-        if (bankId == null || bankId.isEmpty()) {
-            // Для sandbox среды используем только префикс team172
-            if (clientId != null && clientId.startsWith("team172")) {
-                return "team172"; // Фиксированный bankId для sandbox
-            }
-            // Для других случаев - стандартная логика
-            if (clientId != null && clientId.contains("-")) {
-                return clientId.split("-")[0];
-            }
-            return "default-bank"; // Дефолтное значение
-        }
-        return bankId;
-    }
-
-    // Метод для установки bankId
-    public void setBankId(String bankId) {
-        this.bankId = bankId;
-    }
-
-    /**
-     * Получение токена банка для межбанковских запросов
-     * @return bank token для текущей конфигурации
-     */
-    public String getBankToken() {
-        // Сначала проверяем ключ "bank", который используется в AuthManager.getTokensForScanning()
-        String bankToken = getUserToken("bank");
-
-        // Если не нашли, пробуем получить токен по ключу bankId
-        if (bankToken == null || bankToken.isEmpty()) {
-            bankToken = getUserToken(getBankId());
-        }
-
-        // Если не нашли, пробуем получить токен по умолчанию
-        if (bankToken == null || bankToken.isEmpty()) {
-            bankToken = getUserToken("default");
-        }
-
-        // Если все еще нет токена, используем основной токен доступа
-        if (bankToken == null || bankToken.isEmpty()) {
-            bankToken = getAccessToken();
-        }
-
-        return bankToken;
-    }
-
-    // Getters and Setters для новой конфигурации
     public List<BankConfig> getBanks() { return banks; }
     public void setBanks(List<BankConfig> banks) { this.banks = banks; }
 
     public List<UserCredentials> getCredentials() { return credentials; }
     public void setCredentials(List<UserCredentials> credentials) { this.credentials = credentials; }
 
-    // Внутренние классы для конфигурации
+    public Map<String, String> getUserTokens() { return userTokens; }
+    public void setUserTokens(Map<String, String> userTokens) { this.userTokens = userTokens; }
+
+    public Map<String, Object> getRealData() { return realData; }
+    public void setRealData(Map<String, Object> realData) { this.realData = realData; }
+
+    public List<TestedEndpoint> getTestedEndpoints() { return testedEndpoints; }
+    public void setTestedEndpoints(List<TestedEndpoint> testedEndpoints) { this.testedEndpoints = testedEndpoints; }
+
+    // Геттеры и сеттеры для новых полей
+    public AnalysisMode getAnalysisMode() { return analysisMode; }
+    public void setAnalysisMode(AnalysisMode analysisMode) { this.analysisMode = analysisMode; }
+
+    public List<String> getLocalSpecFiles() { return localSpecFiles; }
+    public void setLocalSpecFiles(List<String> localSpecFiles) { this.localSpecFiles = localSpecFiles; }
+
+    // Вспомогательные методы
+    public boolean isDynamicAnalysisEnabled() {
+        return analysisMode == AnalysisMode.DYNAMIC_ONLY || analysisMode == AnalysisMode.COMBINED;
+    }
+
+    public boolean isStaticAnalysisEnabled() {
+        return analysisMode == AnalysisMode.STATIC_ONLY || analysisMode == AnalysisMode.COMBINED;
+    }
+
+    // Методы для работы с токенами
+
+    /**
+     * Получить access token (токен по умолчанию)
+     */
+    public String getAccessToken() {
+        if (userTokens.containsKey("default")) {
+            return userTokens.get("default");
+        } else if (!userTokens.isEmpty()) {
+            // Возвращаем первый доступный токен
+            return userTokens.values().iterator().next();
+        }
+        return null;
+    }
+
+    /**
+     * Получить bank token
+     */
+    public String getBankToken() {
+        if (userTokens.containsKey("bank")) {
+            return userTokens.get("bank");
+        } else if (bankId != null && userTokens.containsKey(bankId)) {
+            return userTokens.get(bankId);
+        }
+        return null;
+    }
+
+    /**
+     * Получить токен для конкретного пользователя
+     */
+    public String getTokenForUser(String username) {
+        return userTokens.get(username);
+    }
+
+    /**
+     * Получить токен первого пользователя
+     */
+    public String getFirstUserToken() {
+        if (!credentials.isEmpty()) {
+            String firstUsername = credentials.get(0).getUsername();
+            return getTokenForUser(firstUsername);
+        }
+        return getAccessToken();
+    }
+
+    /**
+     * Получить токен второго пользователя (для BOLA тестов)
+     */
+    public String getSecondUserToken() {
+        if (credentials.size() >= 2) {
+            String secondUsername = credentials.get(1).getUsername();
+            return getTokenForUser(secondUsername);
+        }
+        return null;
+    }
+
+    /**
+     * Добавить токен пользователя
+     */
+    public void addUserToken(String username, String token) {
+        this.userTokens.put(username, token);
+    }
+
+    /**
+     * Проверить наличие токенов
+     */
+    public boolean hasTokens() {
+        return !userTokens.isEmpty();
+    }
+
+    /**
+     * Проверить наличие bank token
+     */
+    public boolean hasBankToken() {
+        return getBankToken() != null;
+    }
+
+    // Вложенные классы
+
     public static class BankConfig {
         private String baseUrl;
         private String specUrl;
-
-        public BankConfig() {}
 
         public BankConfig(String baseUrl, String specUrl) {
             this.baseUrl = baseUrl;
             this.specUrl = specUrl;
         }
 
-        // Getters and Setters
+        // Геттеры и сеттеры для BankConfig
         public String getBaseUrl() { return baseUrl; }
         public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
 
@@ -163,14 +186,12 @@ public class ScanConfig {
         private String username;
         private String password;
 
-        public UserCredentials() {}
-
         public UserCredentials(String username, String password) {
             this.username = username;
             this.password = password;
         }
 
-        // Getters and Setters
+        // Геттеры и сеттеры для UserCredentials
         public String getUsername() { return username; }
         public void setUsername(String username) { this.username = username; }
 
