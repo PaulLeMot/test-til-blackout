@@ -52,8 +52,15 @@ public class ContractValidator {
             System.out.println("🚀 ЗАПУСК ВАЛИДАЦИИ КОНТРАКТОВ API");
             System.out.println("=".repeat(80));
 
-            String clientId = args.length > 0 ? args[0] : "team172";
-            String clientSecret = args.length > 1 ? args[1] : "FFsJfRyuMjNZgWzl1mruxPrKCBSIVZkY";
+            // УБЕРИТЕ хардкод
+            String clientId = args.length > 0 ? args[0] : null;
+            String clientSecret = args.length > 1 ? args[1] : null;
+
+            if (clientId == null || clientSecret == null) {
+                System.err.println("❌ Необходимо указать clientId и clientSecret как аргументы");
+                System.err.println("Использование: java ContractValidator <clientId> <clientSecret>");
+                return;
+            }
 
             ContractValidator validator = new ContractValidator(clientId, clientSecret);
             List<ValidationResult> results = validator.validateAllContracts();
@@ -65,9 +72,7 @@ public class ContractValidator {
             System.err.println("❌ Ошибка при валидации: " + e.getMessage());
             e.printStackTrace();
         }
-    }
-
-    /**
+    }    /**
      * Основной сценарий валидации
      */
     public List<ValidationResult> validateAllContracts() {

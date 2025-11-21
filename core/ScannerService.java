@@ -12,7 +12,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 import java.text.SimpleDateFormat;
 import java.util.stream.Collectors;
-import java.io.File; // Добавлен импорт
+import java.io.File;
 
 public class ScannerService {
     private final WebServer webServer;
@@ -438,7 +438,7 @@ public class ScannerService {
                     new API8_SecurityConfigScanner(),
                     new API9_InventoryScanner(),
                     new API10_UnsafeConsumptionScanner(),
-                    new Validation()
+                    new ContractValidatorScanner()
             );
 
             // Фильтруем сканеры в зависимости от доступности токенов и режима
@@ -547,6 +547,17 @@ public class ScannerService {
     private List<Vulnerability> executeScannerWithEndpoints(SecurityScanner scanner, ScanConfig bankScanConfig,
                                                             String bankName, boolean hasValidTokens) {
         String scannerName = scanner.getName();
+
+        // ОСОБАЯ ЛОГИКА ДЛЯ ContractValidator
+        if (scannerName.contains("ContractValidator")) {
+            // ContractValidator работает во всех режимах, кроме чисто динамического без URL
+            if (bankScanConfig.getAnalysisMode() == ScanConfig.AnalysisMode.DYNAMIC_ONLY &&
+                    (bankScanConfig.getTargetBaseUrl() == null || bankScanConfig.getTargetBaseUrl().isEmpty())) {
+                System.out.println("   ⚠️  ContractValidator пропущен - в динамическом режиме требуется targetBaseUrl");
+                return new ArrayList<>();
+            }
+        }
+
         notifyMessage("info", "-".repeat(40));
         notifyMessage("info", "Запуск сканера: " + scannerName + " для " + bankName);
 
@@ -596,6 +607,11 @@ public class ScannerService {
      */
     private boolean canScannerWorkWithoutAuth(SecurityScanner scanner) {
         String scannerName = scanner.getName();
+
+        // ContractValidator может работать без аутентификации
+        if (scannerName.contains("ContractValidator")) {
+            return true;
+        }
 
         // В статическом режиме все сканеры могут работать
         if (config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY) {
@@ -726,7 +742,14 @@ public class ScannerService {
     /**
      * Сохраняет уязвимость в базу данных
      */
+
     private void saveVulnerabilityToDatabase(Vulnerability vuln, String bankName, String scannerName) {
+        // ФИЛЬТРАЦИЯ: не сохраняем уязвимости с уровнем INFO
+        if (vuln.getSeverity() == Vulnerability.Severity.INFO) {
+            System.out.println("⚠️ Пропущена уязвимость с уровнем INFO: " + vuln.getTitle());
+            return;
+        }
+
         String proof = extractProofFromVulnerability(vuln);
         String recommendation = extractRecommendationFromVulnerability(vuln);
         String statusCode = extractStatusCodeFromVulnerability(vuln);
