@@ -1,5 +1,3 @@
-[file name]: app.js
-[file content begin]
 class SecurityDashboard {
     constructor() {
         this.apiEndpoints = [];
@@ -1877,4 +1875,3 @@ class SecurityDashboard {
 document.addEventListener('DOMContentLoaded', () => {
     window.dashboard = new SecurityDashboard();
 });
-[file content end]
