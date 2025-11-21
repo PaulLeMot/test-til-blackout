@@ -71,6 +71,11 @@ public class WebServer {
         server.createContext("/api/graph", new ApiGraphHandler());
         server.createContext("/api/test", new ApiTestHandler());
 
+        // ДОБАВЛЕНО: Новые endpoints для работы с локальными спецификациями
+        server.createContext("/api/graph/upload", new ApiGraphUploadHandler());
+        server.createContext("/api/graph/local", new ApiGraphLocalHandler());
+        server.createContext("/api/specs/local", new LocalSpecsListHandler());
+
         server.setExecutor(null);
         server.start();
         System.out.println("✅ Web server started on http://localhost:" + port);
@@ -80,6 +85,9 @@ public class WebServer {
         System.out.println("   - GET  /api/v1/results  - Get scan results");
         System.out.println("   - GET  /api/graph       - Get API graph data");
         System.out.println("   - POST /api/test        - Test API endpoint");
+        System.out.println("   - POST /api/graph/upload - Upload spec file");
+        System.out.println("   - GET  /api/graph/local - Load local spec");
+        System.out.println("   - GET  /api/specs/local - List local specs");
     }
 
     public void stop() {
@@ -130,6 +138,114 @@ public class WebServer {
     static class WebSocketConnection {
     }
 
+    // Вспомогательный метод для отправки ответов
+    private void sendResponse(HttpExchange exchange, int statusCode, String response) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(statusCode, response.getBytes().length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(response.getBytes());
+        }
+    }
+
+    // Вспомогательный метод для построения данных графа
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> buildGraphData(List<ApiEndpoint> endpoints, String specUrl) {
+        Map<String, Object> graph = new HashMap<>();
+
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        List<Map<String, Object>> edges = new ArrayList<>();
+
+        // Группируем эндпоинты по тегам
+        Map<String, List<ApiEndpoint>> endpointsByTag = new HashMap<>();
+        for (ApiEndpoint endpoint : endpoints) {
+            List<String> tags = endpoint.getTags();
+            if (tags == null || tags.isEmpty()) {
+                tags = java.util.List.of("default");
+            }
+
+            for (String tag : tags) {
+                endpointsByTag.computeIfAbsent(tag, k -> new ArrayList<>()).add(endpoint);
+            }
+        }
+
+        // Создаем узлы для каждого эндпоинта
+        int nodeId = 1;
+        Map<String, Integer> nodeIdMap = new HashMap<>();
+
+        for (ApiEndpoint endpoint : endpoints) {
+            String nodeKey = endpoint.getMethod() + ":" + endpoint.getPath();
+            Map<String, Object> node = new HashMap<>();
+            node.put("id", nodeId);
+            node.put("label", endpoint.getMethod() + "\\n" + endpoint.getPath());
+            node.put("title", endpoint.getSummary() != null ? endpoint.getSummary() : endpoint.getPath());
+            node.put("method", endpoint.getMethod());
+            node.put("path", endpoint.getPath());
+            node.put("summary", endpoint.getSummary());
+            node.put("description", endpoint.getDescription());
+
+            // Определяем группу на основе тегов
+            String group = "default";
+            if (endpoint.getTags() != null && !endpoint.getTags().isEmpty()) {
+                group = endpoint.getTags().get(0);
+            }
+            node.put("group", group);
+
+            // Цвет в зависимости от метода HTTP
+            String color = getColorForMethod(endpoint.getMethod());
+            node.put("color", color);
+
+            nodes.add(node);
+            nodeIdMap.put(nodeKey, nodeId);
+            nodeId++;
+        }
+
+        // Создаем связи между эндпоинтами с общими тегами
+        for (Map.Entry<String, List<ApiEndpoint>> entry : endpointsByTag.entrySet()) {
+            List<ApiEndpoint> tagEndpoints = entry.getValue();
+
+            // Связываем эндпоинты в пределах одной группы
+            for (int i = 0; i < tagEndpoints.size(); i++) {
+                for (int j = i + 1; j < tagEndpoints.size(); j++) {
+                    ApiEndpoint e1 = tagEndpoints.get(i);
+                    ApiEndpoint e2 = tagEndpoints.get(j);
+
+                    String key1 = e1.getMethod() + ":" + e1.getPath();
+                    String key2 = e2.getMethod() + ":" + e2.getPath();
+
+                    Integer fromId = nodeIdMap.get(key1);
+                    Integer toId = nodeIdMap.get(key2);
+
+                    if (fromId != null && toId != null) {
+                        Map<String, Object> edge = new HashMap<>();
+                        edge.put("from", fromId);
+                        edge.put("to", toId);
+                        edge.put("value", 1);
+                        edges.add(edge);
+                    }
+                }
+            }
+        }
+
+        graph.put("nodes", nodes);
+        graph.put("edges", edges);
+        graph.put("specUrl", specUrl);
+        graph.put("totalEndpoints", endpoints.size());
+        graph.put("totalTags", endpointsByTag.size());
+
+        return graph;
+    }
+
+    private String getColorForMethod(String method) {
+        switch (method.toUpperCase()) {
+            case "GET": return "#61affe";
+            case "POST": return "#49cc90";
+            case "PUT": return "#fca130";
+            case "DELETE": return "#f93e3e";
+            case "PATCH": return "#50e3c2";
+            default: return "#9012fe";
+        }
+    }
+
     // ДОБАВЛЕНО: Обработчик для проверки статуса сканирования
     class ScanStatusHandler implements HttpHandler {
         @Override
@@ -154,6 +270,200 @@ public class WebServer {
                 }
             } else {
                 exchange.sendResponseHeaders(405, -1);
+            }
+        }
+    }
+
+    // ДОБАВЛЕНО: Обработчик для получения списка локальных спецификаций
+    class LocalSpecsListHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("GET".equals(exchange.getRequestMethod())) {
+                try {
+                    File specsDir = new File("Specifications");
+                    File[] specFiles = specsDir.listFiles((dir, name) ->
+                            name.toLowerCase().endsWith(".json") ||
+                                    name.toLowerCase().endsWith(".yaml") ||
+                                    name.toLowerCase().endsWith(".yml")
+                    );
+
+                    List<Map<String, Object>> specsList = new ArrayList<>();
+                    if (specFiles != null) {
+                        for (File file : specFiles) {
+                            Map<String, Object> specInfo = new HashMap<>();
+                            specInfo.put("filename", file.getName());
+                            specInfo.put("size", file.length());
+                            specInfo.put("lastModified", file.lastModified());
+                            specsList.add(specInfo);
+                        }
+                    }
+
+                    String response = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(specsList);
+
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                    exchange.sendResponseHeaders(200, response.getBytes().length);
+
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(response.getBytes());
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    sendResponse(exchange, 500, "{\"error\": \"Failed to list local specifications: " + e.getMessage() + "\"}");
+                }
+            } else {
+                exchange.sendResponseHeaders(405, -1);
+            }
+        }
+    }
+
+    // ДОБАВЛЕНО: Обработчик для загрузки графа из локальной спецификации
+    class ApiGraphLocalHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("GET".equals(exchange.getRequestMethod())) {
+                try {
+                    String query = exchange.getRequestURI().getQuery();
+                    String filename = null;
+
+                    if (query != null) {
+                        for (String pair : query.split("&")) {
+                            String[] keyValue = pair.split("=");
+                            if (keyValue.length == 2 && "filename".equals(keyValue[0])) {
+                                filename = URLDecoder.decode(keyValue[1], StandardCharsets.UTF_8);
+                            }
+                        }
+                    }
+
+                    if (filename == null) {
+                        sendResponse(exchange, 400, "{\"error\": \"Missing filename parameter\"}");
+                        return;
+                    }
+
+                    // Проверяем безопасность пути
+                    if (filename.contains("..") || filename.contains("/") || filename.contains("\\")) {
+                        sendResponse(exchange, 400, "{\"error\": \"Invalid filename\"}");
+                        return;
+                    }
+
+                    File specFile = new File("Specifications", filename);
+                    if (!specFile.exists() || !specFile.isFile()) {
+                        sendResponse(exchange, 404, "{\"error\": \"Specification file not found\"}");
+                        return;
+                    }
+
+                    // Загружаем и парсим локальную спецификацию
+                    List<ApiEndpoint> endpoints = loadEndpointsFromLocalFile(specFile);
+                    Map<String, Object> graphData = buildGraphData(endpoints, "local://" + filename);
+
+                    String response = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(graphData);
+
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                    exchange.sendResponseHeaders(200, response.getBytes().length);
+
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(response.getBytes());
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    sendResponse(exchange, 500, "{\"error\": \"Failed to load local specification: " + e.getMessage() + "\"}");
+                }
+            } else {
+                exchange.sendResponseHeaders(405, -1);
+            }
+        }
+
+        private List<ApiEndpoint> loadEndpointsFromLocalFile(File specFile) {
+            try {
+                LocalOpenApiSpecLoader loader = new LocalOpenApiSpecLoader(specFile);
+                return loader.extractEndpoints();
+            } catch (Exception e) {
+                System.err.println("❌ Error loading local OpenAPI spec: " + e.getMessage());
+                return new ArrayList<>();
+            }
+        }
+    }
+
+    // ДОБАВЛЕНО: Обработчик для загрузки графа из загруженного файла
+    class ApiGraphUploadHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("POST".equals(exchange.getRequestMethod())) {
+                try {
+                    // Проверяем Content-Type для multipart/form-data
+                    String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+                    if (contentType == null || !contentType.startsWith("multipart/form-data")) {
+                        sendResponse(exchange, 400, "{\"error\": \"Content-Type must be multipart/form-data\"}");
+                        return;
+                    }
+
+                    // Парсим multipart запрос
+                    String boundary = contentType.substring(contentType.indexOf("boundary=") + 9);
+                    byte[] requestBody = exchange.getRequestBody().readAllBytes();
+
+                    // Ищем файл в multipart данных
+                    String fileContent = extractFileFromMultipart(requestBody, boundary);
+                    if (fileContent == null) {
+                        sendResponse(exchange, 400, "{\"error\": \"No file found in request\"}");
+                        return;
+                    }
+
+                    // Парсим спецификацию из содержимого файла
+                    List<ApiEndpoint> endpoints = loadEndpointsFromContent(fileContent);
+                    Map<String, Object> graphData = buildGraphData(endpoints, "uploaded-file");
+
+                    String response = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(graphData);
+
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                    exchange.sendResponseHeaders(200, response.getBytes().length);
+
+                    try (OutputStream os = exchange.getResponseBody()) {
+                        os.write(response.getBytes());
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    sendResponse(exchange, 500, "{\"error\": \"Failed to process uploaded file: " + e.getMessage() + "\"}");
+                }
+            } else {
+                exchange.sendResponseHeaders(405, -1);
+            }
+        }
+
+        private String extractFileFromMultipart(byte[] requestBody, String boundary) {
+            try {
+                String bodyStr = new String(requestBody, StandardCharsets.UTF_8);
+                String[] parts = bodyStr.split("--" + boundary);
+
+                for (String part : parts) {
+                    if (part.contains("filename=") && part.contains("specFile")) {
+                        // Находим начало содержимого файла
+                        int contentStart = part.indexOf("\r\n\r\n");
+                        if (contentStart != -1) {
+                            String content = part.substring(contentStart + 4).trim();
+                            // Удаляем завершающие границы
+                            if (content.endsWith("--")) {
+                                content = content.substring(0, content.length() - 2);
+                            }
+                            return content.trim();
+                        }
+                    }
+                }
+                return null;
+            } catch (Exception e) {
+                e.printStackTrace();
+                return null;
+            }
+        }
+
+        private List<ApiEndpoint> loadEndpointsFromContent(String content) {
+            try {
+                LocalOpenApiSpecLoader loader = new LocalOpenApiSpecLoader(content);
+                return loader.extractEndpoints();
+            } catch (Exception e) {
+                System.err.println("❌ Error parsing uploaded OpenAPI spec: " + e.getMessage());
+                return new ArrayList<>();
             }
         }
     }
@@ -213,111 +523,6 @@ public class WebServer {
                 return new ArrayList<>();
             }
         }
-
-        private Map<String, Object> buildGraphData(List<ApiEndpoint> endpoints, String specUrl) {
-            Map<String, Object> graph = new HashMap<>();
-
-            List<Map<String, Object>> nodes = new ArrayList<>();
-            List<Map<String, Object>> edges = new ArrayList<>();
-
-            // Группируем эндпоинты по тегам
-            Map<String, List<ApiEndpoint>> endpointsByTag = new HashMap<>();
-            for (ApiEndpoint endpoint : endpoints) {
-                List<String> tags = endpoint.getTags();
-                if (tags == null || tags.isEmpty()) {
-                    tags = java.util.List.of("default");
-                }
-
-                for (String tag : tags) {
-                    endpointsByTag.computeIfAbsent(tag, k -> new ArrayList<>()).add(endpoint);
-                }
-            }
-
-            // Создаем узлы для каждого эндпоинта
-            int nodeId = 1;
-            Map<String, Integer> nodeIdMap = new HashMap<>();
-
-            for (ApiEndpoint endpoint : endpoints) {
-                String nodeKey = endpoint.getMethod() + ":" + endpoint.getPath();
-                Map<String, Object> node = new HashMap<>();
-                node.put("id", nodeId);
-                node.put("label", endpoint.getMethod() + "\\n" + endpoint.getPath());
-                node.put("title", endpoint.getSummary() != null ? endpoint.getSummary() : endpoint.getPath());
-                node.put("method", endpoint.getMethod());
-                node.put("path", endpoint.getPath());
-                node.put("summary", endpoint.getSummary());
-                node.put("description", endpoint.getDescription());
-
-                // Определяем группу на основе тегов
-                String group = "default";
-                if (endpoint.getTags() != null && !endpoint.getTags().isEmpty()) {
-                    group = endpoint.getTags().get(0);
-                }
-                node.put("group", group);
-
-                // Цвет в зависимости от метода HTTP
-                String color = getColorForMethod(endpoint.getMethod());
-                node.put("color", color);
-
-                nodes.add(node);
-                nodeIdMap.put(nodeKey, nodeId);
-                nodeId++;
-            }
-
-            // Создаем связи между эндпоинтами с общими тегами
-            for (Map.Entry<String, List<ApiEndpoint>> entry : endpointsByTag.entrySet()) {
-                List<ApiEndpoint> tagEndpoints = entry.getValue();
-
-                // Связываем эндпоинты в пределах одной группы
-                for (int i = 0; i < tagEndpoints.size(); i++) {
-                    for (int j = i + 1; j < tagEndpoints.size(); j++) {
-                        ApiEndpoint e1 = tagEndpoints.get(i);
-                        ApiEndpoint e2 = tagEndpoints.get(j);
-
-                        String key1 = e1.getMethod() + ":" + e1.getPath();
-                        String key2 = e2.getMethod() + ":" + e2.getPath();
-
-                        Integer fromId = nodeIdMap.get(key1);
-                        Integer toId = nodeIdMap.get(key2);
-
-                        if (fromId != null && toId != null) {
-                            Map<String, Object> edge = new HashMap<>();
-                            edge.put("from", fromId);
-                            edge.put("to", toId);
-                            edge.put("value", 1);
-                            edges.add(edge);
-                        }
-                    }
-                }
-            }
-
-            graph.put("nodes", nodes);
-            graph.put("edges", edges);
-            graph.put("specUrl", specUrl);
-            graph.put("totalEndpoints", endpoints.size());
-            graph.put("totalTags", endpointsByTag.size());
-
-            return graph;
-        }
-
-        private String getColorForMethod(String method) {
-            switch (method.toUpperCase()) {
-                case "GET": return "#61affe";
-                case "POST": return "#49cc90";
-                case "PUT": return "#fca130";
-                case "DELETE": return "#f93e3e";
-                case "PATCH": return "#50e3c2";
-                default: return "#9012fe";
-            }
-        }
-
-        private void sendResponse(HttpExchange exchange, int statusCode, String response) throws IOException {
-            exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(statusCode, response.getBytes().length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(response.getBytes());
-            }
-        }
     }
 
     // НОВЫЙ ОБРАБОТЧИК ДЛЯ ТЕСТИРОВАНИЯ API
@@ -327,10 +532,12 @@ public class WebServer {
             if ("POST".equals(exchange.getRequestMethod())) {
                 try {
                     String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                    @SuppressWarnings("unchecked")
                     Map<String, Object> testRequest = new com.fasterxml.jackson.databind.ObjectMapper().readValue(requestBody, Map.class);
 
                     String method = (String) testRequest.get("method");
                     String url = (String) testRequest.get("url");
+                    @SuppressWarnings("unchecked")
                     Map<String, String> headers = (Map<String, String>) testRequest.get("headers");
                     String body = (String) testRequest.get("body");
 
@@ -358,14 +565,6 @@ public class WebServer {
                 }
             } else {
                 exchange.sendResponseHeaders(405, -1);
-            }
-        }
-
-        private void sendResponse(HttpExchange exchange, int statusCode, String response) throws IOException {
-            exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(statusCode, response.getBytes().length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(response.getBytes());
             }
         }
     }
@@ -455,6 +654,7 @@ public class WebServer {
                         }
 
                         // Статистика
+                        @SuppressWarnings("unchecked")
                         Map<String, Object> stats = databaseManager.getStats();
                         Paragraph statsTitle = new Paragraph("Статистика:", headerFont);
                         statsTitle.setSpacingAfter(5);
@@ -861,6 +1061,7 @@ public class WebServer {
                 }
 
                 if (sessionId1 != null && sessionId2 != null) {
+                    @SuppressWarnings("unchecked")
                     Map<String, Object> comparison = databaseManager.compareSessions(sessionId1, sessionId2);
                     String response = convertComparisonToJson(comparison);
 
@@ -976,6 +1177,7 @@ public class WebServer {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if ("GET".equals(exchange.getRequestMethod())) {
+                @SuppressWarnings("unchecked")
                 List<Map<String, Object>> sessions = databaseManager.getAllSessions();
                 String response = convertSessionsToJson(sessions);
 
@@ -1015,6 +1217,7 @@ public class WebServer {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if ("GET".equals(exchange.getRequestMethod())) {
+                @SuppressWarnings("unchecked")
                 Map<String, Object> stats = databaseManager.getStats();
                 String response = convertStatsToJson(stats);
 

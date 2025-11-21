@@ -9,26 +9,26 @@
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
 </head>
 <body>
-    <div class="app-container">
+<div class="app-container">
 
-        <div class="header-actions">
-            <h1 class="app-title">
-                <span class="logo">🛡️</span>
-                black Marker scanner
-            </h1>
-            <button id="startScanBtn" class="btn btn-primary">
-                Запустить сканирование
-            </button>
-            <button id="showComparison" class="btn btn-secondary">Сравнить сканирования</button>
+    <div class="header-actions">
+        <h1 class="app-title">
+            <span class="logo">🛡️</span>
+            black Marker scanner
+        </h1>
+        <button id="startScanBtn" class="btn btn-primary">
+            Запустить сканирование
+        </button>
+        <button id="showComparison" class="btn btn-secondary">Сравнить сканирования</button>
 
-            <button id="showApiGraph" class="btn btn-secondary">Граф API</button>
-            <div class="connection-status">
-                <span id="connectionStatus" class="status-offline">Офлайн</span>
-            </div>
+        <button id="showApiGraph" class="btn btn-secondary">Граф API</button>
+        <div class="connection-status">
+            <span id="connectionStatus" class="status-offline">Офлайн</span>
         </div>
+    </div>
 
 
-        <section class="config-section" id="configSection">
+    <section class="config-section" id="configSection">
         <div class="config-panel">
             <h3>Настройки сканирования</h3>
 
@@ -306,6 +306,22 @@
                            placeholder="URL к OpenAPI спецификации">
                 </div>
                 <button id="loadGraph" class="btn btn-primary">Загрузить граф</button>
+
+                <!-- НОВЫЙ БЛОК ДЛЯ ЗАГРУЗКИ ФАЙЛОВ -->
+                <div class="input-group">
+                    <label>Или загрузите файл спецификации:</label>
+                    <input type="file" id="specFileInput" accept=".json,.yaml,.yml" class="config-input">
+                </div>
+                <button id="loadGraphFromFile" class="btn btn-secondary">Загрузить из файла</button>
+
+                <!-- ВЫБОР ЛОКАЛЬНЫХ СПЕЦИФИКАЦИЙ -->
+                <div class="input-group">
+                    <label>Или выберите локальную спецификацию:</label>
+                    <select id="localSpecSelect" class="config-input">
+                        <option value="">Выберите файл...</option>
+                    </select>
+                </div>
+                <button id="loadLocalSpec" class="btn btn-outline">Загрузить локальную</button>
             </div>
 
             <div id="graphContainer" style="margin-top: 20px;">
@@ -353,7 +369,7 @@
         <div class="loading-spinner"></div>
     </div></div>
 
-    <div id="vulnerabilityModal" class="modal">
+<div id="vulnerabilityModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
             <h2 id="modalTitle">Детали уязвимости</h2>

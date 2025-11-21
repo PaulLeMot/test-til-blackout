@@ -5,10 +5,14 @@ import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
 import core.HttpApiClient;
+import core.TestedEndpoint;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.Paths;
 import io.swagger.v3.oas.models.servers.Server;
+import io.swagger.v3.oas.models.Operation;
+import io.swagger.v3.oas.models.parameters.Parameter;
+import io.swagger.v3.oas.models.responses.ApiResponse;
 
 import java.util.*;
 import java.util.regex.Pattern;
@@ -30,7 +34,6 @@ public class API9_InventoryScanner implements SecurityScanner {
             "legacy", "old", "deprecated", "test", "stable"
     );
 
-    // Расширенный список подозрительных эндпоинтов
     private static final List<String> SUSPICIOUS_ENDPOINTS = Arrays.asList(
             "admin", "debug", "test", "api/admin", "api/debug", "api/test",
             "management", "console", "api/console", "_admin", "_debug", "_test",
@@ -66,10 +69,40 @@ public class API9_InventoryScanner implements SecurityScanner {
     @Override
     public List<Vulnerability> scan(Object openApiObj, ScanConfig config, ApiClient apiClient) {
         System.out.println("(API-9) Запуск расширенного сканирования управления инвентаризацией...");
-        System.out.println("(API-9) Целевой URL: " + config.getTargetBaseUrl());
+
+        // Проверка базового URL
+        if (config.getTargetBaseUrl() == null || config.getTargetBaseUrl().trim().isEmpty()) {
+            System.err.println("(API-9) ОШИБКА: targetBaseUrl не установлен в конфигурации");
+            vulnerabilities.add(createConfigErrorVulnerability("Отсутствует targetBaseUrl в конфигурации"));
+            return vulnerabilities;
+        }
+
+        String baseUrl = normalizeBaseUrl(config.getTargetBaseUrl().trim());
+
+        // Проверка схемы URL
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            System.err.println("(API-9) ОШИБКА: targetBaseUrl должен начинаться с http:// или https://");
+            vulnerabilities.add(createConfigErrorVulnerability("Некорректный targetBaseUrl: отсутствует схема (http/https)"));
+            return vulnerabilities;
+        }
+
+        System.out.println("(API-9) Целевой URL: " + baseUrl);
 
         vulnerabilities.clear();
-        String baseUrl = normalizeBaseUrl(config.getTargetBaseUrl().trim());
+
+        // Проверка OpenAPI объекта
+        if (openApiObj == null) {
+            System.err.println("(API-9) ПРЕДУПРЕЖДЕНИЕ: OpenAPI объект не предоставлен, выполняется только динамический анализ");
+            performDynamicAnalysisWithoutOpenAPI(baseUrl, apiClient, config);
+            return vulnerabilities;
+        }
+
+        if (!(openApiObj instanceof OpenAPI)) {
+            System.err.println("(API-9) ОШИБКА: Передан неправильный объект OpenAPI");
+            vulnerabilities.add(createConfigErrorVulnerability("Некорректный объект OpenAPI"));
+            return vulnerabilities;
+        }
+
         OpenAPI openAPI = (OpenAPI) openApiObj;
 
         // Сброс счетчиков
@@ -78,31 +111,21 @@ public class API9_InventoryScanner implements SecurityScanner {
         testedUrls.clear();
 
         try {
-            // Анализ OpenAPI спецификации на проблемы инвентаризации
-            analyzeOpenApiSpecification(openAPI, baseUrl);
+            // Статический анализ OpenAPI спецификации
+            if (config.isStaticAnalysisEnabled()) {
+                System.out.println("(API-9) Выполнение статического анализа...");
+                performStaticAnalysis(openAPI, baseUrl);
+            }
 
-            // 1. Проверка подозрительных endpoints
-            System.out.println("(API-9) 5.9.1: Сканирование подозрительных конечных точек...");
-            scanSuspiciousEndpoints(baseUrl, apiClient);
-
-            // 2. Проверка мониторинговых endpoints
-            System.out.println("(API-9) 5.9.4: Сканирование мониторинговых конечных точек...");
-            scanMonitoringEndpoints(baseUrl, apiClient);
-
-            // 3. Поиск устаревших версий API
-            System.out.println("(API-9) 5.9.6: Поиск устаревших версий API...");
-            scanApiVersions(baseUrl, apiClient);
-
-            // 4. Проверка среды выполнения (production vs non-production)
-            System.out.println("(API-9) Проверка среды выполнения...");
-            analyzeEnvironmentIndicators(baseUrl, openAPI);
-
-            // 5. Проверка документационных слепых зон
-            System.out.println("(API-9) Проверка документационных слепых зон...");
-            analyzeDocumentationBlindSpots(openAPI, baseUrl);
+            // Динамический анализ
+            if (config.isDynamicAnalysisEnabled()) {
+                System.out.println("(API-9) Выполнение динамического анализа...");
+                performDynamicAnalysis(openAPI, baseUrl, apiClient);
+            }
 
         } catch (Exception e) {
             System.err.println("(API-9) Ошибка при сканировании инвентаризации: " + e.getMessage());
+            vulnerabilities.add(createErrorVulnerability("Ошибка сканирования", e.getMessage()));
             if (isDebugMode()) {
                 e.printStackTrace();
             }
@@ -116,15 +139,366 @@ public class API9_InventoryScanner implements SecurityScanner {
         return vulnerabilities;
     }
 
-    private void analyzeOpenApiSpecification(OpenAPI openAPI, String baseUrl) {
-        // Проверка наличия версии в путях
+    @Override
+    public List<Vulnerability> scanEndpoints(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-9) Запуск сканирования инвентаризации на основе протестированных эндпоинтов...");
+
+        vulnerabilities.clear();
+
+        // Проверка базового URL
+        if (config.getTargetBaseUrl() == null || config.getTargetBaseUrl().trim().isEmpty()) {
+            System.err.println("(API-9) ОШИБКА: targetBaseUrl не установлен в конфигурации");
+            vulnerabilities.add(createConfigErrorVulnerability("Отсутствует targetBaseUrl в конфигурации"));
+            return vulnerabilities;
+        }
+
+        String baseUrl = normalizeBaseUrl(config.getTargetBaseUrl().trim());
+
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            System.err.println("(API-9) ОШИБКА: targetBaseUrl должен начинаться с http:// или https://");
+            vulnerabilities.add(createConfigErrorVulnerability("Некорректный targetBaseUrl: отсутствует схема (http/https)"));
+            return vulnerabilities;
+        }
+
+        if (config.isStaticAnalysisEnabled()) {
+            performStaticEndpointAnalysis(endpoints, config);
+        }
+
+        if (config.isDynamicAnalysisEnabled()) {
+            performDynamicEndpointAnalysis(endpoints, config, apiClient);
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Динамический анализ без OpenAPI спецификации
+     */
+    private void performDynamicAnalysisWithoutOpenAPI(String baseUrl, ApiClient apiClient, ScanConfig config) {
+        System.out.println("(API-9) Выполнение динамического анализа без OpenAPI спецификации...");
+
+        // Проверка подозрительных endpoints
+        scanSuspiciousEndpoints(baseUrl, apiClient);
+
+        // Проверка мониторинговых endpoints
+        scanMonitoringEndpoints(baseUrl, apiClient);
+
+        // Поиск устаревших версий API
+        scanApiVersions(baseUrl, apiClient);
+
+        // Анализ среды выполнения
+        analyzeEnvironmentIndicatorsWithoutOpenAPI(baseUrl);
+    }
+
+    private void analyzeEnvironmentIndicatorsWithoutOpenAPI(String baseUrl) {
+        String lowerBaseUrl = baseUrl.toLowerCase();
+
+        boolean hasProductionIndicators = PRODUCTION_HOST_INDICATORS.stream()
+                .anyMatch(lowerBaseUrl::contains);
+
+        boolean hasNonProductionIndicators = NON_PRODUCTION_HOST_INDICATORS.stream()
+                .anyMatch(lowerBaseUrl::contains);
+
+        if (hasNonProductionIndicators && !hasProductionIndicators) {
+            String evidence = "Базовый URL содержит не-production индикаторы: " + baseUrl +
+                    "\nОбнаруженные индикаторы: " +
+                    String.join(", ", findMatchingIndicators(lowerBaseUrl, NON_PRODUCTION_HOST_INDICATORS));
+
+            Vulnerability vuln = createInventoryVulnerability(
+                    "Потенциальная не-production среда выполнения",
+                    "ВЫСОКИЙ УРОВЕНЬ: Базовый URL указывает на не-production среду!\n\n" +
+                            "Риски:\n" +
+                            "• Использование тестовых данных в production\n" +
+                            "• Отсутствие production-grade security controls\n" +
+                            "• Потенциальное раскрытие тестовой информации\n\n" +
+                            "Рекомендации:\n" +
+                            "• Подтвердить среду выполнения\n" +
+                            "• Использовать production домены для production API\n" +
+                            "• Разделить инфраструктуру сред",
+                    baseUrl,
+                    200,
+                    evidence,
+                    Vulnerability.Severity.HIGH
+            );
+            vulnerabilities.add(vuln);
+            foundEndpoints++;
+        }
+    }
+
+    /**
+     * Статический анализ на основе OpenAPI спецификации
+     */
+    private void performStaticAnalysis(OpenAPI openAPI, String baseUrl) {
+        // 1. Анализ версионирования API
         checkApiVersioning(openAPI, baseUrl);
 
-        // Проверка серверов и окружения
+        // 2. Анализ серверов и окружения
         checkServersAndEnvironment(openAPI, baseUrl);
 
-        // Проверка документации на наличие тестовых ссылок
+        // 3. Проверка документации на наличие тестовых ссылок
         checkDocumentationForTestReferences(openAPI);
+
+        // 4. Анализ среды выполнения (production vs non-production)
+        analyzeEnvironmentIndicators(baseUrl, openAPI);
+
+        // 5. Проверка документационных слепых зон
+        analyzeDocumentationBlindSpots(openAPI, baseUrl);
+
+        // 6. Статический анализ подозрительных эндпоинтов в спецификации
+        analyzeSuspiciousEndpointsInSpec(openAPI, baseUrl);
+    }
+
+    /**
+     * Динамический анализ с выполнением запросов
+     */
+    private void performDynamicAnalysis(OpenAPI openAPI, String baseUrl, ApiClient apiClient) {
+        // 1. Проверка подозрительных endpoints
+        System.out.println("(API-9) 5.9.1: Сканирование подозрительных конечных точек...");
+        scanSuspiciousEndpoints(baseUrl, apiClient);
+
+        // 2. Проверка мониторинговых endpoints
+        System.out.println("(API-9) 5.9.4: Сканирование мониторинговых конечных точек...");
+        scanMonitoringEndpoints(baseUrl, apiClient);
+
+        // 3. Поиск устаревших версий API
+        System.out.println("(API-9) 5.9.6: Поиск устаревших версий API...");
+        scanApiVersions(baseUrl, apiClient);
+    }
+
+    /**
+     * Статический анализ на основе протестированных эндпоинтов
+     */
+    private void performStaticEndpointAnalysis(List<TestedEndpoint> endpoints, ScanConfig config) {
+        System.out.println("(API-9) Статический анализ " + endpoints.size() + " эндпоинтов...");
+
+        // Анализ структуры эндпоинтов
+        analyzeEndpointStructure(endpoints);
+
+        // Проверка версионирования в путях
+        checkVersioningInEndpoints(endpoints);
+
+        // Анализ метаданных эндпоинтов
+        analyzeEndpointMetadata(endpoints);
+    }
+
+    /**
+     * Динамический анализ на основе протестированных эндпоинтов
+     */
+    private void performDynamicEndpointAnalysis(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-9) Динамический анализ " + endpoints.size() + " эндпоинтов...");
+
+        String baseUrl = config.getTargetBaseUrl();
+
+        // Дополнительное сканирование подозрительных путей
+        for (TestedEndpoint endpoint : endpoints) {
+            if (isSuspiciousEndpoint(endpoint.getPath())) {
+                testSuspiciousEndpoint(endpoint, baseUrl, apiClient);
+            }
+        }
+
+        // Сканирование соседних версий API
+        scanAdjacentApiVersions(endpoints, baseUrl, apiClient);
+    }
+
+    // Остальные методы остаются без изменений...
+    private void analyzeEndpointStructure(List<TestedEndpoint> endpoints) {
+        Map<String, Integer> methodCount = new HashMap<>();
+        Set<String> uniquePaths = new HashSet<>();
+
+        for (TestedEndpoint endpoint : endpoints) {
+            methodCount.merge(endpoint.getMethod(), 1, Integer::sum);
+            uniquePaths.add(endpoint.getPath());
+        }
+
+        // Проверка разнообразия методов
+        if (methodCount.size() < 3) {
+            Vulnerability vuln = createInventoryVulnerability(
+                    "Ограниченное разнообразие HTTP методов",
+                    "Статический анализ обнаружил ограниченное использование HTTP методов в API.\n\n" +
+                            "Обнаруженные методы: " + methodCount.keySet() + "\n" +
+                            "Риски:\n" +
+                            "• Возможное отсутствие CRUD операций\n" +
+                            "• Потенциальные проблемы с дизайном API\n" +
+                            "• Ограниченная функциональность",
+                    "Все эндпоинты",
+                    200,
+                    "Методы: " + methodCount,
+                    Vulnerability.Severity.LOW
+            );
+            vulnerabilities.add(vuln);
+        }
+    }
+
+    private void checkVersioningInEndpoints(List<TestedEndpoint> endpoints) {
+        boolean hasVersioning = endpoints.stream()
+                .anyMatch(e -> e.getPath().matches(".*/v\\d+/.*"));
+
+        if (!hasVersioning) {
+            Vulnerability vuln = createInventoryVulnerability(
+                    "Отсутствие версионирования в путях эндпоинтов",
+                    "Статический анализ: API не использует явное версионирование в URL путях.\n\n" +
+                            "Проанализировано эндпоинтов: " + endpoints.size() + "\n" +
+                            "Риски OWASP API9:\n" +
+                            "• Невозможность управления жизненным циклом версий\n" +
+                            "• Сложность инвентаризации активных версий\n" +
+                            "• Потенциальное наличие скрытых устаревших версий",
+                    "Все эндпоинты",
+                    200,
+                    "Пути: " + endpoints.stream().map(TestedEndpoint::getPath).limit(10).toList(),
+                    Vulnerability.Severity.MEDIUM
+            );
+            vulnerabilities.add(vuln);
+        }
+    }
+
+    private void analyzeEndpointMetadata(List<TestedEndpoint> endpoints) {
+        long endpointsWithoutDescription = endpoints.stream()
+                .filter(e -> e.getDescription() == null || e.getDescription().trim().isEmpty())
+                .count();
+
+        if (endpointsWithoutDescription > endpoints.size() * 0.3) {
+            Vulnerability vuln = createInventoryVulnerability(
+                    "Недостаточная документация эндпоинтов",
+                    "Статический анализ: Более 30% эндпоинтов не имеют описания.\n\n" +
+                            "Эндпоинты без описания: " + endpointsWithoutDescription + "/" + endpoints.size() + "\n" +
+                            "Риски:\n" +
+                            "• Сложность понимания назначения эндпоинтов\n" +
+                            "• Проблемы с инвентаризацией функциональности\n" +
+                            "• Усложнение процесса тестирования безопасности",
+                    "Метаданные эндпоинтов",
+                    200,
+                    endpointsWithoutDescription + " эндпоинтов без описания",
+                    Vulnerability.Severity.LOW
+            );
+            vulnerabilities.add(vuln);
+        }
+    }
+
+    private boolean isSuspiciousEndpoint(String path) {
+        if (path == null) return false;
+        String lowerPath = path.toLowerCase();
+        return SUSPICIOUS_ENDPOINTS.stream().anyMatch(lowerPath::contains) ||
+                MONITORING_PATHS.stream().anyMatch(lowerPath::contains);
+    }
+
+    private void testSuspiciousEndpoint(TestedEndpoint endpoint, String baseUrl, ApiClient apiClient) {
+        String fullUrl = baseUrl + endpoint.getPath();
+        if (testedUrls.contains(fullUrl)) {
+            return;
+        }
+
+        HttpApiClient.ApiResponse response = makeRequest(apiClient, fullUrl, "SUSPICIOUS_ENDPOINT_DYNAMIC");
+        if (response == null) return;
+
+        testedUrls.add(fullUrl);
+
+        if (isSuccessStatus(response.getStatusCode())) {
+            String evidence = buildEvidence("Подозрительная конечная точка (динамический)", fullUrl, response);
+
+            Vulnerability vuln = createInventoryVulnerability(
+                    "Обнаружена подозрительная конечная точка: " + endpoint.getPath(),
+                    "ДИНАМИЧЕСКИЙ АНАЛИЗ: Обнаружена потенциально опасная конечная точка!\n\n" +
+                            "Тип: " + classifySuspiciousEndpoint(endpoint.getPath()) + "\n" +
+                            "Статус: HTTP " + response.getStatusCode() + "\n" +
+                            "Риск: " + assessSuspiciousEndpointRisk(endpoint.getPath(), response) + "\n\n" +
+                            "Рекомендации:\n" +
+                            "• Проверить необходимость endpoint в production\n" +
+                            "• Ограничить доступ к административным интерфейсам\n" +
+                            "• Удалить неиспользуемые debug endpoints",
+                    endpoint.getPath(),
+                    response.getStatusCode(),
+                    evidence,
+                    Vulnerability.Severity.HIGH
+            );
+
+            vulnerabilities.add(vuln);
+            foundEndpoints++;
+        }
+    }
+
+    private void scanAdjacentApiVersions(List<TestedEndpoint> endpoints, String baseUrl, ApiClient apiClient) {
+        // Извлекаем версии из существующих эндпоинтов
+        Set<String> detectedVersions = new HashSet<>();
+        Pattern versionPattern = Pattern.compile("/v(\\d+)/");
+
+        for (TestedEndpoint endpoint : endpoints) {
+            Matcher matcher = versionPattern.matcher(endpoint.getPath());
+            if (matcher.find()) {
+                detectedVersions.add(matcher.group(1));
+            }
+        }
+
+        // Проверяем соседние версии
+        for (String version : detectedVersions) {
+            int verNum = Integer.parseInt(version);
+            checkApiVersion(baseUrl, "v" + (verNum - 1), apiClient); // предыдущая версия
+            checkApiVersion(baseUrl, "v" + (verNum + 1), apiClient); // следующая версия
+        }
+    }
+
+    private void checkApiVersion(String baseUrl, String version, ApiClient apiClient) {
+        String versionUrl = baseUrl + version;
+        if (testedUrls.contains(versionUrl)) {
+            return;
+        }
+
+        HttpApiClient.ApiResponse response = makeRequest(apiClient, versionUrl, "ADJACENT_VERSION");
+        if (response == null) return;
+
+        testedUrls.add(versionUrl);
+
+        if (isSuccessStatus(response.getStatusCode())) {
+            String evidence = buildEvidence("Соседняя версия API", versionUrl, response);
+
+            Vulnerability vuln = createInventoryVulnerability(
+                    "Обнаружена соседняя версия API: " + version,
+                    "ДИНАМИЧЕСКИЙ АНАЛИЗ: Обнаружена дополнительная версия API!\n\n" +
+                            "Версия: " + version + "\n" +
+                            "Статус: HTTP " + response.getStatusCode() + "\n" +
+                            "Риск: Расширение attack surface, потенциально устаревшие версии\n\n" +
+                            "Рекомендации:\n" +
+                            "• Вести инвентаризацию всех активных версий\n" +
+                            "• Разработать политику deprecated\n" +
+                            "• Обеспечить безопасность всех версий",
+                    "/" + version,
+                    response.getStatusCode(),
+                    evidence,
+                    Vulnerability.Severity.MEDIUM
+            );
+
+            vulnerabilities.add(vuln);
+            foundEndpoints++;
+        }
+    }
+
+    private void analyzeSuspiciousEndpointsInSpec(OpenAPI openAPI, String baseUrl) {
+        if (openAPI.getPaths() == null) return;
+
+        int suspiciousCount = 0;
+        for (String path : openAPI.getPaths().keySet()) {
+            if (isSuspiciousEndpoint(path)) {
+                suspiciousCount++;
+
+                Vulnerability vuln = createInventoryVulnerability(
+                        "Подозрительный эндпоинт в спецификации: " + path,
+                        "СТАТИЧЕСКИЙ АНАЛИЗ: В OpenAPI спецификации обнаружен подозрительный эндпоинт.\n\n" +
+                                "Тип: " + classifySuspiciousEndpoint(path) + "\n" +
+                                "Риск: " + assessStaticSuspiciousEndpointRisk(path) + "\n\n" +
+                                "Рекомендации:\n" +
+                                "• Проверить необходимость endpoint в production\n" +
+                                "• Ограничить доступ к административным интерфейсам\n" +
+                                "• Удалить неиспользуемые debug endpoints из документации",
+                        path,
+                        200,
+                        "Статический анализ OpenAPI спецификации",
+                        Vulnerability.Severity.MEDIUM
+                );
+                vulnerabilities.add(vuln);
+            }
+        }
+
+        System.out.println("(API-9) Подозрительных эндпоинтов в спецификации: " + suspiciousCount);
+        foundEndpoints += suspiciousCount;
     }
 
     private void checkApiVersioning(OpenAPI openAPI, String baseUrl) {
@@ -226,7 +600,7 @@ public class API9_InventoryScanner implements SecurityScanner {
                                 "Риски:\n" +
                                 "• Путаница между production и test средами\n" +
                                 "• Возможное использование тестовых credentials\n" +
-                                "• Непрофессиональное представление API\n\n" +
+                                "• Непрофессиональное представение API\n\n" +
                                 "Рекомендации:\n" +
                                 "• Удалить все тестовые ссылки из production документации\n" +
                                 "• Создать отдельную документацию для тестовых сред\n" +
@@ -252,9 +626,11 @@ public class API9_InventoryScanner implements SecurityScanner {
             }
 
             HttpApiClient.ApiResponse response = makeRequest(apiClient, fullUrl, "SUSPICIOUS_ENDPOINT");
+            if (response == null) continue;
+
             testedUrls.add(fullUrl);
 
-            if (response != null && isSuccessStatus(response.getStatusCode())) {
+            if (isSuccessStatus(response.getStatusCode())) {
                 discovered++;
                 String evidence = buildEvidence("Подозрительная конечная точка", fullUrl, response);
 
@@ -293,9 +669,11 @@ public class API9_InventoryScanner implements SecurityScanner {
             }
 
             HttpApiClient.ApiResponse response = makeRequest(apiClient, fullUrl, "MONITORING");
+            if (response == null) continue;
+
             testedUrls.add(fullUrl);
 
-            if (response != null && isSuccessStatus(response.getStatusCode())) {
+            if (isSuccessStatus(response.getStatusCode())) {
                 discovered++;
                 String evidence = buildEvidence("Мониторинговая конечная точка", fullUrl, response);
 
@@ -334,9 +712,11 @@ public class API9_InventoryScanner implements SecurityScanner {
             }
 
             HttpApiClient.ApiResponse response = makeRequest(apiClient, versionUrl, "API_VERSION");
+            if (response == null) continue;
+
             testedUrls.add(versionUrl);
 
-            if (response != null && isSuccessStatus(response.getStatusCode())) {
+            if (isSuccessStatus(response.getStatusCode())) {
                 discovered++;
                 String evidence = buildEvidence("Версия API", versionUrl, response);
 
@@ -445,7 +825,7 @@ public class API9_InventoryScanner implements SecurityScanner {
         }
     }
 
-    // Вспомогательные методы остаются аналогичными предыдущей версии
+    // Вспомогательные методы
     private boolean isSuccessStatus(int statusCode) {
         return statusCode >= 200 && statusCode < 400 && statusCode != 204;
     }
@@ -480,6 +860,16 @@ public class API9_InventoryScanner implements SecurityScanner {
         return "НИЗКИЙ - Общая конечная точка";
     }
 
+    private String assessStaticSuspiciousEndpointRisk(String endpoint) {
+        if (endpoint.contains("admin") || endpoint.contains("debug") || endpoint.contains("secret")) {
+            return "ВЫСОКИЙ - Административный/Debug доступ";
+        }
+        if (endpoint.contains("config") || endpoint.contains("log") || endpoint.contains("system")) {
+            return "СРЕДНИЙ - Доступ к системной информации";
+        }
+        return "НИЗКИЙ - Общая конечная точка";
+    }
+
     private String identifySensitiveData(HttpApiClient.ApiResponse response) {
         String body = response.getBody() != null ? response.getBody().toLowerCase() : "";
         List<String> foundData = new ArrayList<>();
@@ -505,6 +895,17 @@ public class API9_InventoryScanner implements SecurityScanner {
         totalRequests++;
         try {
             Thread.sleep(100);
+
+            // Проверка URL на валидность
+            if (url == null || url.trim().isEmpty()) {
+                System.err.println("(API-9) Ошибка: пустой URL для запроса типа " + type);
+                return null;
+            }
+
+            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                System.err.println("(API-9) Ошибка: URL должен начинаться с http:// или https://: " + url);
+                return null;
+            }
 
             Map<String, String> headers = new HashMap<>();
             headers.put("Accept", "application/json");
@@ -557,6 +958,36 @@ public class API9_InventoryScanner implements SecurityScanner {
         recommendations.add("Разделяйте production и non-production среды");
         vuln.setRecommendations(recommendations);
 
+        return vuln;
+    }
+
+    private Vulnerability createConfigErrorVulnerability(String error) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("Ошибка конфигурации API9 сканера");
+        vuln.setDescription("Сканер не может выполнить проверку из-за ошибки в конфигурации: " + error);
+        vuln.setSeverity(Vulnerability.Severity.HIGH);
+        vuln.setCategory(Vulnerability.Category.OWASP_API9_INVENTORY);
+        vuln.setEvidence("Конфигурационная ошибка: " + error);
+        vuln.setRecommendations(Arrays.asList(
+                "Проверьте настройки targetBaseUrl в конфигурации",
+                "Убедитесь, что targetBaseUrl начинается с http:// или https://",
+                "Проверьте доступность OpenAPI спецификации"
+        ));
+        return vuln;
+    }
+
+    private Vulnerability createErrorVulnerability(String context, String error) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("Ошибка выполнения API9 сканера: " + context);
+        vuln.setDescription("Во время сканирования произошла ошибка: " + error);
+        vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+        vuln.setCategory(Vulnerability.Category.OWASP_API9_INVENTORY);
+        vuln.setEvidence("Ошибка выполнения: " + error);
+        vuln.setRecommendations(Arrays.asList(
+                "Проверьте корректность конфигурации",
+                "Убедитесь в доступности целевого API",
+                "Проверьте сетевые настройки"
+        ));
         return vuln;
     }
 

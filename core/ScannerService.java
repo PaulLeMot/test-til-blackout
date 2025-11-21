@@ -153,11 +153,9 @@ public class ScannerService {
         int totalVulnerabilities = 0;
         int totalScannedBanks = 0;
 
-        // ИЗМЕНЕНИЕ: В статическом режиме создаем фиктивный банк для унификации логики
         List<ScanConfig.BankConfig> banksToScan = config.getBanks();
         if (banksToScan.isEmpty() && config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY) {
-            // Создаем фиктивный банк для статического анализа
-            banksToScan = Arrays.asList(new ScanConfig.BankConfig("Static Analysis", "Local Specifications"));
+            banksToScan = Arrays.asList(new ScanConfig.BankConfig("static-analysis", "Local Specifications"));
             notifyMessage("info", "🔍 Статический анализ: использование локальных спецификаций");
         }
 
@@ -391,24 +389,27 @@ public class ScannerService {
     /**
      * Сканирует один банк параллельно всеми сканерами
      */
+
     private BankScanResult scanSingleBank(ScanConfig.BankConfig bankConfig, Map<String, String> tokens, boolean hasValidTokens) {
         String baseUrl = bankConfig.getBaseUrl();
         String specUrl = bankConfig.getSpecUrl();
 
-        // ИЗМЕНЕНИЕ: Для статического режима используем специальное название
-        String displayName = baseUrl.equals("Static Analysis") ? "Статический анализ" : baseUrl;
+        // ИСПРАВЛЕНИЕ: Для статического режима используем специальное название
+        boolean isStaticAnalysis = "static-analysis".equals(baseUrl) || "Static Analysis".equals(baseUrl);
+        String displayName = isStaticAnalysis ? "Статический анализ" : baseUrl;
 
         notifyMessage("info", "=".repeat(50));
         notifyMessage("info", "Сканирование: " + displayName);
         notifyMessage("info", "Доступно эндпоинтов: " + collectedEndpoints.size());
         notifyMessage("info", "=".repeat(50));
 
-        String cleanBaseUrl = baseUrl.trim();
+        String cleanBaseUrl = isStaticAnalysis ? "" : baseUrl.trim();
 
         try {
-            // Загружаем OpenAPI спецификацию (только для динамического режима)
+            // Загружаем OpenAPI спецификацию (только для динамического режима и если указан валидный URL)
             Object openApiSpec = null;
-            if (config.isDynamicAnalysisEnabled() && !specUrl.equals("Local Specifications")) {
+            if (config.isDynamicAnalysisEnabled() && !isStaticAnalysis && specUrl != null &&
+                    !specUrl.equals("Local Specifications") && !specUrl.isEmpty()) {
                 openApiSpec = loadOpenApiSpec(specUrl);
                 if (openApiSpec == null) {
                     notifyMessage("warning", "Не удалось загрузить OpenAPI спецификацию для " + cleanBaseUrl);
@@ -418,7 +419,7 @@ public class ScannerService {
             // Запускаем глубокий анализ схем (только если есть спецификация)
             List<Vulnerability> deepAnalysisVulnerabilities = new ArrayList<>();
             if (openApiSpec != null) {
-                deepAnalysisVulnerabilities = performDeepAnalysis(openApiSpec, cleanBaseUrl);
+                deepAnalysisVulnerabilities = performDeepAnalysis(openApiSpec, displayName);
             }
 
             // Создаем конфигурацию для конкретного банка
@@ -442,22 +443,30 @@ public class ScannerService {
 
             // Фильтруем сканеры в зависимости от доступности токенов и режима
             List<SecurityScanner> securityScanners = new ArrayList<>();
-            if (hasValidTokens && config.getAnalysisMode() != ScanConfig.AnalysisMode.STATIC_ONLY) {
-                // Если есть токены и не статический режим, запускаем все сканеры
+
+            // В статическом режиме запускаем все сканеры
+            if (config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY) {
                 securityScanners.addAll(allScanners);
-                notifyMessage("info", "Запуск всех 11 сканеров (токены доступны)");
-            } else {
-                // Если токенов нет или статический режим, запускаем только сканеры, не требующие аутентификации
+                notifyMessage("info", "Статический режим: запуск всех " + securityScanners.size() + " сканеров");
+            }
+            // В комбинированном режиме с токенами запускаем все сканеры
+            else if (hasValidTokens && config.getAnalysisMode() == ScanConfig.AnalysisMode.COMBINED) {
+                securityScanners.addAll(allScanners);
+                notifyMessage("info", "Комбинированный режим: запуск всех " + securityScanners.size() + " сканеров (токены доступны)");
+            }
+            // В динамическом режиме с токенами запускаем все сканеры
+            else if (hasValidTokens && config.getAnalysisMode() == ScanConfig.AnalysisMode.DYNAMIC_ONLY) {
+                securityScanners.addAll(allScanners);
+                notifyMessage("info", "Динамический режим: запуск всех " + securityScanners.size() + " сканеров (токены доступны)");
+            }
+            // Без токенов запускаем только сканеры, не требующие аутентификации
+            else {
                 for (SecurityScanner scanner : allScanners) {
-                    if (canScannerWorkWithoutAuth(scanner) || config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY) {
+                    if (canScannerWorkWithoutAuth(scanner)) {
                         securityScanners.add(scanner);
                     }
                 }
-                if (config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY) {
-                    notifyMessage("info", "Статический режим: запуск " + securityScanners.size() + " сканеров");
-                } else {
-                    notifyMessage("warning", "Запуск только сканеров, не требующих аутентификации: " + securityScanners.size() + " из " + allScanners.size());
-                }
+                notifyMessage("warning", "Запуск только сканеров, не требующих аутентификации: " + securityScanners.size() + " из " + allScanners.size());
             }
 
             // Запускаем сканеры с собранными эндпоинтами
@@ -534,6 +543,7 @@ public class ScannerService {
     /**
      * Выполняет один сканер с использованием собранных эндпоинтов
      */
+
     private List<Vulnerability> executeScannerWithEndpoints(SecurityScanner scanner, ScanConfig bankScanConfig,
                                                             String bankName, boolean hasValidTokens) {
         String scannerName = scanner.getName();
@@ -543,7 +553,8 @@ public class ScannerService {
         // Проверяем, требует ли сканер токены и доступны ли они
         boolean requiresAuth = requiresAuthentication(scanner);
 
-        if (requiresAuth && !hasValidTokens) {
+        // ИЗМЕНЕНИЕ: В статическом режиме игнорируем проверку аутентификации
+        if (requiresAuth && !hasValidTokens && config.getAnalysisMode() != ScanConfig.AnalysisMode.STATIC_ONLY) {
             notifyMessage("warning", "Сканер " + scannerName + " пропущен - требует аутентификации, но токены недоступны");
             return new ArrayList<>();
         }
@@ -552,7 +563,15 @@ public class ScannerService {
             // Используем новый метод scanEndpoints если доступен, иначе старый метод
             List<Vulnerability> scannerResults;
             if (collectedEndpoints != null && !collectedEndpoints.isEmpty()) {
-                scannerResults = scanner.scanEndpoints(collectedEndpoints, bankScanConfig, new HttpApiClient());
+                // Проверяем, реализует ли сканер метод scanEndpoints
+                try {
+                    scannerResults = scanner.scanEndpoints(collectedEndpoints, bankScanConfig, new HttpApiClient());
+                    System.out.println("✅ Сканер " + scannerName + " использует метод scanEndpoints");
+                } catch (AbstractMethodError | UnsupportedOperationException e) {
+                    // Если метод не реализован, используем старый метод scan
+                    System.out.println("⚠️ Сканер " + scannerName + " использует старый метод scan()");
+                    scannerResults = scanner.scan(null, bankScanConfig, new HttpApiClient());
+                }
             } else {
                 scannerResults = scanner.scan(null, bankScanConfig, new HttpApiClient());
             }
@@ -567,6 +586,7 @@ public class ScannerService {
 
         } catch (Exception e) {
             notifyMessage("error", "Ошибка в сканере " + scannerName + " для " + bankName + ": " + e.getMessage());
+            e.printStackTrace();
             return new ArrayList<>();
         }
     }
@@ -596,7 +616,12 @@ public class ScannerService {
     private boolean requiresAuthentication(SecurityScanner scanner) {
         String scannerName = scanner.getName();
 
-        // Сканеры, требующие аутентификации:
+        // В статическом режиме ни один сканер не требует аутентификации
+        if (config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY) {
+            return false;
+        }
+
+        // Сканеры, требующие аутентификации в динамическом режиме:
         return scannerName.contains("API1") || // BOLA
                 scannerName.contains("API2") || // Broken Auth
                 scannerName.contains("API3") || // BOPLA

@@ -5,6 +5,7 @@ import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
 import core.HttpApiClient;
+import core.TestedEndpoint;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.Operation;
@@ -63,51 +64,60 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         System.out.println("(API-10) Сканирование уязвимостей небезопасного потребления API (OWASP API Security Top 10:2023 - API10)...");
 
         List<Vulnerability> vulnerabilities = new ArrayList<>();
-        processedEndpoints.clear(); // Очищаем при каждом новом сканировании
+        processedEndpoints.clear();
+
+        // Проверка базового URL
+        if (config.getTargetBaseUrl() == null || config.getTargetBaseUrl().trim().isEmpty()) {
+            System.err.println("(API-10) ОШИБКА: targetBaseUrl не установлен в конфигурации");
+            vulnerabilities.add(createConfigErrorVulnerability("Отсутствует targetBaseUrl в конфигурации"));
+            return vulnerabilities;
+        }
+
+        String baseUrl = normalizeBaseUrl(config.getTargetBaseUrl().trim());
+
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            System.err.println("(API-10) ОШИБКА: targetBaseUrl должен начинаться с http:// или https://");
+            vulnerabilities.add(createConfigErrorVulnerability("Некорректный targetBaseUrl: отсутствует схема (http/https)"));
+            return vulnerabilities;
+        }
+
+        // Проверка OpenAPI объекта
+        if (openApiObj == null) {
+            System.err.println("(API-10) ПРЕДУПРЕЖДЕНИЕ: OpenAPI объект не предоставлен, выполняется только динамический анализ");
+            performDynamicAnalysisWithoutOpenAPI(baseUrl, apiClient, config, vulnerabilities);
+            return vulnerabilities;
+        }
 
         if (!(openApiObj instanceof OpenAPI)) {
-            System.err.println("(API-10) Ошибка: передан неправильный объект OpenAPI");
+            System.err.println("(API-10) ОШИБКА: передан неправильный объект OpenAPI");
+            vulnerabilities.add(createConfigErrorVulnerability("Некорректный объект OpenAPI"));
             return vulnerabilities;
         }
 
         OpenAPI openAPI = (OpenAPI) openApiObj;
 
         try {
-            // 5.10.1: Углубленный анализ зависимостей от сторонних API
-            checkExternalDependencies(openAPI, vulnerabilities, config);
+            // Статический анализ
+            if (config.isStaticAnalysisEnabled()) {
+                System.out.println("(API-10) Выполнение статического анализа...");
+                performStaticAnalysis(openAPI, vulnerabilities, config);
+            }
 
-            // 5.10.2: Тестирование обработки некорректных данных от внешних API
-            testMaliciousExternalData(openAPI, vulnerabilities, config, apiClient);
+            // Динамический анализ
+            if (config.isDynamicAnalysisEnabled()) {
+                System.out.println("(API-10) Выполнение динамического анализа...");
+                performDynamicAnalysis(openAPI, vulnerabilities, config, apiClient);
+            }
 
-            // 5.10.3: Проверка валидации данных из доверенных источников
-            testTrustedSourceValidation(openAPI, vulnerabilities, config, apiClient);
-
-            // 5.10.4: Анализ обработки ошибок внешних сервисов
-            testExternalServiceErrorHandling(openAPI, vulnerabilities, config, apiClient);
-
-            // 5.10.5: Тестирование уязвимостей цепочки доверия
-            testTrustChainVulnerabilities(openAPI, vulnerabilities, config, apiClient);
-
-            // 5.10.6: Проверка безопасности интеграций с облачными сервисами
-            checkCloudServiceIntegrations(openAPI, vulnerabilities, config, apiClient);
-
-            // 5.10.7: Анализ межбанковских интеграций
-            checkInterbankIntegrations(openAPI, vulnerabilities, config);
-
-            // 5.10.8: Проверка JWKS и внешних ключей
-            checkJwksDependencies(openAPI, vulnerabilities, config, apiClient);
-
-            // 5.10.9: Анализ согласий и разрешений
-            checkConsentPermissions(openAPI, vulnerabilities, config);
-
-            // 5.10.10: Дедупликация уязвимостей
+            // Дедупликация уязвимостей
             deduplicateVulnerabilities(vulnerabilities);
 
-            // 5.10.11: Генерация отчета с проблемами потребления сторонних API
+            // Генерация отчета с проблемами потребления сторонних API
             generateConsumptionReport(vulnerabilities);
 
         } catch (Exception e) {
             System.err.println("(API-10) Ошибка при выполнении API10 сканера: " + e.getMessage());
+            vulnerabilities.add(createErrorVulnerability("Ошибка выполнения сканера", e.getMessage()));
             e.printStackTrace();
         }
 
@@ -115,9 +125,471 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         return vulnerabilities;
     }
 
+    @Override
+    public List<Vulnerability> scanEndpoints(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-10) Запуск сканирования небезопасного потребления на основе протестированных эндпоинтов...");
+
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+        processedEndpoints.clear();
+
+        // Проверка базового URL
+        if (config.getTargetBaseUrl() == null || config.getTargetBaseUrl().trim().isEmpty()) {
+            System.err.println("(API-10) ОШИБКА: targetBaseUrl не установлен в конфигурации");
+            vulnerabilities.add(createConfigErrorVulnerability("Отсутствует targetBaseUrl в конфигурации"));
+            return vulnerabilities;
+        }
+
+        String baseUrl = normalizeBaseUrl(config.getTargetBaseUrl().trim());
+
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            System.err.println("(API-10) ОШИБКА: targetBaseUrl должен начинаться с http:// или https://");
+            vulnerabilities.add(createConfigErrorVulnerability("Некорректный targetBaseUrl: отсутствует схема (http/https)"));
+            return vulnerabilities;
+        }
+
+        if (config.isStaticAnalysisEnabled()) {
+            performStaticEndpointAnalysis(endpoints, vulnerabilities, config);
+        }
+
+        if (config.isDynamicAnalysisEnabled()) {
+            performDynamicEndpointAnalysis(endpoints, vulnerabilities, config, apiClient);
+        }
+
+        deduplicateVulnerabilities(vulnerabilities);
+        return vulnerabilities;
+    }
+
     /**
-     * 5.10.1: Углубленный анализ зависимостей от сторонних API в спецификации
+     * Динамический анализ без OpenAPI спецификации
      */
+    private void performDynamicAnalysisWithoutOpenAPI(String baseUrl, ApiClient apiClient, ScanConfig config, List<Vulnerability> vulnerabilities) {
+        System.out.println("(API-10) Выполнение динамического анализа без OpenAPI спецификации...");
+
+        // Проверка цепочки доверия
+        testTrustChainVulnerabilitiesWithoutOpenAPI(baseUrl, config, vulnerabilities);
+
+        // Проверка JWKS эндпоинта
+        checkJwksDependenciesWithoutOpenAPI(baseUrl, apiClient, vulnerabilities);
+
+        // Базовые проверки безопасности
+        performBasicSecurityChecks(baseUrl, apiClient, config, vulnerabilities);
+    }
+
+    private void testTrustChainVulnerabilitiesWithoutOpenAPI(String baseUrl, ScanConfig config, List<Vulnerability> vulnerabilities) {
+        System.out.println("(API-10) Тестирование цепочки доверия...");
+
+        List<String> trustIssues = new ArrayList<>();
+
+        // Проверка TLS/SSL конфигурации основного таргета
+        if (!baseUrl.startsWith("https://")) {
+            trustIssues.add("Использование HTTP вместо HTTPS для основного API: " + baseUrl);
+        }
+
+        if (!trustIssues.isEmpty()) {
+            Vulnerability vuln = createBaseVulnerability();
+            vuln.setTitle("API10:2023 - Trust Chain Vulnerabilities");
+            vuln.setDescription("Обнаружены проблемы в цепочке доверия:\n• " + String.join("\n• ", trustIssues) +
+                    "\n\nРиски:\n• MITM атаки\n• Компрометация доверенных соединений\n• Утечка чувствительных данных\n• Подмена публичных ключей");
+            vuln.setSeverity(Vulnerability.Severity.HIGH);
+            vuln.setEvidence("Trust chain issues: " + String.join(", ", trustIssues));
+            vuln.setRecommendations(Arrays.asList(
+                    "Всегда использовать HTTPS для API коммуникаций",
+                    "Валидировать SSL сертификаты",
+                    "Регулярно обновлять trust stores",
+                    "Использовать certificate pinning для критичных сервисов",
+                    "Внедрить мониторинг скомпрометированных сертификатов"
+            ));
+            vulnerabilities.add(vuln);
+        }
+    }
+
+    private void checkJwksDependenciesWithoutOpenAPI(String baseUrl, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
+        System.out.println("(API-10) Проверка JWKS и внешних ключей...");
+
+        // Проверяем наличие JWKS эндпоинта
+        String jwksUrl = baseUrl + ".well-known/jwks.json";
+
+        try {
+            Object response = apiClient.executeRequest("GET", jwksUrl, null, new HashMap<>());
+
+            if (response instanceof HttpApiClient.ApiResponse) {
+                HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                int statusCode = extractStatusCode(apiResponse);
+
+                if (statusCode == 200) {
+                    Vulnerability vuln = createBaseVulnerability();
+                    vuln.setTitle("API10:2023 - JWKS External Key Dependency");
+                    vuln.setDescription("Обнаружен JWKS endpoint для внешних ключей:\n" +
+                            "• Риск: Зависимость от внешних ключей подписи\n• Угроза: Компрометация ключей проверки JWT\n• Возможность подмены identity");
+                    vuln.setSeverity(Vulnerability.Severity.HIGH);
+                    vuln.setEvidence("JWKS endpoint exposed: " + jwksUrl);
+                    vuln.setStatusCode(statusCode);
+                    vuln.setRecommendations(Arrays.asList(
+                            "Реализовать rotation ключей подписи",
+                            "Использовать HS256 для внутренних токенов вместо RS256",
+                            "Внедрить мониторинг изменений в JWKS",
+                            "Ограничить доступ к JWKS endpoint",
+                            "Использовать certificate pinning для критичных ключей"
+                    ));
+                    vulnerabilities.add(vuln);
+                }
+            }
+        } catch (Exception e) {
+            // JWKS endpoint недоступен - это может быть нормально
+        }
+    }
+
+    private void performBasicSecurityChecks(String baseUrl, ApiClient apiClient, ScanConfig config, List<Vulnerability> vulnerabilities) {
+        // Базовые проверки безопасности без OpenAPI
+        System.out.println("(API-10) Выполнение базовых проверок безопасности...");
+
+        // Проверка облачных сервисов в базовом URL
+        for (String cloudDomain : CLOUD_SERVICE_DOMAINS) {
+            if (baseUrl.toLowerCase().contains(cloudDomain.toLowerCase())) {
+                Vulnerability vuln = createBaseVulnerability();
+                vuln.setTitle("API10:2023 - Cloud Service Integration Exposure");
+                vuln.setDescription("Обнаружена интеграция с облачным сервисом: " + cloudDomain +
+                        "\n• Риск: Раскрытие внутренней архитектуры\n• Угроза: Целевые атаки на облачную инфраструктуру");
+                vuln.setSeverity(Vulnerability.Severity.LOW);
+                vuln.setEvidence("Cloud service reference in base URL: " + cloudDomain);
+                vuln.setRecommendations(Arrays.asList(
+                        "Не раскрывать информацию о внутренних интеграциях",
+                        "Использовать внутренние DNS имена для облачных сервисов",
+                        "Реализовать API gateway для абстракции внутренней архитектуры",
+                        "Регулярно аудировать конфигурации облачных сервисов"
+                ));
+                vulnerabilities.add(vuln);
+                break;
+            }
+        }
+    }
+
+    /**
+     * Статический анализ OpenAPI спецификации
+     */
+    private void performStaticAnalysis(OpenAPI openAPI, List<Vulnerability> vulnerabilities, ScanConfig config) {
+        // 5.10.1: Углубленный анализ зависимостей от сторонних API
+        checkExternalDependencies(openAPI, vulnerabilities, config);
+
+        // 5.10.5: Тестирование уязвимостей цепочки доверия (статическая часть)
+        testTrustChainVulnerabilities(openAPI, vulnerabilities, config, null);
+
+        // 5.10.6: Проверка безопасности интеграций с облачными сервисами
+        checkCloudServiceIntegrations(openAPI, vulnerabilities, config, null);
+
+        // 5.10.7: Анализ межбанковых интеграций
+        checkInterbankIntegrations(openAPI, vulnerabilities, config);
+
+        // 5.10.8: Проверка JWKS и внешних ключей (статическая часть)
+        checkJwksDependencies(openAPI, vulnerabilities, config, null);
+
+        // 5.10.9: Анализ согласий и разрешений
+        checkConsentPermissions(openAPI, vulnerabilities, config);
+    }
+
+    /**
+     * Динамический анализ с выполнением запросов
+     */
+    private void performDynamicAnalysis(OpenAPI openAPI, List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
+        // 5.10.2: Тестирование обработки некорректных данных от внешних API
+        testMaliciousExternalData(openAPI, vulnerabilities, config, apiClient);
+
+        // 5.10.3: Проверка валидации данных из доверенных источников
+        testTrustedSourceValidation(openAPI, vulnerabilities, config, apiClient);
+
+        // 5.10.4: Анализ обработки ошибок внешних сервисов
+        testExternalServiceErrorHandling(openAPI, vulnerabilities, config, apiClient);
+
+        // 5.10.5: Тестирование уязвимостей цепочки доверия (динамическая часть)
+        testTrustChainVulnerabilities(openAPI, vulnerabilities, config, apiClient);
+
+        // 5.10.8: Проверка JWKS и внешних ключей (динамическая часть)
+        checkJwksDependencies(openAPI, vulnerabilities, config, apiClient);
+    }
+
+    /**
+     * Статический анализ на основе протестированных эндпоинтов
+     */
+    private void performStaticEndpointAnalysis(List<TestedEndpoint> endpoints, List<Vulnerability> vulnerabilities, ScanConfig config) {
+        System.out.println("(API-10) Статический анализ " + endpoints.size() + " эндпоинтов...");
+
+        // Анализ внешних зависимостей в эндпоинтах
+        analyzeExternalDependenciesInEndpoints(endpoints, vulnerabilities);
+
+        // Проверка межбанковых интеграций
+        checkInterbankIntegrationsInEndpoints(endpoints, vulnerabilities);
+
+        // Анализ параметров эндпоинтов на наличие уязвимостей потребления
+        analyzeEndpointParametersForConsumption(endpoints, vulnerabilities);
+    }
+
+    /**
+     * Динамический анализ на основе протестированных эндпоинтов
+     */
+    private void performDynamicEndpointAnalysis(List<TestedEndpoint> endpoints, List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-10) Динамический анализ " + endpoints.size() + " эндпоинтов...");
+
+        // Тестирование обработки внешних данных
+        testExternalDataHandling(endpoints, vulnerabilities, config, apiClient);
+
+        // Проверка обработки ошибок внешних сервисов
+        testExternalErrorHandling(endpoints, vulnerabilities, config, apiClient);
+
+        // Тестирование цепочки доверия
+        testTrustChainWithEndpoints(endpoints, vulnerabilities, config, apiClient);
+    }
+
+    private void analyzeExternalDependenciesInEndpoints(List<TestedEndpoint> endpoints, List<Vulnerability> vulnerabilities) {
+        int externalDependencyCount = 0;
+
+        for (TestedEndpoint endpoint : endpoints) {
+            if (hasExternalDependencyIndicators(endpoint)) {
+                externalDependencyCount++;
+
+                Vulnerability vuln = createBaseVulnerability();
+                vuln.setTitle("API10:2023 - External Dependency in Endpoint");
+                vuln.setDescription("СТАТИЧЕСКИЙ АНАЛИЗ: Обнаружены индикаторы внешних зависимостей в эндпоинте.\n\n" +
+                        "Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "Описание: " + (endpoint.getDescription() != null ? endpoint.getDescription() : "нет") + "\n" +
+                        "Риск: Интеграция с внешним сервисом может быть уязвима");
+                vuln.setSeverity(Vulnerability.Severity.LOW);
+                vuln.setEvidence("External dependency indicators in: " + endpoint.getPath());
+                vuln.setEndpoint(endpoint.getPath());
+                vuln.setMethod(endpoint.getMethod());
+                vuln.setRecommendations(Arrays.asList(
+                        "Проверить безопасность интеграции с внешним сервисом",
+                        "Реализовать валидацию всех входящих данных",
+                        "Использовать санитизацию данных от внешних источников",
+                        "Внедрить circuit breaker для внешних вызовов"
+                ));
+                vulnerabilities.add(vuln);
+            }
+        }
+
+        System.out.println("(API-10) Эндпоинтов с внешними зависимостями: " + externalDependencyCount);
+    }
+
+    private void checkInterbankIntegrationsInEndpoints(List<TestedEndpoint> endpoints, List<Vulnerability> vulnerabilities) {
+        int interbankCount = 0;
+
+        for (TestedEndpoint endpoint : endpoints) {
+            if (isInterbankEndpoint(endpoint)) {
+                interbankCount++;
+
+                Vulnerability vuln = createBaseVulnerability();
+                vuln.setTitle("API10:2023 - Interbank Integration Risk");
+                vuln.setDescription("СТАТИЧЕСКИЙ АНАЛИЗ: Обнаружена межбанковая интеграция.\n\n" +
+                        "Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "Риск: Зависимость от других банковских систем\n" +
+                        "Угроза: Цепочка доверия между банками");
+                vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+                vuln.setEvidence("Interbank endpoint: " + endpoint.getPath());
+                vuln.setEndpoint(endpoint.getPath());
+                vuln.setMethod(endpoint.getMethod());
+                vuln.setRecommendations(Arrays.asList(
+                        "Реализовать строгую аутентификацию межбанковых запросов",
+                        "Использовать подписанные JWT токены с проверкой эмитента",
+                        "Внедрить rate limiting для межбанковых вызовов",
+                        "Регулярно проводить аудиты безопасности банков-партнеров"
+                ));
+                vulnerabilities.add(vuln);
+            }
+        }
+
+        System.out.println("(API-10) Межбанковых эндпоинтов: " + interbankCount);
+    }
+
+    private void analyzeEndpointParametersForConsumption(List<TestedEndpoint> endpoints, List<Vulnerability> vulnerabilities) {
+        // Анализ параметров эндпоинтов на наличие рисков небезопасного потребления
+        for (TestedEndpoint endpoint : endpoints) {
+            if (endpoint.getParameters() != null) {
+                analyzeParametersForExternalDataRisks(endpoint, vulnerabilities);
+            }
+        }
+    }
+
+    private void analyzeParametersForExternalDataRisks(TestedEndpoint endpoint, List<Vulnerability> vulnerabilities) {
+        // Проверка параметров, которые могут принимать внешние данные
+        boolean hasExternalDataRisk = endpoint.getParameters().stream()
+                .anyMatch(param ->
+                        param.getName().toLowerCase().contains("external") ||
+                                param.getName().toLowerCase().contains("third") ||
+                                param.getName().toLowerCase().contains("partner") ||
+                                param.getName().toLowerCase().contains("integration")
+                );
+
+        if (hasExternalDataRisk) {
+            Vulnerability vuln = createBaseVulnerability();
+            vuln.setTitle("API10:2023 - External Data Parameter Risk");
+            vuln.setDescription("СТАТИЧЕСКИЙ АНАЛИЗ: Эндпоинт содержит параметры для внешних данных.\n\n" +
+                    "Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                    "Риск: Небезопасная обработка данных от внешних источников\n" +
+                    "Угроза: Инъекция через внешние данные");
+            vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+            vuln.setEvidence("External data parameters in: " + endpoint.getPath());
+            vuln.setEndpoint(endpoint.getPath());
+            vuln.setMethod(endpoint.getMethod());
+            vuln.setRecommendations(Arrays.asList(
+                    "Реализовать строгую валидацию параметров внешних данных",
+                    "Использовать whitelist для допустимых значений",
+                    "Внедрить санитизацию входных данных",
+                    "Логировать все операции с внешними данными"
+            ));
+            vulnerabilities.add(vuln);
+        }
+    }
+
+    private void testExternalDataHandling(List<TestedEndpoint> endpoints, List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
+        // Тестирование обработки внешних данных для POST/PUT эндпоинтов
+        List<TestedEndpoint> dataEndpoints = endpoints.stream()
+                .filter(e -> "POST".equals(e.getMethod()) || "PUT".equals(e.getMethod()))
+                .filter(e -> e.isSuccess()) // Только успешные эндпоинты
+                .toList();
+
+        for (TestedEndpoint endpoint : dataEndpoints) {
+            testEndpointWithExternalData(endpoint, config, apiClient, vulnerabilities);
+        }
+    }
+
+    private void testExternalErrorHandling(List<TestedEndpoint> endpoints, List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
+        // Тестирование обработки ошибок для эндпоинтов с внешними зависимостями
+        List<TestedEndpoint> externalEndpoints = endpoints.stream()
+                .filter(this::hasExternalDependencyIndicators)
+                .toList();
+
+        for (TestedEndpoint endpoint : externalEndpoints) {
+            testEndpointErrorHandling(endpoint, config, apiClient, vulnerabilities);
+        }
+    }
+
+    private void testTrustChainWithEndpoints(List<TestedEndpoint> endpoints, List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
+        // Проверка цепочки доверия для HTTPS эндпоинтов
+        for (TestedEndpoint endpoint : endpoints) {
+            if (endpoint.isSuccess() && hasTrustChainIssues(endpoint, config)) {
+                Vulnerability vuln = createBaseVulnerability();
+                vuln.setTitle("API10:2023 - Trust Chain Issue");
+                vuln.setDescription("ДИНАМИЧЕСКИЙ АНАЛИЗ: Обнаружены проблемы в цепочке доверия.\n\n" +
+                        "Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "Статус: " + endpoint.getStatusCode() + "\n" +
+                        "Риск: Потенциальные MITM атаки");
+                vuln.setSeverity(Vulnerability.Severity.HIGH);
+                vuln.setEvidence("Trust chain issue in: " + endpoint.getPath());
+                vuln.setEndpoint(endpoint.getPath());
+                vuln.setMethod(endpoint.getMethod());
+                vuln.setStatusCode(endpoint.getStatusCode());
+                vuln.setRecommendations(Arrays.asList(
+                        "Всегда использовать HTTPS для API коммуникаций",
+                        "Валидировать SSL сертификаты",
+                        "Регулярно обновлять trust stores",
+                        "Использовать certificate pinning для критичных сервисов"
+                ));
+                vulnerabilities.add(vuln);
+            }
+        }
+    }
+
+    private boolean hasExternalDependencyIndicators(TestedEndpoint endpoint) {
+        if (endpoint.getDescription() == null) return false;
+
+        String text = (endpoint.getDescription() + " " + endpoint.getSummary()).toLowerCase();
+        return EXTERNAL_API_INDICATORS.stream().anyMatch(text::contains) ||
+                BANK_SPECIFIC_INDICATORS.stream().anyMatch(text::contains);
+    }
+
+    private boolean isInterbankEndpoint(TestedEndpoint endpoint) {
+        if (endpoint.getDescription() == null) return false;
+
+        String text = (endpoint.getDescription() + " " + endpoint.getSummary()).toLowerCase();
+        return text.contains("interbank") ||
+                text.contains("cross-bank") ||
+                text.contains("other.bank") ||
+                text.contains("requesting-bank");
+    }
+
+    private boolean hasTrustChainIssues(TestedEndpoint endpoint, ScanConfig config) {
+        // Проверка на использование HTTP вместо HTTPS
+        String baseUrl = config.getTargetBaseUrl();
+        return baseUrl != null && baseUrl.startsWith("http://");
+    }
+
+    private void testEndpointWithExternalData(TestedEndpoint endpoint, ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
+        String[] testPayloads = {
+                "{\"external_data\":\"<script>alert('xss')</script>\",\"type\":\"test\"}",
+                "{\"partner_data\":\"../../../etc/passwd\",\"value\":\"test\"}",
+                "{\"third_party\":{\"$ne\":\"valid\"},\"status\":\"active\"}"
+        };
+
+        String baseUrl = config.getTargetBaseUrl();
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            System.err.println("(API-10) Ошибка: некорректный baseUrl для тестирования");
+            return;
+        }
+
+        for (String payload : testPayloads) {
+            try {
+                Map<String, String> headers = createAuthHeaders(config);
+                headers.put("Content-Type", "application/json");
+
+                String fullUrl = baseUrl + endpoint.getPath();
+                Object response = apiClient.executeRequest(endpoint.getMethod(), fullUrl, payload, headers);
+
+                if (response instanceof HttpApiClient.ApiResponse) {
+                    HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                    checkResponseForVulnerabilities(apiResponse, endpoint.getPath(), payload, vulnerabilities);
+                }
+            } catch (Exception e) {
+                // Ожидаемое поведение для некорректных данных
+            }
+        }
+    }
+
+    private void testEndpointErrorHandling(TestedEndpoint endpoint, ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
+        try {
+            Map<String, String> headers = createAuthHeaders(config);
+            headers.put("Content-Type", "application/json");
+
+            // Пытаемся вызвать ошибку внешнего сервиса
+            String errorPayload = "{\"force_error\":true,\"external_service\":\"invalid\"}";
+            String fullUrl = config.getTargetBaseUrl() + endpoint.getPath();
+
+            if (!fullUrl.startsWith("http://") && !fullUrl.startsWith("https://")) {
+                System.err.println("(API-10) Ошибка: некорректный URL для тестирования ошибок");
+                return;
+            }
+
+            Object response = apiClient.executeRequest(endpoint.getMethod(), fullUrl, errorPayload, headers);
+
+            if (response instanceof HttpApiClient.ApiResponse) {
+                HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+                String responseBody = apiResponse.getBody();
+
+                if (containsSensitiveErrorInfo(responseBody)) {
+                    Vulnerability vuln = createBaseVulnerability();
+                    vuln.setTitle("API10:2023 - Information Disclosure in External Service Errors");
+                    vuln.setDescription("ДИНАМИЧЕСКИЙ АНАЛИЗ: Приложение раскрывает чувствительную информацию при ошибках внешних сервисов.\n\n" +
+                            "Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                            "Статус: " + apiResponse.getStatusCode() + "\n" +
+                            "Риск: Утечка внутренней структуры системы");
+                    vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+                    vuln.setEvidence("Sensitive error information at " + endpoint.getPath() + ": " +
+                            (responseBody.length() > 200 ? responseBody.substring(0, 200) + "..." : responseBody));
+                    vuln.setEndpoint(endpoint.getPath());
+                    vuln.setMethod(endpoint.getMethod());
+                    vuln.setStatusCode(apiResponse.getStatusCode());
+                    vuln.setRecommendations(Arrays.asList(
+                            "Использовать унифицированные сообщения об ошибках",
+                            "Не раскрывать stack traces в production",
+                            "Логировать детальные ошибки только на сервере",
+                            "Реализовать graceful degradation при недоступности внешних сервисов"
+                    ));
+                    vulnerabilities.add(vuln);
+                }
+            }
+        } catch (Exception e) {
+            // Ожидаемое поведение при тестировании ошибок
+        }
+    }
+
     private void checkExternalDependencies(OpenAPI openAPI, List<Vulnerability> vulnerabilities, ScanConfig config) {
         System.out.println("(API-10) Углубленный анализ зависимостей от сторонних API...");
 
@@ -147,13 +619,10 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         // 2. Анализ операций на наличие внешних зависимостей
         analyzeOperationsForExternalDependencies(openAPI, vulnerabilities);
 
-        // 3. Анализ межбанковских зависимостей
+        // 3. Анализ межбанковых зависимостей
         analyzeInterbankDependencies(openAPI, vulnerabilities);
     }
 
-    /**
-     * Анализ операций на наличие внешних зависимостей
-     */
     private void analyzeOperationsForExternalDependencies(OpenAPI openAPI, List<Vulnerability> vulnerabilities) {
         if (openAPI.getPaths() == null) return;
 
@@ -196,9 +665,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * Анализ межбанковских зависимостей
-     */
     private void analyzeInterbankDependencies(OpenAPI openAPI, List<Vulnerability> vulnerabilities) {
         if (openAPI.getPaths() == null) return;
 
@@ -244,9 +710,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * 5.10.2: Улучшенное тестирование обработки некорректных данных от внешних API
-     */
     private void testMaliciousExternalData(OpenAPI openAPI, List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
         System.out.println("(API-10) Улучшенное тестирование обработки некорректных данных...");
 
@@ -268,6 +731,12 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         // Тестируем только эндпоинты без path-параметров
         List<String> testableEndpoints = getTestableEndpoints(openAPI);
 
+        String baseUrl = config.getTargetBaseUrl();
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            System.err.println("(API-10) Ошибка: некорректный baseUrl для тестирования внешних данных");
+            return;
+        }
+
         for (String endpoint : testableEndpoints) {
             System.out.println("(API-10) Тестирование эндпоинта: " + endpoint);
 
@@ -282,7 +751,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
                         headers.put("X-Consent-Id", "test-consent-123");
                     }
 
-                    String fullUrl = config.getTargetBaseUrl() + endpoint;
+                    String fullUrl = baseUrl + endpoint;
                     Object response = apiClient.executeRequest("POST", fullUrl, payload, headers);
 
                     if (response instanceof HttpApiClient.ApiResponse) {
@@ -298,9 +767,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * 5.10.3: Улучшенная проверка валидации данных из доверенных источников
-     */
     private void testTrustedSourceValidation(OpenAPI openAPI, List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
         System.out.println("(API-10) Улучшенная проверка валидации данных из доверенных источников...");
 
@@ -317,6 +783,12 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         };
 
         List<String> dataEndpoints = getDataProcessingEndpoints(openAPI);
+
+        String baseUrl = config.getTargetBaseUrl();
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            System.err.println("(API-10) Ошибка: некорректный baseUrl для тестирования доверенных источников");
+            return;
+        }
 
         for (String endpoint : dataEndpoints) {
             if (containsPathParameters(endpoint)) {
@@ -337,7 +809,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
                         headers.put("X-Consent-Id", "trusted-consent-456");
                     }
 
-                    String fullUrl = config.getTargetBaseUrl() + endpoint;
+                    String fullUrl = baseUrl + endpoint;
                     Object response = apiClient.executeRequest("POST", fullUrl, scenario, headers);
 
                     if (response instanceof HttpApiClient.ApiResponse) {
@@ -372,14 +844,17 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * 5.10.4: Анализ обработки ошибок внешних сервисов
-     */
     private void testExternalServiceErrorHandling(OpenAPI openAPI, List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
         System.out.println("(API-10) Тестирование обработки ошибок внешних сервисов...");
 
         // Тестируем эндпоинты, которые могут зависеть от внешних сервисов
         List<String> externalDependentEndpoints = findExternalDependentEndpoints(openAPI);
+
+        String baseUrl = config.getTargetBaseUrl();
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            System.err.println("(API-10) Ошибка: некорректный baseUrl для тестирования ошибок внешних сервисов");
+            return;
+        }
 
         for (String endpoint : externalDependentEndpoints) {
             try {
@@ -388,7 +863,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
 
                 // Эмулируем запрос, который может вызвать ошибку внешнего сервиса
                 String maliciousPayload = "{\"service\":\"invalid\",\"timeout\":1,\"external_call\":\"http://malicious-site.com\"}";
-                String fullUrl = config.getTargetBaseUrl() + endpoint;
+                String fullUrl = baseUrl + endpoint;
 
                 Object response = apiClient.executeRequest("POST", fullUrl, maliciousPayload, headers);
 
@@ -426,18 +901,17 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * 5.10.5: Тестирование уязвимостей цепочки доверия (trust chain)
-     */
     private void testTrustChainVulnerabilities(OpenAPI openAPI, List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
         System.out.println("(API-10) Тестирование цепочки доверия...");
 
         // Проверяем наличие слабых мест в цепочке доверия
         List<String> trustIssues = new ArrayList<>();
 
+        String baseUrl = config.getTargetBaseUrl();
+
         // Проверка TLS/SSL конфигурации основного таргета
-        if (!config.getTargetBaseUrl().startsWith("https://")) {
-            trustIssues.add("Использование HTTP вместо HTTPS для основного API: " + config.getTargetBaseUrl());
+        if (!baseUrl.startsWith("https://")) {
+            trustIssues.add("Использование HTTP вместо HTTPS для основного API: " + baseUrl);
         }
 
         // Проверка серверов в OpenAPI спецификации
@@ -454,7 +928,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
 
         // Проверка JWKS эндпоинта
         if (openAPI.getPaths() != null && openAPI.getPaths().containsKey("/.well-known/jwks.json")) {
-            String jwksUrl = config.getTargetBaseUrl() + "/.well-known/jwks.json";
+            String jwksUrl = baseUrl + "/.well-known/jwks.json";
             if (!jwksUrl.startsWith("https://")) {
                 trustIssues.add("JWKS endpoint использует HTTP вместо HTTPS");
             }
@@ -478,9 +952,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * 5.10.6: Проверка безопасности интеграций с облачными сервисами
-     */
     private void checkCloudServiceIntegrations(OpenAPI openAPI, List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
         System.out.println("(API-10) Проверка интеграций с облачными сервисами...");
 
@@ -507,9 +978,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * 5.10.7: Анализ межбанковых интеграций
-     */
     private void checkInterbankIntegrations(OpenAPI openAPI, List<Vulnerability> vulnerabilities, ScanConfig config) {
         System.out.println("(API-10) Анализ межбанковых интеграций...");
 
@@ -565,16 +1033,21 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * 5.10.8: Проверка JWKS и внешних ключей
-     */
     private void checkJwksDependencies(OpenAPI openAPI, List<Vulnerability> vulnerabilities, ScanConfig config, ApiClient apiClient) {
         System.out.println("(API-10) Проверка JWKS и внешних ключей...");
+
+        String baseUrl = config.getTargetBaseUrl();
 
         // Проверяем наличие JWKS эндпоинта
         if (openAPI.getPaths() != null && openAPI.getPaths().containsKey("/.well-known/jwks.json")) {
             try {
-                String jwksUrl = config.getTargetBaseUrl() + "/.well-known/jwks.json";
+                String jwksUrl = baseUrl + "/.well-known/jwks.json";
+
+                if (!jwksUrl.startsWith("http://") && !jwksUrl.startsWith("https://")) {
+                    System.err.println("(API-10) Ошибка: некорректный URL для проверки JWKS");
+                    return;
+                }
+
                 Object response = apiClient.executeRequest("GET", jwksUrl, null, new HashMap<>());
 
                 if (response instanceof HttpApiClient.ApiResponse) {
@@ -628,9 +1101,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * 5.10.9: Анализ согласий и разрешений
-     */
     private void checkConsentPermissions(OpenAPI openAPI, List<Vulnerability> vulnerabilities, ScanConfig config) {
         System.out.println("(API-10) Анализ согласий и разрешений...");
 
@@ -681,9 +1151,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * 5.10.10: Дедупликация уязвимостей
-     */
     private void deduplicateVulnerabilities(List<Vulnerability> vulnerabilities) {
         System.out.println("(API-10) Дедупликация уязвимостей...");
 
@@ -701,9 +1168,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         vulnerabilities.addAll(uniqueVulnerabilities.values());
     }
 
-    /**
-     * 5.10.11: Генерация отчета с проблемами потребления сторонних API
-     */
     private void generateConsumptionReport(List<Vulnerability> vulnerabilities) {
         System.out.println("(API-10) Генерация отчета по проблемам потребления сторонних API...");
 
@@ -749,11 +1213,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         System.out.println("(API-10) " + "=".repeat(80));
     }
 
-    /**
-     * Вспомогательные методы для работы с OpenAPI
-     */
-
-    // Получение всех POST эндпоинтов из OpenAPI
+    // Вспомогательные методы для работы с OpenAPI
     private List<String> getPostEndpoints(OpenAPI openAPI) {
         List<String> endpoints = new ArrayList<>();
         if (openAPI.getPaths() != null) {
@@ -767,7 +1227,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         return endpoints;
     }
 
-    // Получение эндпоинтов для обработки данных
     private List<String> getDataProcessingEndpoints(OpenAPI openAPI) {
         List<String> endpoints = new ArrayList<>();
         if (openAPI.getPaths() != null) {
@@ -782,7 +1241,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         return endpoints;
     }
 
-    // Получение тестируемых эндпоинтов (без path-параметров)
     private List<String> getTestableEndpoints(OpenAPI openAPI) {
         List<String> endpoints = new ArrayList<>();
         if (openAPI.getPaths() != null) {
@@ -798,7 +1256,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         return endpoints;
     }
 
-    // Поиск эндпоинтов, зависящих от внешних сервисов
     private List<String> findExternalDependentEndpoints(OpenAPI openAPI) {
         List<String> endpoints = new ArrayList<>();
         if (openAPI.getPaths() != null) {
@@ -828,7 +1285,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         return endpoints;
     }
 
-    // Поиск межбанковых эндпоинтов
     private List<String> findInterbankEndpoints(OpenAPI openAPI) {
         List<String> endpoints = new ArrayList<>();
         if (openAPI.getPaths() != null) {
@@ -870,7 +1326,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         return endpoints.stream().distinct().collect(ArrayList::new, ArrayList::add, ArrayList::addAll);
     }
 
-    // Извлечение всего текста из OpenAPI спецификации для анализа
     private String extractAllTextFromOpenAPI(OpenAPI openAPI) {
         StringBuilder text = new StringBuilder();
 
@@ -909,13 +1364,48 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         return text.toString();
     }
 
-    /**
-     * Вспомогательные методы
-     */
+    // Вспомогательные методы
     private Vulnerability createBaseVulnerability() {
         Vulnerability vuln = new Vulnerability();
         vuln.setCategory(Vulnerability.Category.OWASP_API10_UNSAFE_CONSUMPTION);
         return vuln;
+    }
+
+    private Vulnerability createConfigErrorVulnerability(String error) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("Ошибка конфигурации API10 сканера");
+        vuln.setDescription("Сканер не может выполнить проверку из-за ошибки в конфигурации: " + error);
+        vuln.setSeverity(Vulnerability.Severity.HIGH);
+        vuln.setCategory(Vulnerability.Category.OWASP_API10_UNSAFE_CONSUMPTION);
+        vuln.setEvidence("Конфигурационная ошибка: " + error);
+        vuln.setRecommendations(Arrays.asList(
+                "Проверьте настройки targetBaseUrl в конфигурации",
+                "Убедитесь, что targetBaseUrl начинается с http:// или https://",
+                "Проверьте доступность OpenAPI спецификации"
+        ));
+        return vuln;
+    }
+
+    private Vulnerability createErrorVulnerability(String context, String error) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("Ошибка выполнения API10 сканера: " + context);
+        vuln.setDescription("Во время сканирования произошла ошибка: " + error);
+        vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+        vuln.setCategory(Vulnerability.Category.OWASP_API10_UNSAFE_CONSUMPTION);
+        vuln.setEvidence("Ошибка выполнения: " + error);
+        vuln.setRecommendations(Arrays.asList(
+                "Проверьте корректность конфигурации",
+                "Убедитесь в доступности целевого API",
+                "Проверьте сетевые настройки"
+        ));
+        return vuln;
+    }
+
+    private String normalizeBaseUrl(String baseUrl) {
+        if (baseUrl == null || baseUrl.isEmpty()) {
+            return baseUrl;
+        }
+        return baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
     }
 
     private Map<String, String> createAuthHeaders(ScanConfig config) {
@@ -966,9 +1456,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         return false;
     }
 
-    /**
-     * Новый метод для извлечения статус кода из различных типов ответов
-     */
     private int extractStatusCode(Object response) {
         try {
             if (response instanceof core.ApiResponse) {
@@ -983,9 +1470,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * Обновленный метод для проверки ответов на уязвимости с использованием реальных статус кодов
-     */
     private void checkResponseForVulnerabilities(HttpApiClient.ApiResponse apiResponse, String endpoint, String payload, List<Vulnerability> vulnerabilities) {
         int statusCode = apiResponse.getStatusCode();
 
@@ -1000,7 +1484,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
                     "• Риск: Возможность внедрения вредоносных данных");
             vuln.setSeverity(Vulnerability.Severity.HIGH);
             vuln.setEvidence("Payload accepted at " + endpoint + " with status: " + statusCode);
-            vuln.setStatusCode(statusCode);  // РЕАЛЬНЫЙ СТАТУС КОД
+            vuln.setStatusCode(statusCode);
             vuln.setRecommendations(Arrays.asList(
                     "Реализовать строгую схему валидации для всех входящих данных",
                     "Использовать санитизацию входных данных",
@@ -1009,7 +1493,6 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
             ));
             vulnerabilities.add(vuln);
         } else if (statusCode >= 500) {
-            // ДОБАВЛЕНО: Уязвимости для серверных ошибок
             Vulnerability vuln = createBaseVulnerability();
             vuln.setTitle("API10:2023 - Server Error on Malicious Input");
             vuln.setDescription("Сервер возвращает ошибку " + statusCode + " при обработке подозрительных данных:\n" +
@@ -1017,7 +1500,7 @@ public class API10_UnsafeConsumptionScanner implements SecurityScanner {
                     "• Может свидетельствовать о нестабильности обработки внешних данных");
             vuln.setSeverity(Vulnerability.Severity.MEDIUM);
             vuln.setEvidence("Server error " + statusCode + " at " + endpoint + " with malicious payload");
-            vuln.setStatusCode(statusCode);  // РЕАЛЬНЫЙ СТАТУС КОД
+            vuln.setStatusCode(statusCode);
             vulnerabilities.add(vuln);
         }
     }
