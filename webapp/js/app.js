@@ -29,6 +29,36 @@ class SecurityDashboard {
         this.restoreState();
         this.setupLogoClick();
         this.startScanStatusPolling();
+        this.loadLocalSpecificationsList(); // ДОБАВЛЕНО: Загрузка списка локальных спецификаций
+    }
+
+    // ДОБАВЛЕНО: Загрузка списка локальных спецификаций
+    async loadLocalSpecificationsList() {
+        try {
+            const response = await fetch('/api/specs/local');
+            if (response.ok) {
+                const specs = await response.json();
+                this.populateLocalSpecSelect(specs);
+            }
+        } catch (error) {
+            console.error('Error loading local specifications:', error);
+        }
+    }
+
+    // ДОБАВЛЕНО: Заполнение выпадающего списка локальных спецификаций
+    populateLocalSpecSelect(specs) {
+        const select = document.getElementById('localSpecSelect');
+        if (!select) return;
+
+        // Очищаем существующие опции (кроме первой)
+        while (select.children.length > 1) select.removeChild(select.lastChild);
+
+        specs.forEach(spec => {
+            const option = document.createElement('option');
+            option.value = spec.filename;
+            option.textContent = `${spec.filename} (${spec.size} bytes)`;
+            select.appendChild(option);
+        });
     }
 
     setupModeSelector() {
@@ -207,6 +237,88 @@ class SecurityDashboard {
             e.preventDefault();
             this.testEndpoint();
         });
+
+        // ДОБАВЛЕНО: Обработчики для работы с файлами
+        document.getElementById('loadGraphFromFile').addEventListener('click', () => {
+            this.loadApiGraphFromFile();
+        });
+
+        document.getElementById('loadLocalSpec').addEventListener('click', () => {
+            this.loadLocalSpecification();
+        });
+
+        document.getElementById('specFileInput').addEventListener('change', (e) => {
+            this.handleFileSelect(e);
+        });
+    }
+
+    // ДОБАВЛЕНО: Обработчик выбора файла
+    handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (file) {
+            this.showNotification(`Выбран файл: ${file.name}`, 'info');
+        }
+    }
+
+    // ДОБАВЛЕНО: Загрузка графа из файла
+    async loadApiGraphFromFile() {
+        const fileInput = document.getElementById('specFileInput');
+        const file = fileInput.files[0];
+
+        if (!file) {
+            this.showNotification('Выберите файл спецификации', 'error');
+            return;
+        }
+
+        try {
+            this.showNotification('Загрузка спецификации из файла...', 'info');
+
+            const formData = new FormData();
+            formData.append('specFile', file);
+
+            const response = await fetch('/api/graph/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (response.ok) {
+                const graphData = await response.json();
+                this.renderApiGraph(graphData);
+                this.showNotification(`Загружено ${graphData.totalEndpoints} эндпоинтов из файла`, 'success');
+            } else {
+                throw new Error('Failed to load graph from file');
+            }
+        } catch (error) {
+            console.error('Error loading graph from file:', error);
+            this.showNotification('Ошибка загрузки графа из файла', 'error');
+        }
+    }
+
+    // ДОБАВЛЕНО: Загрузка локальной спецификации
+    async loadLocalSpecification() {
+        const select = document.getElementById('localSpecSelect');
+        const filename = select.value;
+
+        if (!filename) {
+            this.showNotification('Выберите локальную спецификацию', 'error');
+            return;
+        }
+
+        try {
+            this.showNotification('Загрузка локальной спецификации...', 'info');
+
+            const response = await fetch(`/api/graph/local?filename=${encodeURIComponent(filename)}`);
+            if (response.ok) {
+                const graphData = await response.json();
+                this.renderApiGraph(graphData);
+                this.showNotification(`Загружено ${graphData.totalEndpoints} эндпоинтов из ${filename}`, 'success');
+            } else {
+                throw new Error('Failed to load local specification');
+            }
+        } catch (error) {
+            console.error('Error loading local specification:', error);
+            this.showNotification('Ошибка загрузки локальной спецификации', 'error');
+        }
     }
 
     setupConfigListeners() {
@@ -274,6 +386,9 @@ class SecurityDashboard {
             if (specUrl) {
                 setTimeout(() => this.loadApiGraph(), 500);
             }
+
+            // Загружаем список локальных спецификаций
+            this.loadLocalSpecificationsList();
         }
     }
 
