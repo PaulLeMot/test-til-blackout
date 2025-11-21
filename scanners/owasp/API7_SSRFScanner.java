@@ -314,35 +314,41 @@ public class API7_SSRFScanner implements SecurityScanner {
                                     HttpApiClient.ApiResponse baselineResp,
                                     String payload, long responseTime) {
         int currentStatus = currentResp.getStatusCode();
+
+        // Игнорируем ответы с кодом 500 - это не уязвимость
+        if (currentStatus == 500) {
+            return false;
+        }
+
         int baselineStatus = baselineResp.getStatusCode();
         String currentBody = currentResp.getBody() != null ? currentResp.getBody().toLowerCase() : "";
         String baselineBody = baselineResp.getBody() != null ? baselineResp.getBody().toLowerCase() : "";
 
-        // 1. Прямые доказательства (высокая уверенность)
-        if (containsCloudMetadata(currentBody)) {
+        // 1. Прямые доказательства (высокая уверенность) - игнорируем 500 коды
+        if (containsCloudMetadata(currentBody) && currentStatus != 500) {
             return true;
         }
 
-        if (containsSpecificConnectionError(currentBody)) {
+        if (containsSpecificConnectionError(currentBody) && currentStatus != 500) {
             return true;
         }
 
         // 2. Косвенные признаки (средняя уверенность)
 
-        // Значительное увеличение времени ответа
-        if (responseTime > baselineResponseTime(baselineResp) * 2 && responseTime > 1000) {
+        // Значительное увеличение времени ответа (игнорируем для 500 кодов)
+        if (responseTime > baselineResponseTime(baselineResp) * 2 && responseTime > 1000 && currentStatus != 500) {
             System.out.println("(API-7) Обнаружено увеличение времени ответа: " + responseTime + "мс");
             return true;
         }
 
-        // Изменение статуса кода
-        if (currentStatus != baselineStatus && isInternalPayload(payload)) {
+        // Изменение статуса кода (игнорируем если новый статус 500)
+        if (currentStatus != baselineStatus && isInternalPayload(payload) && currentStatus != 500) {
             System.out.println("(API-7) Обнаружено изменение статуса: " + baselineStatus + " -> " + currentStatus);
             return true;
         }
 
-        // Изменение тела ответа
-        if (hasBodyChanged(currentBody, baselineBody) && isInternalPayload(payload)) {
+        // Изменение тела ответа (игнорируем для 500 кодов)
+        if (hasBodyChanged(currentBody, baselineBody) && isInternalPayload(payload) && currentStatus != 500) {
             System.out.println("(API-7) Обнаружено изменение тела ответа");
             return true;
         }
@@ -750,5 +756,121 @@ public class API7_SSRFScanner implements SecurityScanner {
                 body.contains("network is unreachable") ||
                 body.contains("name or service not known") ||
                 body.contains("temporary failure in name resolution");
+    }
+
+    @Override
+    public List<Vulnerability> scanEndpoints(List<core.TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-7) Запуск СТАТИЧЕСКОГО анализа SSRF на " + endpoints.size() + " эндпоинтах");
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Определяем режим работы
+        boolean isStaticOnly = config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY;
+        boolean hasTokens = config.getUserTokens() != null && !config.getUserTokens().isEmpty();
+
+        if (isStaticOnly) {
+            // Режим только статического анализа - анализируем структуру эндпоинтов
+            vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+        } else if (hasTokens) {
+            // Комбинированный режим с токенами - выполняем динамические тесты
+            System.out.println("(API-7) В комбинированном режиме с токенами, выполняем динамическое тестирование");
+            // Используем существующую логику динамического сканирования
+            return scan(null, config, apiClient);
+        } else {
+            // Комбинированный режим без токенов - только статический анализ
+            System.out.println("(API-7) В комбинированном режиме нет токенов, выполняем только статический анализ");
+            vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+        }
+
+        System.out.println("(API-7) Статический анализ SSRF завершен. Найдено уязвимостей: " + vulnerabilities.size());
+        return vulnerabilities;
+    }
+
+    /**
+     * Анализ структуры эндпоинтов для выявления потенциальных SSRF уязвимостей
+     */
+    private List<Vulnerability> analyzeEndpointsStructure(List<core.TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Шаблоны для идентификации эндпоинтов, которые могут быть уязвимы к SSRF
+        String[] ssrfPatterns = {
+                "webhook", "callback", "import", "upload", "export", "download",
+                "proxy", "fetch", "url", "redirect", "image", "file"
+        };
+
+        for (core.TestedEndpoint endpoint : endpoints) {
+            String path = endpoint.getPath().toLowerCase();
+            String method = endpoint.getMethod();
+
+            // Проверяем, содержит ли путь шаблоны SSRF
+            boolean hasSSRFPattern = Arrays.stream(ssrfPatterns)
+                    .anyMatch(pattern -> path.contains(pattern));
+
+            // Проверяем параметры на наличие SSRF-подобных имен
+            boolean hasSSRFParameters = false;
+            if (endpoint.getParameters() != null) {
+                hasSSRFParameters = endpoint.getParameters().stream()
+                        .anyMatch(param -> SSRF_PARAM_NAMES.contains(param.getName().toLowerCase()));
+            }
+
+            if (hasSSRFPattern || hasSSRFParameters) {
+                Vulnerability vuln = createStaticSSRFVulnerability(endpoint, config);
+                vulnerabilities.add(vuln);
+                System.out.println("(API-7) Обнаружен потенциально уязвимый к SSRF эндпоинт: " + method + " " + path);
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Создание уязвимости для статического анализа SSRF
+     */
+    private Vulnerability createStaticSSRFVulnerability(core.TestedEndpoint endpoint, ScanConfig config) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API7:2023 - Potential Server Side Request Forgery");
+        vuln.setDescription(
+                "Эндпоинт " + endpoint.getMethod() + " " + endpoint.getPath() +
+                        " может быть уязвим к атакам SSRF (Server Side Request Forgery).\n\n" +
+                        "Эндпоинт работает с внешними URL или содержит параметры, которые могут использоваться " +
+                        "для выполнения запросов к внутренним ресурсам.\n\n" +
+                        "Источник: " + endpoint.getSource()
+        );
+        vuln.setSeverity(Vulnerability.Severity.MEDIUM); // Средний риск, так как требует подтверждения
+        vuln.setCategory(Vulnerability.Category.OWASP_API7_SSRF);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+
+        StringBuilder evidence = new StringBuilder();
+        evidence.append("Статический анализ выявил потенциальную SSRF уязвимость:\n");
+        evidence.append("- Эндпоинт: ").append(endpoint.getMethod()).append(" ").append(endpoint.getPath()).append("\n");
+        evidence.append("- Источник: ").append(endpoint.getSource()).append("\n");
+        evidence.append("- Параметры: ").append(endpoint.getParameters() != null ? endpoint.getParameters().size() : 0).append(" параметров\n");
+
+        if (endpoint.getParameters() != null) {
+            List<String> ssrfParams = new ArrayList<>();
+            for (core.EndpointParameter param : endpoint.getParameters()) {
+                if (SSRF_PARAM_NAMES.contains(param.getName().toLowerCase())) {
+                    ssrfParams.add(param.getName());
+                }
+            }
+            if (!ssrfParams.isEmpty()) {
+                evidence.append("- Подозрительные параметры: ").append(String.join(", ", ssrfParams)).append("\n");
+            }
+        }
+
+        vuln.setEvidence(evidence.toString());
+        vuln.setStatusCode(-1); // Нет реального статуса кода для статического анализа
+
+        vuln.setRecommendations(Arrays.asList(
+                "Валидировать все внешние URL по белому списку разрешенных доменов",
+                "Блокировать доступ к внутренним IP-адресам (127.0.0.1, 192.168.x.x, 10.x.x.x, 169.254.x.x)",
+                "Запретить опасные схемы: file://, gopher://, dict://, ftp://",
+                "Использовать изолированный outbound proxy для всех исходящих запросов",
+                "Ограничить разрешенные HTTP методы для исходящих запросов",
+                "Реализовать лимиты на размер ответов и время выполнения для внешних запросов",
+                "Провести динамическое тестирование для подтверждения уязвимости"
+        ));
+
+        return vuln;
     }
 }

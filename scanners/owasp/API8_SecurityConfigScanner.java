@@ -6,6 +6,8 @@ import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
 import core.HttpApiClient;
+import core.TestedEndpoint;
+import core.EndpointParameter;
 
 import java.util.*;
 import java.util.regex.Pattern;
@@ -49,7 +51,7 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
 
     @Override
     public String getName() {
-        return "API8_SecurityConfig";
+        return "OWASP API8: Security Misconfiguration Scanner";
     }
 
     @Override
@@ -98,6 +100,140 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
         return vulnerabilities;
     }
 
+    @Override
+    public List<Vulnerability> scanEndpoints(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-8) Запуск СТАТИЧЕСКОГО анализа Security Misconfiguration на " + endpoints.size() + " эндпоинтах");
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Определяем режим работы
+        boolean isStaticOnly = config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY;
+        boolean hasTokens = config.getUserTokens() != null && !config.getUserTokens().isEmpty();
+
+        if (isStaticOnly) {
+            // Режим только статического анализа - анализируем структуру эндпоинтов
+            vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+        } else if (hasTokens) {
+            // Комбинированный режим с токенами - выполняем динамические тесты
+            System.out.println("(API-8) В комбинированном режиме с токенами, выполняем динамическое тестирование");
+            // Используем существующую логику динамического сканирования
+            return scan(null, config, apiClient);
+        } else {
+            // Комбинированный режим без токенов - только статический анализ
+            System.out.println("(API-8) В комбинированном режиме нет токенов, выполняем только статический анализ");
+            vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+        }
+
+        System.out.println("(API-8) Статический анализ Security Misconfiguration завершен. Найдено уязвимостей: " + vulnerabilities.size());
+        return vulnerabilities;
+    }
+
+    /**
+     * Анализ структуры эндпоинтов для выявления потенциальных уязвимостей конфигурации безопасности
+     */
+    private List<Vulnerability> analyzeEndpointsStructure(List<TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Шаблоны для идентификации потенциально проблемных эндпоинтов
+        String[] sensitivePathPatterns = {
+                "admin", "debug", "config", "backup", "test", "internal",
+                "git", "env", "secret", "key", "token", "password"
+        };
+
+        for (TestedEndpoint endpoint : endpoints) {
+            String path = endpoint.getPath().toLowerCase();
+            String method = endpoint.getMethod();
+
+            // Проверяем наличие чувствительных путей
+            boolean hasSensitivePath = Arrays.stream(sensitivePathPatterns)
+                    .anyMatch(pattern -> path.contains(pattern));
+
+            // Проверяем наличие потенциально опасных методов
+            boolean hasDangerousMethod = DANGEROUS_METHODS.contains(method.toUpperCase());
+
+            // Проверяем параметры на наличие чувствительных данных
+            boolean hasSensitiveParameters = false;
+            if (endpoint.getParameters() != null) {
+                hasSensitiveParameters = endpoint.getParameters().stream()
+                        .anyMatch(param -> param.isSensitive() ||
+                                SENSITIVE_HEADERS.contains(param.getName().toLowerCase()));
+            }
+
+            if (hasSensitivePath || hasDangerousMethod || hasSensitiveParameters) {
+                Vulnerability vuln = createStaticSecurityConfigVulnerability(endpoint, config,
+                        hasSensitivePath, hasDangerousMethod, hasSensitiveParameters);
+                vulnerabilities.add(vuln);
+                System.out.println("(API-8) Обнаружен потенциально проблемный эндпоинт: " + method + " " + path);
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Создание уязвимости для статического анализа конфигурации безопасности
+     */
+    private Vulnerability createStaticSecurityConfigVulnerability(TestedEndpoint endpoint, ScanConfig config,
+                                                                  boolean hasSensitivePath, boolean hasDangerousMethod, boolean hasSensitiveParameters) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API8:2023 - Potential Security Misconfiguration");
+        vuln.setDescription(
+                "Эндпоинт " + endpoint.getMethod() + " " + endpoint.getPath() +
+                        " может иметь проблемы конфигурации безопасности.\n\n" +
+                        buildStaticDescription(hasSensitivePath, hasDangerousMethod, hasSensitiveParameters) +
+                        "\n\nИсточник: " + endpoint.getSource()
+        );
+        vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+        vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+
+        StringBuilder evidence = new StringBuilder();
+        evidence.append("Статический анализ выявил потенциальные проблемы конфигурации безопасности:\n");
+        evidence.append("- Эндпоинт: ").append(endpoint.getMethod()).append(" ").append(endpoint.getPath()).append("\n");
+        evidence.append("- Источник: ").append(endpoint.getSource()).append("\n");
+
+        if (hasSensitivePath) {
+            evidence.append("- Содержит чувствительные пути (admin, debug, config и т.д.)\n");
+        }
+        if (hasDangerousMethod) {
+            evidence.append("- Использует потенциально опасные HTTP методы: ").append(endpoint.getMethod()).append("\n");
+        }
+        if (hasSensitiveParameters && endpoint.getParameters() != null) {
+            List<String> sensitiveParams = new ArrayList<>();
+            for (EndpointParameter param : endpoint.getParameters()) {
+                if (param.isSensitive() || SENSITIVE_HEADERS.contains(param.getName().toLowerCase())) {
+                    sensitiveParams.add(param.getName());
+                }
+            }
+            if (!sensitiveParams.isEmpty()) {
+                evidence.append("- Содержит чувствительные параметры: ").append(String.join(", ", sensitiveParams)).append("\n");
+            }
+        }
+
+        vuln.setEvidence(evidence.toString());
+        vuln.setStatusCode(-1);
+
+        vuln.setRecommendations(Arrays.asList(
+                "Ограничьте доступ к административным и отладочным эндпоинтам",
+                "Отключите ненужные HTTP методы (TRACE, OPTIONS, HEAD)",
+                "Защитите чувствительные параметры от раскрытия",
+                "Реализуйте proper authentication и authorization",
+                "Настройте security headers (HSTS, CSP, X-Content-Type-Options и т.д.)",
+                "Проведите динамическое тестирование для подтверждения уязвимостей"
+        ));
+
+        return vuln;
+    }
+
+    private String buildStaticDescription(boolean hasSensitivePath, boolean hasDangerousMethod, boolean hasSensitiveParameters) {
+        List<String> issues = new ArrayList<>();
+        if (hasSensitivePath) issues.add("содержит чувствительные пути");
+        if (hasDangerousMethod) issues.add("использует потенциально опасные HTTP методы");
+        if (hasSensitiveParameters) issues.add("содержит чувствительные параметры");
+
+        return "Обнаружены следующие потенциальные проблемы: " + String.join(", ", issues) + ".";
+    }
+
     // 5.8.1: Анализ информативных заголовков с учетом банковского контекста
     private List<Vulnerability> checkInformativeHeaders(String baseUrl, ApiClient apiClient) {
         List<Vulnerability> vulns = new ArrayList<>();
@@ -106,6 +242,12 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
             Object response = apiClient.executeRequest("GET", baseUrl, null, null);
             if (response instanceof HttpApiClient.ApiResponse) {
                 HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                // Игнорируем ответы с кодом 500
+                if (apiResponse.getStatusCode() == 500) {
+                    return vulns;
+                }
+
                 Map<String, List<String>> headers = apiResponse.getHeaders();
 
                 checkHeader(vulns, headers, "server", "Раскрытие информации о сервере", baseUrl);
@@ -118,9 +260,9 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                     String version = headers.get("x-api-version").toString();
                     Vulnerability vuln = new Vulnerability();
                     vuln.setTitle("API8:2023 - Security Misconfiguration - API Version Exposure");
-                    vuln.setDescription("Заголовок x-api-version раскрывает версию банковского API: " + version + 
-                                       ". Доказательство: в ответах сервера присутствует заголовок x-api-version со значением " + version + 
-                                       ", что раскрывает информацию о версии API потенциальным злоумышленникам.");
+                    vuln.setDescription("Заголовок x-api-version раскрывает версию банковского API: " + version +
+                            ". Доказательство: в ответах сервера присутствует заголовок x-api-version со значением " + version +
+                            ", что раскрывает информацию о версии API потенциальным злоумышленникам.");
                     vuln.setSeverity(Vulnerability.Severity.LOW);
                     vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                     vuln.setEndpoint("/");
@@ -150,8 +292,8 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
             Vulnerability vuln = new Vulnerability();
             vuln.setTitle("API8:2023 - Security Misconfiguration - Informative Header");
             vuln.setDescription(description + ": заголовок " + headerName + " раскрывает информацию о системе. " +
-                              "Доказательство: обнаружен заголовок " + headerName + " со значением " + headerValue + 
-                              " в ответах сервера, что предоставляет информацию о внутренней инфраструктуре.");
+                    "Доказательство: обнаружен заголовок " + headerName + " со значением " + headerValue +
+                    " в ответах сервера, что предоставляет информацию о внутренней инфраструктуре.");
             vuln.setSeverity(Vulnerability.Severity.LOW);
             vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
             vuln.setEndpoint(endpoint);
@@ -186,6 +328,12 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                 Object response = apiClient.executeRequest("OPTIONS", baseUrl + endpoint, null, headers);
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    // Игнорируем ответы с кодом 500
+                    if (apiResponse.getStatusCode() == 500) {
+                        continue;
+                    }
+
                     Map<String, List<String>> responseHeaders = apiResponse.getHeaders();
 
                     if (responseHeaders.containsKey("access-control-allow-origin")) {
@@ -195,8 +343,8 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                             Vulnerability vuln = new Vulnerability();
                             vuln.setTitle("API8:2023 - Security Misconfiguration - CORS Misconfiguration");
                             vuln.setDescription("Небезопасная конфигурация CORS на банковском endpoint " + endpoint + ": разрешены запросы с любых доменов. " +
-                                              "Доказательство: сервер вернул заголовок Access-Control-Allow-Origin: " + allowOrigin + 
-                                              " в ответ на запрос с Origin: https://malicious-bank.com, что позволяет межсайтовые запросы к банковским данным.");
+                                    "Доказательство: сервер вернул заголовок Access-Control-Allow-Origin: " + allowOrigin +
+                                    " в ответ на запрос с Origin: https://malicious-bank.com, что позволяет межсайтовые запросы к банковским данным.");
                             vuln.setSeverity(Vulnerability.Severity.HIGH);
                             vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                             vuln.setEndpoint(endpoint);
@@ -213,8 +361,8 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                             ));
 
                             vulns.add(vuln);
-                            System.out.println("(API-8) УЯЗВИМОСТЬ: Небезопасная конфигурация CORS для " + endpoint + 
-                                             ". Разрешены запросы с: " + allowOrigin);
+                            System.out.println("(API-8) УЯЗВИМОСТЬ: Небезопасная конфигурация CORS для " + endpoint +
+                                    ". Разрешены запросы с: " + allowOrigin);
                         }
                     }
                 }
@@ -243,6 +391,12 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                 Object response = apiClient.executeRequest("GET", baseUrl + endpoint, null, null);
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    // Игнорируем ответы с кодом 500
+                    if (apiResponse.getStatusCode() == 500) {
+                        continue;
+                    }
+
                     String body = apiResponse.getBody().toLowerCase();
 
                     List<String> debugIndicators = Arrays.asList(
@@ -256,9 +410,9 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                         if (body.contains(indicator)) {
                             Vulnerability vuln = new Vulnerability();
                             vuln.setTitle("API8:2023 - Security Misconfiguration - Debug Information Exposure");
-                            vuln.setDescription("В ответах ошибок банковского API раскрывается отладочная информация: " + indicator + 
-                                              ". Доказательство: в ответе на запрос к " + endpoint + " обнаружен индикатор '" + indicator + 
-                                              "', что свидетельствует о включенном debug режиме или некорректной обработке ошибок.");
+                            vuln.setDescription("В ответах ошибок банковского API раскрывается отладочная информация: " + indicator +
+                                    ". Доказательство: в ответе на запрос к " + endpoint + " обнаружен индикатор '" + indicator +
+                                    "', что свидетельствует о включенном debug режиме или некорректной обработке ошибок.");
                             vuln.setSeverity(Vulnerability.Severity.MEDIUM);
                             vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                             vuln.setEndpoint(endpoint);
@@ -275,8 +429,8 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                             ));
 
                             vulns.add(vuln);
-                            System.out.println("(API-8) УЯЗВИМОСТЬ: Раскрытие debug информации в " + endpoint + 
-                                             ". Обнаружен индикатор: " + indicator);
+                            System.out.println("(API-8) УЯЗВИМОСТЬ: Раскрытие debug информации в " + endpoint +
+                                    ". Обнаружен индикатор: " + indicator);
                             break;
                         }
                     }
@@ -302,12 +456,17 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                     if (response instanceof HttpApiClient.ApiResponse) {
                         HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
 
+                        // Игнорируем ответы с кодом 500
+                        if (apiResponse.getStatusCode() == 500) {
+                            continue;
+                        }
+
                         if (apiResponse.getStatusCode() != 405 && apiResponse.getStatusCode() != 403) {
                             Vulnerability vuln = new Vulnerability();
                             vuln.setTitle("API8:2023 - Security Misconfiguration - Unnecessary HTTP Method");
-                            vuln.setDescription("Разрешен потенциально опасный HTTP метод " + method + " на банковском endpoint: " + endpoint + 
-                                              ". Доказательство: метод " + method + " возвращает статус " + apiResponse.getStatusCode() + 
-                                              " вместо ожидаемого 405 (Method Not Allowed) или 403 (Forbidden).");
+                            vuln.setDescription("Разрешен потенциально опасный HTTP метод " + method + " на банковском endpoint: " + endpoint +
+                                    ". Доказательство: метод " + method + " возвращает статус " + apiResponse.getStatusCode() +
+                                    " вместо ожидаемого 405 (Method Not Allowed) или 403 (Forbidden).");
                             vuln.setSeverity(Vulnerability.Severity.MEDIUM);
                             vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                             vuln.setEndpoint(endpoint);
@@ -324,8 +483,8 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                             ));
 
                             vulns.add(vuln);
-                            System.out.println("(API-8) УЯЗВИМОСТЬ: Разрешен опасный HTTP метод " + method + " для " + endpoint + 
-                                             ". Статус: " + apiResponse.getStatusCode());
+                            System.out.println("(API-8) УЯЗВИМОСТЬ: Разрешен опасный HTTP метод " + method + " для " + endpoint +
+                                    ". Статус: " + apiResponse.getStatusCode());
                         }
                     }
                 } catch (Exception e) {
@@ -348,14 +507,20 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                 Object response = apiClient.executeRequest("GET", baseUrl, null, null);
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    // Игнорируем ответы с кодом 500
+                    if (apiResponse.getStatusCode() == 500) {
+                        return vulns;
+                    }
+
                     Map<String, List<String>> headers = apiResponse.getHeaders();
 
                     if (!headers.containsKey("strict-transport-security")) {
                         Vulnerability vuln = new Vulnerability();
                         vuln.setTitle("API8:2023 - Security Misconfiguration - Missing HSTS");
                         vuln.setDescription("Отсутствует заголовок Strict-Transport-Security (HSTS) в банковском API. " +
-                                          "Доказательство: HTTPS соединение установлено, но заголовок HSTS отсутствует в ответах сервера, " +
-                                          "что оставляет возможность для SSL stripping атак.");
+                                "Доказательство: HTTPS соединение установлено, но заголовок HSTS отсутствует в ответах сервера, " +
+                                "что оставляет возможность для SSL stripping атак.");
                         vuln.setSeverity(Vulnerability.Severity.HIGH);
                         vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                         vuln.setEndpoint("/");
@@ -379,7 +544,7 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                             Vulnerability vuln = new Vulnerability();
                             vuln.setTitle("API8:2023 - Security Misconfiguration - Potential TLS Issues");
                             vuln.setDescription("Возможные проблемы с конфигурацией TLS в банковском API. " +
-                                              "Доказательство: сервер использует " + server + ", что может указывать на устаревшую конфигурацию TLS.");
+                                    "Доказательство: сервер использует " + server + ", что может указывать на устаревшую конфигурацию TLS.");
                             vuln.setSeverity(Vulnerability.Severity.MEDIUM);
                             vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                             vuln.setEndpoint("/");
@@ -402,7 +567,7 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                 Vulnerability vuln = new Vulnerability();
                 vuln.setTitle("API8:2023 - Security Misconfiguration - HTTP Usage in Banking API");
                 vuln.setDescription("Банковский API использует HTTP вместо HTTPS - критическая уязвимость! " +
-                                  "Доказательство: API доступен по протоколу HTTP, что позволяет перехват и модификацию финансовых данных.");
+                        "Доказательство: API доступен по протоколу HTTP, что позволяет перехват и модификацию финансовых данных.");
                 vuln.setSeverity(Vulnerability.Severity.CRITICAL);
                 vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                 vuln.setEndpoint("/");
@@ -435,11 +600,16 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
 
+                    // Игнорируем ответы с кодом 500
+                    if (apiResponse.getStatusCode() == 500) {
+                        continue;
+                    }
+
                     if (apiResponse.getStatusCode() == 200) {
                         Vulnerability vuln = new Vulnerability();
                         vuln.setTitle("API8:2023 - Security Misconfiguration - Sensitive File Exposure");
-                        vuln.setDescription("Обнаружен доступ к чувствительному файлу или директории в банковской системе: " + path + 
-                                          ". Доказательство: файл " + path + " доступен по HTTP с статусом 200, что раскрывает конфиденциальную информацию.");
+                        vuln.setDescription("Обнаружен доступ к чувствительному файлу или директории в банковской системе: " + path +
+                                ". Доказательство: файл " + path + " доступен по HTTP с статусом 200, что раскрывает конфиденциальную информацию.");
                         vuln.setSeverity(Vulnerability.Severity.HIGH);
                         vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                         vuln.setEndpoint(path);
@@ -475,6 +645,12 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
             Object response = apiClient.executeRequest("GET", baseUrl, null, null);
             if (response instanceof HttpApiClient.ApiResponse) {
                 HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                // Игнорируем ответы с кодом 500
+                if (apiResponse.getStatusCode() == 500) {
+                    return vulns;
+                }
+
                 Map<String, List<String>> headers = apiResponse.getHeaders();
 
                 checkSecurityHeader(vulns, headers, "content-security-policy",
@@ -494,8 +670,8 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                     if (!value.toLowerCase().contains("nosniff")) {
                         Vulnerability vuln = new Vulnerability();
                         vuln.setTitle("API8:2023 - Security Misconfiguration - Incorrect X-Content-Type-Options");
-                        vuln.setDescription("Некорректное значение X-Content-Type-Options header: " + value + 
-                                          ". Доказательство: заголовок присутствует, но имеет некорректное значение '" + value + "' вместо 'nosniff'.");
+                        vuln.setDescription("Некорректное значение X-Content-Type-Options header: " + value +
+                                ". Доказательство: заголовок присутствует, но имеет некорректное значение '" + value + "' вместо 'nosniff'.");
                         vuln.setSeverity(Vulnerability.Severity.MEDIUM);
                         vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                         vuln.setEndpoint("/");
@@ -584,6 +760,12 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                 Object response = apiClient.executeRequest("GET", baseUrl + endpoint, null, authHeaders);
                 if (response instanceof HttpApiClient.ApiResponse) {
                     HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                    // Игнорируем ответы с кодом 500
+                    if (apiResponse.getStatusCode() == 500) {
+                        continue;
+                    }
+
                     Map<String, List<String>> headers = apiResponse.getHeaders();
 
                     if (headers.containsKey("cache-control")) {
@@ -593,9 +775,9 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                                 !cacheControl.contains("private")) {
                             Vulnerability vuln = new Vulnerability();
                             vuln.setTitle("API8:2023 - Security Misconfiguration - Sensitive Banking Data Caching");
-                            vuln.setDescription("Чувствительные банковские данные могут кэшироваться: " + cacheControl + 
-                                              ". Доказательство: заголовок Cache-Control содержит '" + cacheControl + 
-                                              "', что позволяет кэширование чувствительных банковских данных.");
+                            vuln.setDescription("Чувствительные банковские данные могут кэшироваться: " + cacheControl +
+                                    ". Доказательство: заголовок Cache-Control содержит '" + cacheControl +
+                                    "', что позволяет кэширование чувствительных банковских данных.");
                             vuln.setSeverity(Vulnerability.Severity.HIGH);
                             vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                             vuln.setEndpoint(endpoint);
@@ -612,15 +794,15 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                             ));
 
                             vulns.add(vuln);
-                            System.out.println("(API-8) УЯЗВИМОСТЬ: Небезопасное кэширование банковских данных в " + endpoint + 
-                                             ". Cache-Control: " + cacheControl);
+                            System.out.println("(API-8) УЯЗВИМОСТЬ: Небезопасное кэширование банковских данных в " + endpoint +
+                                    ". Cache-Control: " + cacheControl);
                         }
                     } else {
                         // Отсутствует cache-control header
                         Vulnerability vuln = new Vulnerability();
                         vuln.setTitle("API8:2023 - Security Misconfiguration - Missing Cache Control");
-                        vuln.setDescription("Отсутствует Cache-Control header для чувствительного банковского endpoint: " + endpoint + 
-                                          ". Доказательство: заголовок Cache-Control отсутствует, что позволяет браузерам и промежуточным прокси кэшировать данные по умолчанию.");
+                        vuln.setDescription("Отсутствует Cache-Control header для чувствительного банковского endpoint: " + endpoint +
+                                ". Доказательство: заголовок Cache-Control отсутствует, что позволяет браузерам и промежуточным прокси кэшировать данные по умолчанию.");
                         vuln.setSeverity(Vulnerability.Severity.MEDIUM);
                         vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                         vuln.setEndpoint(endpoint);
@@ -653,6 +835,12 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
             Object response = apiClient.executeRequest("GET", baseUrl + "/.well-known/jwks.json", null, null);
             if (response instanceof HttpApiClient.ApiResponse) {
                 HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
+
+                // Игнорируем ответы с кодом 500
+                if (apiResponse.getStatusCode() == 500) {
+                    return vulns;
+                }
+
                 String body = apiResponse.getBody();
 
                 // Проверяем на наличие JWT токенов в ответах
@@ -685,8 +873,8 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
                 if (apiKeyMatcher.find()) {
                     Vulnerability vuln = new Vulnerability();
                     vuln.setTitle("API8:2023 - Security Misconfiguration - API Key Exposure");
-                    vuln.setDescription("В ответах обнаружены потенциальные API ключи. Доказательство: обнаружена строка, соответствующая формату API ключа: " + 
-                                      apiKeyMatcher.group().substring(0, Math.min(20, apiKeyMatcher.group().length())));
+                    vuln.setDescription("В ответах обнаружены потенциальные API ключи. Доказательство: обнаружена строка, соответствующая формату API ключа: " +
+                            apiKeyMatcher.group().substring(0, Math.min(20, apiKeyMatcher.group().length())));
                     vuln.setSeverity(Vulnerability.Severity.HIGH);
                     vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                     vuln.setEndpoint("/.well-known/jwks.json");
@@ -723,13 +911,18 @@ public class API8_SecurityConfigScanner implements SecurityScanner {
             if (response instanceof HttpApiClient.ApiResponse) {
                 HttpApiClient.ApiResponse apiResponse = (HttpApiClient.ApiResponse) response;
 
+                // Игнорируем ответы с кодом 500
+                if (apiResponse.getStatusCode() == 500) {
+                    return vulns;
+                }
+
                 // Проверяем аутентификацию межбанковских endpoints
                 if (apiResponse.getStatusCode() == 200) {
                     // Если endpoint доступен без аутентификации - это уязвимость
                     Vulnerability vuln = new Vulnerability();
                     vuln.setTitle("API8:2023 - Security Misconfiguration - Unauthenticated Interbank Access");
                     vuln.setDescription("Межбанковский endpoint доступен без proper authentication. " +
-                                      "Доказательство: запрос к /interbank/check-account/test-account вернул статус 200 без предоставления аутентификационных данных.");
+                            "Доказательство: запрос к /interbank/check-account/test-account вернул статус 200 без предоставления аутентификационных данных.");
                     vuln.setSeverity(Vulnerability.Severity.HIGH);
                     vuln.setCategory(Vulnerability.Category.OWASP_API8_SM);
                     vuln.setEndpoint("/interbank/check-account/{account_number}");
