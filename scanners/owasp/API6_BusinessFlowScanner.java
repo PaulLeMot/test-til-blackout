@@ -138,6 +138,182 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         return vulnerabilities;
     }
 
+    @Override
+    public List<Vulnerability> scanEndpoints(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-6) Запуск СТАТИЧЕСКОГО анализа Business Flow на " + endpoints.size() + " эндпоинтах");
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Определяем режим работы
+        boolean isStaticOnly = config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY;
+        boolean hasTokens = config.getUserTokens() != null && !config.getUserTokens().isEmpty();
+
+        if (isStaticOnly) {
+            // Режим только статического анализа - анализируем структуру эндпоинтов
+            vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+        } else if (hasTokens) {
+            // Комбинированный режим с токенами - выполняем динамические тесты
+            vulnerabilities.addAll(performDynamicBusinessFlowTests(endpoints, config, apiClient));
+        } else {
+            // Комбинированный режим без токенов - только статический анализ
+            System.out.println("(API-6) В комбинированном режиме нет токенов, выполняем только статический анализ");
+            vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+        }
+
+        System.out.println("(API-6) Статический анализ Business Flow завершен. Найдено уязвимостей: " + vulnerabilities.size());
+        return vulnerabilities;
+    }
+
+    /**
+     * Анализ структуры эндпоинтов для выявления потенциальных Business Flow уязвимостей
+     */
+    private List<Vulnerability> analyzeEndpointsStructure(List<TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Шаблоны для идентификации бизнес-процессов
+        String[] businessFlowPatterns = {
+                "/payments", "/payment-consents", "/account-consents",
+                "/product-agreements", "/transfers", "/accounts"
+        };
+
+        // Критические методы для бизнес-процессов
+        String[] criticalMethods = {"POST", "PUT", "DELETE"};
+
+        for (TestedEndpoint endpoint : endpoints) {
+            String path = endpoint.getPath();
+            String method = endpoint.getMethod();
+
+            // Проверяем, содержит ли путь шаблоны бизнес-процессов и использует ли критический метод
+            boolean hasBusinessPattern = Arrays.stream(businessFlowPatterns)
+                    .anyMatch(pattern -> path.contains(pattern));
+            boolean hasCriticalMethod = Arrays.stream(criticalMethods)
+                    .anyMatch(m -> m.equals(method));
+
+            if (hasBusinessPattern && hasCriticalMethod) {
+                Vulnerability vuln = createStaticBusinessFlowVulnerability(endpoint, config);
+                vulnerabilities.add(vuln);
+                System.out.println("(API-6) Обнаружен потенциально уязвимый бизнес-процесс: " + method + " " + path);
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Создание уязвимости для статического анализа Business Flow
+     */
+    private Vulnerability createStaticBusinessFlowVulnerability(TestedEndpoint endpoint, ScanConfig config) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API6:2023 - Potential Unrestricted Access to Sensitive Business Flows");
+        vuln.setDescription(
+                "Эндпоинт " + endpoint.getMethod() + " " + endpoint.getPath() +
+                        " может быть уязвим к неограниченному доступу к чувствительным бизнес-процессам.\n\n" +
+                        "Эндпоинт является частью критичного бизнес-процесса (платежи, согласия, договоры) и может позволять " +
+                        "неограниченную автоматизацию или обход бизнес-логики.\n\n" +
+                        "Источник: " + endpoint.getSource()
+        );
+        vuln.setSeverity(Vulnerability.Severity.HIGH);
+        vuln.setCategory(Vulnerability.Category.OWASP_API6_BUSINESS_FLOW);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+        vuln.setEvidence(
+                "Статический анализ выявил потенциальную уязвимость:\n" +
+                        "- Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "- Критичный бизнес-процесс\n" +
+                        "- Источник: " + endpoint.getSource() + "\n" +
+                        "- Параметры: " + (endpoint.getParameters() != null ? endpoint.getParameters().size() : 0) + " параметров"
+        );
+        vuln.setStatusCode(-1);
+
+        vuln.setRecommendations(Arrays.asList(
+                "Внедрить rate limiting для чувствительных бизнес-операций",
+                "Реализовать проверку последовательности шагов бизнес-процесса",
+                "Добавить строгую валидацию бизнес-логики на стороне сервера",
+                "Внедрить мониторинг аномальной активности бизнес-процессов",
+                "Реализовать лимиты на операции по сумме и частоте",
+                "Использовать обязательные подтверждения для критических операций",
+                "Документировать требования безопасности для всех бизнес-процессов",
+                "Внедрить механизмы идемпотентности для финансовых операций",
+                "Реализовать проверку обязательных полей и зависимостей"
+        ));
+
+        return vuln;
+    }
+
+    /**
+     * Выполнение динамических Business Flow тестов в комбинированном режиме
+     */
+    private List<Vulnerability> performDynamicBusinessFlowTests(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        System.out.println("(API-6) Динамическое тестирование в комбинированном режиме на " + endpoints.size() + " эндпоинтах");
+
+        // Фильтруем эндпоинты для бизнес-процессов
+        List<TestedEndpoint> businessEndpoints = endpoints.stream()
+                .filter(e -> e.getPath().contains("/payments") || e.getPath().contains("/payment-consents") ||
+                        e.getPath().contains("/account-consents") || e.getPath().contains("/product-agreements"))
+                .filter(e -> "POST".equals(e.getMethod()) || "PUT".equals(e.getMethod()))
+                .collect(Collectors.toList());
+
+        System.out.println("(API-6) Отфильтровано бизнес-эндпоинтов для тестирования: " + businessEndpoints.size());
+
+        // Получаем токен для тестирования
+        String token = config.getFirstUserToken();
+        if (token == null) {
+            System.err.println("(API-6) Не удалось получить токен для динамического тестирования");
+            return vulnerabilities;
+        }
+
+        // Выполняем базовые тесты автоматизации
+        vulnerabilities.addAll(testAutomationBasic(businessEndpoints, config, apiClient, token));
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Базовое тестирование автоматизации бизнес-процессов
+     */
+    private List<Vulnerability> testAutomationBasic(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient, String token) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+        String baseUrl = config.getTargetBaseUrl();
+
+        for (TestedEndpoint endpoint : endpoints) {
+            try {
+                Map<String, String> headers = createAuthHeaders(token);
+                String testPayload = createBasicTestPayload(endpoint.getPath(), config.getClientId());
+
+                int successfulCalls = 0;
+                int lastStatusCode = -1;
+
+                // Выполняем 3 последовательных запроса
+                for (int i = 0; i < 3; i++) {
+                    Object response = apiClient.executeRequest(endpoint.getMethod(), baseUrl + endpoint.getPath(), testPayload, headers);
+                    if (isSuccessfulResponse(response)) {
+                        successfulCalls++;
+                        lastStatusCode = extractStatusCode(response);
+                    }
+                    Thread.sleep(1000);
+                }
+
+                // Если все 3 запроса успешны - возможна уязвимость
+                if (successfulCalls == 3) {
+                    Vulnerability vuln = createBusinessFlowVulnerability(
+                            endpoint.getPath(),
+                            "Неограниченная автоматизация бизнес-процесса",
+                            "Эндпоинт " + endpoint.getPath() + " позволяет выполнять " + successfulCalls +
+                                    " последовательных операций без ограничений",
+                            Vulnerability.Severity.HIGH,
+                            lastStatusCode
+                    );
+                    vulnerabilities.add(vuln);
+                }
+            } catch (Exception e) {
+                System.err.println("(API-6) Ошибка тестирования автоматизации " + endpoint.getPath() + ": " + e.getMessage());
+            }
+        }
+
+        return vulnerabilities;
+    }
+
     // ИСПРАВЛЕННЫЙ МЕТОД: Получение client_id из конфигурации
     private String getClientId() {
         // 1. Пробуем получить из явно заданного client_id в конфигурации
@@ -455,7 +631,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                 Object response = apiClient.executeRequest(endpoint.getMethod(), url, testPayload, headers);
                 if (isSuccessfulResponse(response)) {
                     successfulCalls++;
-                    lastStatusCode = extractStatusCode(response);  // ПОЛУЧАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+                    lastStatusCode = extractStatusCode(response);
                 }
                 Thread.sleep(1000);
             }
@@ -467,7 +643,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Эндпоинт " + endpoint.getPath() + " позволяет выполнять " + successfulCalls +
                                 " последовательных операций без ограничений",
                         Vulnerability.Severity.HIGH,
-                        lastStatusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+                        lastStatusCode
                 );
                 vulnerabilities.add(vuln);
             }
@@ -520,7 +696,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Отсутствие rate limiting для бизнес-операций",
                         "Критичный бизнес-процесс " + endpoint.getPath() + " не имеет ограничений частоты запросов",
                         successCount >= 3 ? Vulnerability.Severity.HIGH : Vulnerability.Severity.MEDIUM,
-                        responseCodes.get(0)  // ПЕРЕДАЕМ ПЕРВЫЙ СТАТУС КОД
+                        responseCodes.get(0)
                 );
                 vulnerabilities.add(vuln);
             }
@@ -561,7 +737,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                     "Недостаточная документация защиты бизнес-процесса",
                     "Критичный бизнес-процесс " + endpoint.getPath() + " не имеет явных указаний на механизмы защиты",
                     Vulnerability.Severity.LOW,
-                    200  // Это статический анализ, используем 200
+                    200
             );
             vulnerabilities.add(vuln);
         }
@@ -588,7 +764,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Отсутствие защиты от повторных операций",
                         "Эндпоинт " + endpoint.getPath() + " не имеет защиты от повторного выполнения одинаковых операций",
                         Vulnerability.Severity.MEDIUM,
-                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+                        statusCode
                 );
                 vulnerabilities.add(vuln);
             }
@@ -635,7 +811,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Обход валидации отрицательных значений",
                         "Эндпоинт " + endpoint.getPath() + " принимает отрицательные значения без валидации",
                         Vulnerability.Severity.HIGH,
-                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+                        statusCode
                 );
                 vulnerabilities.add(vuln);
             }
@@ -660,7 +836,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Обход проверки граничных значений",
                         "Эндпоинт " + endpoint.getPath() + " принимает экстремально большие значения без валидации",
                         Vulnerability.Severity.HIGH,
-                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+                        statusCode
                 );
                 vulnerabilities.add(vuln);
             }
@@ -685,7 +861,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Обход валидации типов данных",
                         "Эндпоинт " + endpoint.getPath() + " принимает неверные типы данных без валидации",
                         Vulnerability.Severity.MEDIUM,
-                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+                        statusCode
                 );
                 vulnerabilities.add(vuln);
             }
@@ -710,7 +886,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Обход проверки обязательных полей",
                         "Эндпоинт " + endpoint.getPath() + " обрабатывает запросы без обязательных полей",
                         Vulnerability.Severity.MEDIUM,
-                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+                        statusCode
                 );
                 vulnerabilities.add(vuln);
             }
@@ -740,7 +916,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                     "Возможное нарушение целостности процесса платежей",
                     "Обнаружены эндпоинты платежей без явного требования согласий в документации",
                     Vulnerability.Severity.MEDIUM,
-                    200  // Это статический анализ, используем 200
+                    200
             );
             vulnerabilities.add(vuln);
         }
@@ -775,7 +951,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Нарушение целостности процесса платежей",
                         "Возможно создание платежа без предварительного согласия",
                         Vulnerability.Severity.HIGH,
-                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+                        statusCode
                 );
                 vulnerabilities.add(vuln);
             }
@@ -813,7 +989,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Прямой доступ к критичным операциям",
                         "Критичная операция " + endpoint.getPath() + " доступна для прямого вызова без проверок",
                         Vulnerability.Severity.MEDIUM,
-                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+                        statusCode
                 );
                 vulnerabilities.add(vuln);
             }
@@ -853,8 +1029,8 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         Map<String, String> headers = new HashMap<>();
         headers.put("Authorization", "Bearer " + token);
         headers.put("Content-Type", "application/json");
-        headers.put("User-Agent", "curl/8.16.0"); // ИЗМЕНЕНО: curl User-Agent
-        headers.put("Accept", "*/*"); // ИЗМЕНЕНО: Accept как в curl
+        headers.put("User-Agent", "curl/8.16.0");
+        headers.put("Accept", "*/*");
         return headers;
     }
 
@@ -1060,7 +1236,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Неограниченная автоматизация бизнес-процесса (базовое сканирование)",
                         "Эндпоинт " + endpoint + " позволяет выполнять последовательные операци без ограничений",
                         Vulnerability.Severity.HIGH,
-                        lastStatusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+                        lastStatusCode
                 );
                 vulnerabilities.add(vuln);
             }
@@ -1113,7 +1289,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                             "Отсутствие rate limiting (базовое сканирование)",
                             "Критичный бизнес-процесс " + endpoint + " не имеет ограничений частоты запросов",
                             Vulnerability.Severity.MEDIUM,
-                            responseCodes.get(0)  // ПЕРЕДАЕМ ПЕРВЫЙ СТАТУС КОД
+                            responseCodes.get(0)
                     );
                     vulnerabilities.add(vuln);
                 }
@@ -1140,7 +1316,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
                         "Обход бизнес-логики (отрицательные суммы)",
                         "Эндпоинт /payments принимает отрицательные суммы без валидации",
                         Vulnerability.Severity.HIGH,
-                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+                        statusCode
                 );
                 vulnerabilities.add(vuln);
             }
@@ -1162,7 +1338,7 @@ public class API6_BusinessFlowScanner implements SecurityScanner {
         vuln.setCategory(Vulnerability.Category.OWASP_API6_BUSINESS_FLOW);
         vuln.setEndpoint(endpoint);
         vuln.setMethod("POST");
-        vuln.setStatusCode(statusCode);  // УСТАНАВЛИВАЕМ РЕАЛЬНЫЙ СТАТУС КОД
+        vuln.setStatusCode(statusCode);
 
         vuln.setRecommendations(Arrays.asList(
                 "Внедрить rate limiting для чувствительных бизнес-операций",

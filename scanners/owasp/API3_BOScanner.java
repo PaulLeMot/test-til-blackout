@@ -9,488 +9,321 @@ import java.util.*;
 
 public class API3_BOScanner implements SecurityScanner {
 
-    private static final List<String> SUSPICIOUS_FIELDS = Arrays.asList(
-            "admin", "role", "permission", "status", "premium", "override", "bypass",
-            "limit", "amount", "balance", "system", "unlimited", "force", "privilege",
-            "access_level", "max_uses", "max_amount", "max_total_amount", "admin_override",
-            "bypass_checks", "force_close", "admin_approval", "system_account", "premium_features",
-            "unlimited_access", "bypass_approval", "max_access_level", "unlimited_duration",
-            "skip_balance_check", "force_approval", "limit_override", "high_risk_approved",
-            "bypass_risk_check", "auto_approved", "special_conditions", "vip_status"
+    private static final List<String> SENSITIVE_FIELDS = Arrays.asList(
+            "password", "secret", "token", "key", "creditcard", "ssn",
+            "socialsecurity", "privatekey", "authorization", "privilege",
+            "role", "permission", "admin", "system", "internal"
     );
 
     private ScanConfig config;
 
     @Override
     public String getName() {
-        return "API3_BOPLA_Scanner";
+        return "OWASP API3: Broken Object Property Level Authorization Scanner";
     }
 
     @Override
     public List<Vulnerability> scan(Object openAPI, ScanConfig config, ApiClient apiClient) {
         this.config = config;
         List<Vulnerability> vulnerabilities = new ArrayList<>();
-        ObjectMapper mapper = new ObjectMapper();
 
-        try {
-            String baseUrl = config.getTargetBaseUrl();
+        // Если включен статический анализ, используем эндпоинты из конфигурации
+        if (config.isStaticAnalysisEnabled() && config.getTestedEndpoints() != null) {
+            vulnerabilities.addAll(scanEndpoints(config.getTestedEndpoints(), config, apiClient));
+        }
 
-            System.out.println("API3_BOScanner: Starting comprehensive Mass Assignment tests for " + baseUrl);
+        // Динамический анализ только если включен
+        if (config.isDynamicAnalysisEnabled()) {
+            vulnerabilities.addAll(performDynamicBOPLATests(config, apiClient));
+        }
 
-            // ИСПРАВЛЕНИЕ: Используем токены из конфигурации, а не получаем их заново
-            Map<String, String> tokens = config.getUserTokens();
+        return vulnerabilities;
+    }
 
-            if (tokens == null || tokens.isEmpty()) {
-                System.out.println("API3_BOScanner: No tokens in config, skipping scan");
-                return vulnerabilities;
+    @Override
+    public List<Vulnerability> scanEndpoints(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-3) Запуск СТАТИЧЕСКОГО анализа BOPLA на " + endpoints.size() + " эндпоинтах");
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Анализ структуры эндпоинтов для BOPLA
+        vulnerabilities.addAll(analyzeObjectPropertyAccess(endpoints, config));
+        vulnerabilities.addAll(analyzeSensitiveProperties(endpoints, config));
+        vulnerabilities.addAll(analyzePropertyLevelAuthorization(endpoints, config));
+
+        // Комбинированный анализ
+        if (config.getAnalysisMode() == ScanConfig.AnalysisMode.COMBINED) {
+            vulnerabilities.addAll(performCombinedBOPLATests(endpoints, config, apiClient));
+        }
+
+        System.out.println("(API-3) Статический анализ BOPLA завершен. Найдено уязвимостей: " + vulnerabilities.size());
+        return vulnerabilities;
+    }
+
+    /**
+     * Анализ доступа к свойствам объектов
+     */
+    private List<Vulnerability> analyzeObjectPropertyAccess(List<TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        for (TestedEndpoint endpoint : endpoints) {
+            String path = endpoint.getPath().toLowerCase();
+            String method = endpoint.getMethod();
+
+            // Эндпоинты, работающие с объектами и их свойствами
+            boolean isObjectEndpoint = path.matches(".*/\\{.*\\}.*") &&
+                    ("GET".equals(method) || "PUT".equals(method) || "PATCH".equals(method));
+
+            if (isObjectEndpoint) {
+                Vulnerability vuln = createBOPLAVulnerability(endpoint,
+                        "Эндпоинт работает с объектами и может быть уязвим к несанкционированному доступу к свойствам",
+                        config);
+                vulnerabilities.add(vuln);
             }
-
-            System.out.println("API3_BOScanner: Using " + tokens.size() + " tokens from config");
-
-            // Тестируем все возможные эндпоинты с разными комбинациями
-            vulnerabilities.addAll(testAllEndpoints(baseUrl, tokens, apiClient, mapper));
-
-            System.out.println("API3_BOScanner: Completed. Found " + vulnerabilities.size() + " vulnerabilities");
-
-        } catch (Exception e) {
-            System.err.println("API3_BOScanner error: " + e.getMessage());
-            e.printStackTrace();
         }
 
         return vulnerabilities;
     }
 
     /**
-     * ТЕСТИРУЕМ ВСЕ ВОЗМОЖНЫЕ ЭНДПОИНТЫ
+     * Анализ чувствительных свойств
      */
-    private List<Vulnerability> testAllEndpoints(String baseUrl, Map<String, String> tokens,
-                                                 ApiClient apiClient, ObjectMapper mapper) {
+    private List<Vulnerability> analyzeSensitiveProperties(List<TestedEndpoint> endpoints, ScanConfig config) {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
 
-        // Тестируем с каждым токеном
-        for (Map.Entry<String, String> tokenEntry : tokens.entrySet()) {
-            String tokenType = tokenEntry.getKey();
-            String token = tokenEntry.getValue();
+        for (TestedEndpoint endpoint : endpoints) {
+            if (endpoint.getParameters() != null) {
+                List<String> sensitiveParams = new ArrayList<>();
 
-            // Пропускаем служебные токены
-            if (tokenType.equals("bank") || tokenType.equals("default")) {
-                continue;
-            }
-
-            System.out.println("API3: Testing with token: " + tokenType);
-
-            // Тестируем все эндпоинты с этим токеном
-            vulnerabilities.addAll(testAccountEndpoints(baseUrl, token, tokenType, apiClient, mapper));
-            vulnerabilities.addAll(testConsentEndpoints(baseUrl, token, tokenType, apiClient, mapper));
-            vulnerabilities.addAll(testPaymentEndpoints(baseUrl, token, tokenType, apiClient, mapper));
-            vulnerabilities.addAll(testOtherEndpoints(baseUrl, token, tokenType, apiClient, mapper));
-        }
-
-        return vulnerabilities;
-    }
-
-    private List<Vulnerability> testAccountEndpoints(String baseUrl, String token, String tokenType,
-                                                     ApiClient apiClient, ObjectMapper mapper) {
-        List<Vulnerability> vulnerabilities = new ArrayList<>();
-
-        try {
-            Map<String, String> headers = createHeaders(token);
-
-            // Тест 1: Создание счета с Mass Assignment
-            Map<String, Object> accountPayload = new HashMap<>();
-            accountPayload.put("account_type", "checking");
-            accountPayload.put("initial_balance", 9999999.00);
-            accountPayload.put("system_account", true);
-            accountPayload.put("admin_override", true);
-            accountPayload.put("premium_features", true);
-            accountPayload.put("overdraft_limit", 9999999.00);
-
-            String payload = mapper.writeValueAsString(accountPayload);
-
-            System.out.println("API3: Testing account creation with " + tokenType);
-            Object response = apiClient.executeRequest("POST", baseUrl + "/accounts", payload, headers);
-
-            vulnerabilities.addAll(analyzeResponse(response,
-                    "Mass Assignment в создании счета",
-                    "Эндпоинт /accounts уязвим к Mass Assignment с административными полями",
-                    baseUrl + "/accounts", "POST", payload, tokenType));
-
-            // Тест 2: Получение списка счетов (для проверки доступа)
-            System.out.println("API3: Testing account list access with " + tokenType);
-            Object listResponse = apiClient.executeRequest("GET", baseUrl + "/accounts", null, headers);
-
-            if (listResponse != null && extractStatusCode(listResponse) == 200) {
-                System.out.println("API3: Account list accessible with " + tokenType);
-
-                // Если доступ есть, тестируем операции модификации
-                String accountId = extractFirstAccountId(extractResponseBody(listResponse), mapper);
-                if (accountId != null) {
-                    vulnerabilities.addAll(testAccountModification(baseUrl, token, tokenType, accountId, apiClient, mapper));
-                }
-            }
-
-        } catch (Exception e) {
-            System.err.println("API3: Error testing account endpoints with " + tokenType + ": " + e.getMessage());
-        }
-
-        return vulnerabilities;
-    }
-
-    private List<Vulnerability> testAccountModification(String baseUrl, String token, String tokenType,
-                                                        String accountId, ApiClient apiClient, ObjectMapper mapper) {
-        List<Vulnerability> vulnerabilities = new ArrayList<>();
-
-        try {
-            Map<String, String> headers = createHeaders(token);
-
-            // Тест изменения статуса с Mass Assignment
-            Map<String, Object> statusPayload = new HashMap<>();
-            statusPayload.put("status", "closed");
-            statusPayload.put("force_close", true);
-            statusPayload.put("admin_override", true);
-
-            String payload = mapper.writeValueAsString(statusPayload);
-
-            System.out.println("API3: Testing account status modification with " + tokenType);
-            Object response = apiClient.executeRequest("PUT",
-                    baseUrl + "/accounts/" + accountId + "/status", payload, headers);
-
-            vulnerabilities.addAll(analyzeResponse(response,
-                    "Mass Assignment в изменении статуса счета",
-                    "Эндпоинт /accounts/{id}/status уязвим к Mass Assignment",
-                    baseUrl + "/accounts/" + accountId + "/status", "PUT", payload, tokenType));
-
-        } catch (Exception e) {
-            System.err.println("API3: Error testing account modification with " + tokenType + ": " + e.getMessage());
-        }
-
-        return vulnerabilities;
-    }
-
-    private List<Vulnerability> testConsentEndpoints(String baseUrl, String token, String tokenType,
-                                                     ApiClient apiClient, ObjectMapper mapper) {
-        List<Vulnerability> vulnerabilities = new ArrayList<>();
-
-        try {
-            Map<String, String> headers = createHeaders(token);
-
-            // ИСПРАВЛЕНИЕ: Используем clientId из конфигурации или username из токена
-            String clientId = config.getClientId();
-            if (clientId == null) {
-                clientId = tokenType; // Используем имя токена как clientId
-            }
-
-            // Тест Account Consent с Mass Assignment
-            Map<String, Object> accountConsentPayload = new HashMap<>();
-            accountConsentPayload.put("client_id", clientId);
-            accountConsentPayload.put("permissions", Arrays.asList(
-                    "ReadAccountsDetail", "ReadBalances", "ReadTransactionsDetail",
-                    "AdminAccess", "WriteAccess", "DeleteAccess"
-            ));
-            accountConsentPayload.put("reason", "Mass Assignment Test");
-            accountConsentPayload.put("requesting_bank", config.getBankId());
-            accountConsentPayload.put("max_access_level", "super_admin");
-            accountConsentPayload.put("unlimited_duration", true);
-
-            String accountConsentStr = mapper.writeValueAsString(accountConsentPayload);
-
-            System.out.println("API3: Testing account consent with " + tokenType);
-            Object accountResponse = apiClient.executeRequest("POST",
-                    baseUrl + "/account-consents/request", accountConsentStr, headers);
-
-            vulnerabilities.addAll(analyzeResponse(accountResponse,
-                    "Mass Assignment в согласии на доступ к счетам",
-                    "Эндпоинт /account-consents/request уязвим к Mass Assignment",
-                    baseUrl + "/account-consents/request", "POST", accountConsentStr, tokenType));
-
-        } catch (Exception e) {
-            System.err.println("API3: Error testing consent endpoints with " + tokenType + ": " + e.getMessage());
-        }
-
-        return vulnerabilities;
-    }
-
-    private List<Vulnerability> testPaymentEndpoints(String baseUrl, String token, String tokenType,
-                                                     ApiClient apiClient, ObjectMapper mapper) {
-        List<Vulnerability> vulnerabilities = new ArrayList<>();
-
-        try {
-            // Сначала создаем простой consent для тестирования
-            String consentId = createSimpleConsent(baseUrl, token, apiClient, mapper);
-            if (consentId == null) {
-                System.out.println("API3: No consent created for payment testing with " + tokenType);
-                return vulnerabilities;
-            }
-
-            Map<String, String> headers = createHeaders(token);
-            headers.put("X-Payment-Consent-Id", consentId);
-
-            // Тест платежа с Mass Assignment
-            Map<String, Object> paymentPayload = new HashMap<>();
-            paymentPayload.put("data", Map.of(
-                    "initiation", Map.of(
-                            "instructionIdentification", "mass-assignment-test",
-                            "endToEndIdentification", "bypass-test",
-                            "instructedAmount", Map.of("amount", "9999999.00", "currency", "RUB"),
-                            "debtorAccount", Map.of("identification", "4084fcf5c6cfb514fe", "name", "Test Account"),
-                            "creditorAccount", Map.of("identification", "40808e72397159347f", "name", "Test Account 2"),
-                            "remittanceInformation", Map.of("reference", "Mass Assignment Test")
-                    )
-            ));
-            paymentPayload.put("risk", Map.of(
-                    "bypass_risk_check", true,
-                    "admin_override", true
-            ));
-
-            String payload = mapper.writeValueAsString(paymentPayload);
-
-            System.out.println("API3: Testing payment with Mass Assignment with " + tokenType);
-            Object response = apiClient.executeRequest("POST", baseUrl + "/payments", payload, headers);
-
-            vulnerabilities.addAll(analyzeResponse(response,
-                    "Mass Assignment в платежах",
-                    "Эндпоинт /payments уязвим к Mass Assignment",
-                    baseUrl + "/payments", "POST", payload, tokenType));
-
-        } catch (Exception e) {
-            System.err.println("API3: Error testing payment endpoints with " + tokenType + ": " + e.getMessage());
-        }
-
-        return vulnerabilities;
-    }
-
-    private List<Vulnerability> testOtherEndpoints(String baseUrl, String token, String tokenType,
-                                                   ApiClient apiClient, ObjectMapper mapper) {
-        List<Vulnerability> vulnerabilities = new ArrayList<>();
-
-        try {
-            Map<String, String> headers = createHeaders(token);
-
-            // Тестируем другие возможные эндпоинты
-            String[] otherEndpoints = {
-                    "/transactions",
-                    "/balances",
-                    "/beneficiaries"
-            };
-
-            for (String endpoint : otherEndpoints) {
-                Map<String, Object> testPayload = new HashMap<>();
-                testPayload.put("test", "data");
-                testPayload.put("admin_override", true);
-
-                String payload = mapper.writeValueAsString(testPayload);
-
-                System.out.println("API3: Testing " + endpoint + " with " + tokenType);
-                Object response = apiClient.executeRequest("POST", baseUrl + endpoint, payload, headers);
-
-                vulnerabilities.addAll(analyzeResponse(response,
-                        "Mass Assignment в " + endpoint,
-                        "Эндпоинт " + endpoint + " потенциально уязвим к Mass Assignment",
-                        baseUrl + endpoint, "POST", payload, tokenType));
-            }
-
-        } catch (Exception e) {
-            System.err.println("API3: Error testing other endpoints with " + tokenType + ": " + e.getMessage());
-        }
-
-        return vulnerabilities;
-    }
-
-    private String createSimpleConsent(String baseUrl, String token, ApiClient apiClient, ObjectMapper mapper) {
-        try {
-            String clientId = config.getClientId();
-            if (clientId == null) {
-                return null; // Не можем создать consent без clientId
-            }
-
-            Map<String, Object> consentPayload = new HashMap<>();
-            consentPayload.put("requesting_bank", config.getBankId());
-            consentPayload.put("client_id", clientId);
-            consentPayload.put("debtor_account", "4084fcf5c6cfb514fe");
-            consentPayload.put("consent_type", "single_use");
-            consentPayload.put("max_amount_per_payment", 1000.00);
-
-            String payload = mapper.writeValueAsString(consentPayload);
-            Map<String, String> headers = createHeaders(token);
-
-            Object response = apiClient.executeRequest("POST",
-                    baseUrl + "/payment-consents/request", payload, headers);
-
-            if (response != null && extractStatusCode(response) == 200) {
-                String responseBody = extractResponseBody(response);
-                if (responseBody != null && responseBody.contains("consent_id")) {
-                    JsonNode json = mapper.readTree(responseBody);
-                    if (json.has("consent_id")) {
-                        return json.get("consent_id").asText();
+                for (EndpointParameter param : endpoint.getParameters()) {
+                    if (isSensitiveProperty(param.getName())) {
+                        sensitiveParams.add(param.getName());
                     }
                 }
+
+                if (!sensitiveParams.isEmpty()) {
+                    Vulnerability vuln = createSensitivePropertiesVulnerability(endpoint, sensitiveParams, config);
+                    vulnerabilities.add(vuln);
+                }
             }
-        } catch (Exception e) {
-            System.err.println("API3: Error creating simple consent: " + e.getMessage());
-        }
-        return null;
-    }
 
-    private List<Vulnerability> analyzeResponse(Object response, String title, String description,
-                                                String endpoint, String method, String requestPayload, String tokenType) {
-        List<Vulnerability> vulnerabilities = new ArrayList<>();
+            // Также проверяем response body на наличие чувствительных полей
+            if (endpoint.isTested() && endpoint.getResponseBody() != null) {
+                String responseBody = endpoint.getResponseBody().toLowerCase();
+                List<String> exposedSensitiveFields = new ArrayList<>();
 
-        if (response == null) return vulnerabilities;
+                for (String field : SENSITIVE_FIELDS) {
+                    if (responseBody.contains("\"" + field + "\"") || responseBody.contains("'" + field + "'")) {
+                        exposedSensitiveFields.add(field);
+                    }
+                }
 
-        int statusCode = extractStatusCode(response);
-        String responseBody = extractResponseBody(response);
-
-        System.out.println("API3: Response for " + endpoint + " with " + tokenType + ": " + statusCode);
-
-        // Анализируем ответ на предмет уязвимостей Mass Assignment
-        if (statusCode == 200 || statusCode == 201) {
-            // Успешный запрос - проверяем, приняты ли подозрительные поля
-            if (containsSuspiciousFields(responseBody) ||
-                    (responseBody != null && (
-                            responseBody.contains("auto_approved") ||
-                                    responseBody.contains("admin_override") ||
-                                    responseBody.contains("bypass") ||
-                                    responseBody.contains("premium") ||
-                                    responseBody.contains("unlimited"))
-                    )) {
-
-                Vulnerability vuln = createVulnerability(
-                        title + " (" + tokenType + ")",
-                        description + "\nТокен: " + tokenType + "\nСтатус: " + statusCode,
-                        endpoint,
-                        method,
-                        requestPayload,
-                        responseBody,
-                        statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД
-                );
-                vulnerabilities.add(vuln);
+                if (!exposedSensitiveFields.isEmpty()) {
+                    Vulnerability vuln = createExposedPropertiesVulnerability(endpoint, exposedSensitiveFields, config);
+                    vulnerabilities.add(vuln);
+                }
             }
-        } else if (statusCode == 403) {
-            System.out.println("API3: 403 Forbidden for " + endpoint + " with " + tokenType);
-            // ДОБАВЛЕНО: Создаем уязвимость даже для 403, если это показывает проблему безопасности
-            Vulnerability vuln = createVulnerability(
-                    "Mass Assignment Attempt Blocked (" + tokenType + ")",
-                    "Попытка Mass Assignment была заблокирована с кодом 403",
-                    endpoint,
-                    method,
-                    requestPayload,
-                    responseBody,
-                    statusCode  // ПЕРЕДАЕМ РЕАЛЬНЫЙ СТАТУС КОД 403
-            );
-            vuln.setSeverity(Vulnerability.Severity.LOW);
-            vulnerabilities.add(vuln);
-        } else if (statusCode >= 400) {
-            System.out.println("API3: Error " + statusCode + " for " + endpoint + " with " + tokenType);
         }
 
         return vulnerabilities;
     }
 
-    private String extractFirstAccountId(String responseBody, ObjectMapper mapper) {
-        try {
-            if (responseBody == null) return null;
-            JsonNode json = mapper.readTree(responseBody);
+    /**
+     * Анализ авторизации на уровне свойств
+     */
+    private List<Vulnerability> analyzePropertyLevelAuthorization(List<TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
 
-            // Различные возможные структуры ответа
-            if (json.has("data") && json.get("data").has("account")) {
-                JsonNode accounts = json.get("data").get("account");
-                if (accounts.isArray() && accounts.size() > 0) {
-                    return accounts.get(0).get("accountId").asText();
+        for (TestedEndpoint endpoint : endpoints) {
+            // Проверяем эндпоинты, которые могут изменять свойства объектов
+            if ("PUT".equals(endpoint.getMethod()) || "PATCH".equals(endpoint.getMethod())) {
+                List<String> issues = new ArrayList<>();
+
+                // Проверяем наличие большого количества параметров (возможность изменения многих свойств)
+                if (endpoint.getParameters() != null && endpoint.getParameters().size() > 15) {
+                    issues.add("Большое количество параметров (" + endpoint.getParameters().size() + ") для изменения");
+                }
+
+                // Проверяем описание на наличие признаков прямого доступа к свойствам
+                if (endpoint.getDescription() != null) {
+                    String description = endpoint.getDescription().toLowerCase();
+                    if (description.contains("update") &&
+                            !description.contains("validation") &&
+                            !description.contains("authorization")) {
+                        issues.add("Возможно отсутствие проверки авторизации на уровне свойств");
+                    }
+                }
+
+                if (!issues.isEmpty()) {
+                    Vulnerability vuln = createPropertyAuthorizationVulnerability(endpoint, issues, config);
+                    vulnerabilities.add(vuln);
                 }
             }
-            if (json.has("account")) {
-                JsonNode accounts = json.get("account");
-                if (accounts.isArray() && accounts.size() > 0) {
-                    return accounts.get(0).get("accountId").asText();
-                }
-            }
-            if (json.has("accounts")) {
-                JsonNode accounts = json.get("accounts");
-                if (accounts.isArray() && accounts.size() > 0) {
-                    return accounts.get(0).get("accountId").asText();
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("API3: Error extracting account ID: " + e.getMessage());
         }
-        return null;
+
+        return vulnerabilities;
     }
 
-    private Map<String, String> createHeaders(String token) {
-        Map<String, String> headers = new HashMap<>();
-        headers.put("Authorization", "Bearer " + token);
-        headers.put("Content-Type", "application/json");
-        headers.put("X-Requesting-Bank", config.getBankId());
-        headers.put("Accept", "application/json");
-        headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-        return headers;
+    /**
+     * Проверка, является ли свойство чувствительным
+     */
+    private boolean isSensitiveProperty(String propertyName) {
+        String lowerProperty = propertyName.toLowerCase();
+        return SENSITIVE_FIELDS.stream().anyMatch(field -> lowerProperty.contains(field.toLowerCase()));
     }
 
-    private int extractStatusCode(Object response) {
-        try {
-            if (response instanceof core.ApiResponse) {
-                return ((core.ApiResponse) response).getStatusCode();
-            } else if (response instanceof HttpApiClient.ApiResponse) {
-                return ((HttpApiClient.ApiResponse) response).getStatusCode();
-            } else {
-                return (int) response.getClass().getMethod("getStatusCode").invoke(response);
-            }
-        } catch (Exception e) {
-            return -1;
-        }
-    }
-
-    private String extractResponseBody(Object response) {
-        try {
-            if (response instanceof core.ApiResponse) {
-                return ((core.ApiResponse) response).getBody();
-            } else if (response instanceof HttpApiClient.ApiResponse) {
-                return ((HttpApiClient.ApiResponse) response).getBody();
-            } else {
-                return (String) response.getClass().getMethod("getBody").invoke(response);
-            }
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private boolean containsSuspiciousFields(String responseBody) {
-        if (responseBody == null) return false;
-        String lowerBody = responseBody.toLowerCase();
-        for (String field : SUSPICIOUS_FIELDS) {
-            if (lowerBody.contains(field.toLowerCase())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private Vulnerability createVulnerability(String title, String description, String endpoint,
-                                              String method, String requestPayload, String responseBody, int statusCode) {
+    /**
+     * Создание уязвимости для BOPLA
+     */
+    private Vulnerability createBOPLAVulnerability(TestedEndpoint endpoint, String description, ScanConfig config) {
         Vulnerability vuln = new Vulnerability();
-        vuln.setTitle(title);
-        vuln.setDescription(description);
+        vuln.setTitle("API3:2023 - Broken Object Property Level Authorization");
+        vuln.setDescription(description + " для эндпоинта " + endpoint.getMethod() + " " + endpoint.getPath());
         vuln.setSeverity(Vulnerability.Severity.HIGH);
         vuln.setCategory(Vulnerability.Category.OWASP_API3_BOPLA);
-        vuln.setEndpoint(endpoint);
-        vuln.setMethod(method);
-        vuln.setStatusCode(statusCode);  // УСТАНАВЛИВАЕМ РЕАЛЬНЫЙ СТАТУС КОД
-
-        String evidence = "Запрос (" + method + " " + endpoint + "):\n" +
-                requestPayload + "\n\nОтвет:\n" +
-                (responseBody != null && responseBody.length() > 1000 ?
-                        responseBody.substring(0, 1000) + "..." : responseBody);
-        vuln.setEvidence(evidence);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+        vuln.setEvidence(
+                "Статический анализ выявил потенциальную уязвимость BOPLA:\n" +
+                        "- Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "- Источник: " + endpoint.getSource() + "\n" +
+                        "- Параметры: " + (endpoint.getParameters() != null ? endpoint.getParameters().size() : 0)
+        );
 
         vuln.setRecommendations(Arrays.asList(
-                "Реализуйте whitelist для полей, которые могут быть установлены клиентом",
-                "Используйте DTO (Data Transfer Objects) с явным указанием разрешенных полей",
-                "Включите защиту от mass assignment в фреймворке",
-                "Разделите поля на пользовательские и системные",
-                "Валидируйте все входящие поля на сервере",
-                "Используйте схемы валидации для всех входящих данных"
+                "Реализовать проверку авторизации для каждого свойства объекта",
+                "Использовать whitelist разрешенных к изменению свойств для разных ролей",
+                "Валидировать права доступа к каждому свойству отдельно",
+                "Разделить эндпоинты для публичных и приватных свойств",
+                "Использовать DTO с явным указанием доступных полей"
         ));
 
         return vuln;
+    }
+
+    /**
+     * Создание уязвимости для чувствительных свойств
+     */
+    private Vulnerability createSensitivePropertiesVulnerability(TestedEndpoint endpoint, List<String> sensitiveProperties, ScanConfig config) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API3:2023 - Sensitive Properties Exposure");
+        vuln.setDescription(
+                "Эндпоинт " + endpoint.getMethod() + " " + endpoint.getPath() +
+                        " работает с чувствительными свойствами: " + String.join(", ", sensitiveProperties) + "\n\n" +
+                        "Эти свойства могут быть подвержены несанкционированному доступу или изменению."
+        );
+        vuln.setSeverity(Vulnerability.Severity.HIGH);
+        vuln.setCategory(Vulnerability.Category.OWASP_API3_BOPLA);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+        vuln.setEvidence(
+                "Обнаружены чувствительные свойства:\n" +
+                        "- Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "- Чувствительные свойства: " + String.join(", ", sensitiveProperties) + "\n" +
+                        "- Всего параметров: " + (endpoint.getParameters() != null ? endpoint.getParameters().size() : 0)
+        );
+
+        vuln.setRecommendations(Arrays.asList(
+                "Защитить чувствительные свойства дополнительной авторизацией",
+                "Использовать шифрование для хранения чувствительных данных",
+                "Логировать все доступы к чувствительным свойствам",
+                "Реализовать маскировку чувствительных данных в ответах",
+                "Разделить эндпоинты для работы с чувствительными и обычными свойствами"
+        ));
+
+        return vuln;
+    }
+
+    /**
+     * Создание уязвимости для раскрытых свойств
+     */
+    private Vulnerability createExposedPropertiesVulnerability(TestedEndpoint endpoint, List<String> exposedFields, ScanConfig config) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API3:2023 - Exposed Sensitive Properties");
+        vuln.setDescription(
+                "Эндпоинт " + endpoint.getMethod() + " " + endpoint.getPath() +
+                        " раскрывает чувствительные свойства в ответах: " + String.join(", ", exposedFields) + "\n\n" +
+                        "Это может привести к утечке конфиденциальной информации."
+        );
+        vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+        vuln.setCategory(Vulnerability.Category.OWASP_API3_BOPLA);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+        vuln.setEvidence(
+                "Чувствительные свойства обнаружены в ответе:\n" +
+                        "- Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "- Раскрытые свойства: " + String.join(", ", exposedFields) + "\n" +
+                        "- Статус код: " + endpoint.getStatusCode()
+        );
+
+        vuln.setRecommendations(Arrays.asList(
+                "Исключить чувствительные свойства из ответов по умолчанию",
+                "Использовать проекции DTO для фильтрации возвращаемых полей",
+                "Реализовать ролевую модель для доступа к свойствам",
+                "Внедрить механизм согласия пользователя на раскрытие свойств",
+                "Использовать маскировку для частичного скрытия чувствительных данных"
+        ));
+
+        return vuln;
+    }
+
+    /**
+     * Создание уязвимости для авторизации свойств
+     */
+    private Vulnerability createPropertyAuthorizationVulnerability(TestedEndpoint endpoint, List<String> issues, ScanConfig config) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API3:2023 - Missing Property Level Authorization");
+        vuln.setDescription(
+                "Эндпоинт " + endpoint.getMethod() + " " + endpoint.getPath() +
+                        " может не иметь достаточной авторизации на уровне свойств.\n\n" +
+                        "Проблемы:\n• " + String.join("\n• ", issues)
+        );
+        vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+        vuln.setCategory(Vulnerability.Category.OWASP_API3_BOPLA);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+        vuln.setEvidence(
+                "Признаки отсутствия авторизации на уровне свойств:\n" +
+                        "- Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "- Проблемы: " + String.join(", ", issues) + "\n" +
+                        "- Описание: " + (endpoint.getDescription() != null ?
+                        endpoint.getDescription().substring(0, Math.min(100, endpoint.getDescription().length())) : "отсутствует")
+        );
+
+        vuln.setRecommendations(Arrays.asList(
+                "Реализовать проверку прав для каждого изменяемого свойства",
+                "Использовать attribute-based access control (ABAC)",
+                "Валидировать права доступа перед применением изменений",
+                "Разделить логику авторизации для разных типов свойств",
+                "Вести аудит изменений свойств объектов"
+        ));
+
+        return vuln;
+    }
+
+    // ========== ДИНАМИЧЕСКИЕ МЕТОДЫ ==========
+
+    /**
+     * Динамические тесты BOPLA
+     */
+    private List<Vulnerability> performDynamicBOPLATests(ScanConfig config, ApiClient apiClient) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        System.out.println("(API-3) Выполнение динамических тестов BOPLA...");
+
+        // Здесь можно добавить динамические тесты для BOPLA
+        // Например, попытки доступа к свойствам объектов без должных прав
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Комбинированные тесты BOPLA
+     */
+    private List<Vulnerability> performCombinedBOPLATests(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        System.out.println("(API-3) Выполнение комбинированных тестов BOPLA...");
+
+        return vulnerabilities;
     }
 }

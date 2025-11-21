@@ -1,3 +1,4 @@
+// scanners/owasp/API5_BrokenFunctionLevelAuthScanner.java
 package scanners.owasp;
 
 import scanners.SecurityScanner;
@@ -5,6 +6,8 @@ import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
 import core.HttpApiClient;
+import core.TestedEndpoint;
+import core.EndpointParameter;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.Operation;
@@ -70,6 +73,11 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         List<Vulnerability> vulnerabilities = new ArrayList<>();
         reportedVulnerabilities.clear();
 
+        // Если включен статический анализ, используем эндпоинты из конфигурации
+        if (config.isStaticAnalysisEnabled() && config.getTestedEndpoints() != null) {
+            return scanEndpoints(config.getTestedEndpoints(), config, apiClient);
+        }
+
         if (!(openApiObj instanceof OpenAPI)) {
             System.err.println("(API-5) OpenAPI спецификация недоступна. Сканирование невозможно.");
             return vulnerabilities;
@@ -123,8 +131,172 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
     }
 
     /**
-     * Анализ OpenAPI спецификации для поиска административных эндпоинтов
+     * Сканирование эндпоинтов для статического анализа
      */
+    @Override
+    public List<Vulnerability> scanEndpoints(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-5) Запуск анализа BFLA на " + endpoints.size() + " эндпоинтах");
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Определяем режим работы
+        boolean isStaticOnly = config.getAnalysisMode() == ScanConfig.AnalysisMode.STATIC_ONLY;
+        boolean hasTokens = config.getUserTokens() != null && config.getUserTokens().size() >= 2;
+
+        if (isStaticOnly) {
+            // Режим только статического анализа - анализируем структуру эндпоинтов
+            vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+        } else if (hasTokens) {
+            // Комбинированный режим с токенами - выполняем статический и динамические тесты
+            vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+            vulnerabilities.addAll(performDynamicBFLATests(endpoints, config, apiClient));
+        } else {
+            // Комбинированный режим без токенов - только статический анализ
+            System.out.println("(API-5) В комбинированном режиме нет токенов, выполняем только статический анализ");
+            vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+        }
+
+        System.out.println("(API-5) Анализ BFLA завершен. Найдено уязвимостей: " + vulnerabilities.size());
+        return vulnerabilities;
+    }
+
+    /**
+     * Анализ структуры эндпоинтов для выявления потенциальных BFLA уязвимостей
+     */
+    private List<Vulnerability> analyzeEndpointsStructure(List<TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Шаблоны для идентификации административных и критических эндпоинтов
+        String[] adminPatterns = {
+                "/admin/", "/banker/", "/internal/", "/system/",
+                "approve", "reject", "upload", "capital", "key-rate", "stats", "teams"
+        };
+
+        // Критические методы для административных функций
+        String[] criticalMethods = {"GET", "POST", "PUT", "DELETE", "PATCH"};
+
+        for (TestedEndpoint endpoint : endpoints) {
+            String path = endpoint.getPath();
+            String method = endpoint.getMethod();
+
+            // Проверяем, содержит ли путь административные шаблоны и использует ли критический метод
+            boolean hasAdminPattern = Arrays.stream(adminPatterns)
+                    .anyMatch(pattern -> path.toLowerCase().contains(pattern));
+            boolean hasCriticalMethod = Arrays.stream(criticalMethods)
+                    .anyMatch(m -> m.equals(method));
+            boolean isPublicEndpoint = isPublicEndpoint(path);
+
+            if (hasAdminPattern && hasCriticalMethod && !isPublicEndpoint) {
+                Vulnerability vuln = createStaticBFLAVulnerability(endpoint, config);
+                vulnerabilities.add(vuln);
+                System.out.println("(API-5) Обнаружен потенциально уязвимый административный эндпоинт: " + method + " " + path);
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Создание уязвимости для статического анализа BFLA
+     */
+    private Vulnerability createStaticBFLAVulnerability(TestedEndpoint endpoint, ScanConfig config) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API5:2023 - Potential Broken Function Level Authorization");
+        vuln.setDescription(
+                "Эндпоинт " + endpoint.getMethod() + " " + endpoint.getPath() +
+                        " может быть уязвим к атакам BFLA (Broken Function Level Authorization).\n\n" +
+                        "Эндпоинт выполняет административные или критические функции и может позволять " +
+                        "неавторизованный доступ к привилегированным операциям при отсутствии proper authorization checks.\n\n" +
+                        "Источник: " + endpoint.getSource()
+        );
+        vuln.setSeverity(Vulnerability.Severity.HIGH);
+        vuln.setCategory(Vulnerability.Category.OWASP_API5_BROKEN_FUNCTION_LEVEL_AUTH);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+        vuln.setEvidence(
+                "Статический анализ выявил потенциальную уязвимость:\n" +
+                        "- Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "- Выполняет административные/критические функции\n" +
+                        "- Источник: " + endpoint.getSource() + "\n" +
+                        "- Параметры: " + (endpoint.getParameters() != null ? endpoint.getParameters().size() : 0) + " параметров"
+        );
+        vuln.setStatusCode(-1);
+
+        vuln.setRecommendations(Arrays.asList(
+                "Реализовать строгую проверку прав доступа на уровне функций",
+                "Использовать ролевую модель доступа (RBAC) с разделением прав",
+                "Запрещать доступ к административным функциям для обычных пользователей",
+                "Проверять права доступа перед выполнением критических операций",
+                "Использовать централизованную систему управления доступом",
+                "Регулярно проводить аудит прав доступа",
+                "Внедрить принцип минимальных привилегий"
+        ));
+
+        return vuln;
+    }
+
+    /**
+     * Выполнение динамических BFLA тестов в комбинированном режиме
+     */
+    private List<Vulnerability> performDynamicBFLATests(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        System.out.println("(API-5) Динамическое тестирование BFLA в комбинированном режиме на " + endpoints.size() + " эндпоинтах");
+
+        // Получаем пользовательские токены
+        Map<String, String> tokens = config.getUserTokens();
+        if (tokens == null || tokens.size() < 2) {
+            System.err.println("(API-5) Недостаточно токенов для динамического тестирования BFLA");
+            return vulnerabilities;
+        }
+
+        // Получаем первого пользователя для тестирования
+        List<String> users = new ArrayList<>(tokens.keySet());
+        String regularUser = users.get(0);
+        String regularToken = tokens.get(regularUser);
+
+        // Фильтруем административные эндпоинты для тестирования
+        List<TestedEndpoint> adminEndpoints = endpoints.stream()
+                .filter(endpoint -> {
+                    String path = endpoint.getPath();
+                    return Arrays.stream(new String[]{"/admin/", "/banker/", "approve", "reject"})
+                            .anyMatch(pattern -> path.toLowerCase().contains(pattern))
+                            && !isPublicEndpoint(path);
+                })
+                .collect(java.util.stream.Collectors.toList());
+
+        System.out.println("(API-5) Отфильтровано административных эндпоинтов для тестирования: " + adminEndpoints.size());
+
+        // Тестируем доступ к административным эндпоинтам
+        for (int i = 0; i < adminEndpoints.size(); i++) {
+            TestedEndpoint endpoint = adminEndpoints.get(i);
+            String testablePath = replacePathParameters(endpoint.getPath());
+            String url = config.getTargetBaseUrl() + testablePath;
+
+            System.out.println("(API-5) [" + (i+1) + "/" + adminEndpoints.size() + "] Проверка доступа к: " + url);
+
+            // Определяем метод запроса
+            String method = getRequestMethodForAdminEndpoint(endpoint.getPath());
+
+            // Добавляем задержку для предотвращения 429 ошибки
+            applyRateLimitDelay(i);
+
+            // Выполняем запрос с повторными попытками
+            HttpApiClient.ApiResponse response = executeRequestWithRetry(
+                    apiClient, method, url, null, createHeaders(regularToken, config.getBankId()),
+                    regularUser, endpoint.getPath()
+            );
+
+            if (response != null) {
+                checkAdminAccessVulnerability(endpoint.getPath(), regularUser, response, url, vulnerabilities);
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    // Остальные методы остаются без изменений (analyzeOpenAPIForAdminEndpoints, testAdminEndpointAccess, etc.)
+    // ... [все остальные методы из оригинального файла остаются без изменений] ...
+
     private List<String> analyzeOpenAPIForAdminEndpoints(OpenAPI openAPI) {
         List<String> adminEndpoints = new ArrayList<>();
 
@@ -168,9 +340,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         return adminEndpoints;
     }
 
-    /**
-     * Проверка, является ли эндпоинт публичным техническим
-     */
     private boolean isPublicEndpoint(String endpoint) {
         for (String publicEndpoint : PUBLIC_ENDPOINTS) {
             if (endpoint.equals(publicEndpoint)) {
@@ -180,9 +349,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         return false;
     }
 
-    /**
-     * Получение всех операций для PathItem
-     */
     private List<Operation> getAllOperations(PathItem pathItem) {
         List<Operation> operations = new ArrayList<>();
         if (pathItem.getGet() != null) operations.add(pathItem.getGet());
@@ -193,9 +359,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         return operations;
     }
 
-    /**
-     * Тестирование доступа к административным эндпоинтам
-     */
     private void testAdminEndpointAccess(ScanConfig config, ApiClient apiClient,
                                          List<String> adminEndpoints, String username,
                                          String token, List<Vulnerability> vulnerabilities) {
@@ -227,9 +390,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * Тестирование критических операций (approve/reject)
-     */
     private void testCriticalOperations(ScanConfig config, ApiClient apiClient, OpenAPI openAPI,
                                         String username, String token,
                                         List<Vulnerability> vulnerabilities) {
@@ -279,9 +439,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * Тестирование межбанковских административных функций
-     */
     private void testInterbankAdminFunctions(ScanConfig config, ApiClient apiClient,
                                              String username, String token,
                                              List<Vulnerability> vulnerabilities) {
@@ -334,9 +491,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * Интеллектуальное тестирование с реальными согласиями
-     */
     private void testCriticalOperationsWithRealConsents(ScanConfig config, ApiClient apiClient,
                                                         String username, String token,
                                                         List<Vulnerability> vulnerabilities) {
@@ -398,9 +552,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * Создание тестового согласия на платеж
-     */
     private String createTestPaymentConsent(ScanConfig config, ApiClient apiClient,
                                             String token, String username) {
         try {
@@ -452,9 +603,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         return null;
     }
 
-    /**
-     * Получение тестового счета для создания согласия
-     */
     private String getTestAccount(ScanConfig config, ApiClient apiClient, String token, String username) {
         try {
             String url = config.getTargetBaseUrl() + "/accounts";
@@ -485,9 +633,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         return null;
     }
 
-    /**
-     * Проверка уязвимости при доступе к административным эндпоинтам
-     */
     private void checkAdminAccessVulnerability(String endpoint, String username,
                                                HttpApiClient.ApiResponse response,
                                                String url, List<Vulnerability> vulnerabilities) {
@@ -520,9 +665,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * Проверка уязвимости при выполнении критических операций
-     */
     private void checkCriticalOperationVulnerability(String endpoint, String username,
                                                      HttpApiClient.ApiResponse response,
                                                      String url, String payload,
@@ -552,9 +694,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * Определение метода запроса для административного эндпоинта
-     */
     private String getRequestMethodForAdminEndpoint(String endpoint) {
         if (endpoint.contains("approve") || endpoint.contains("reject") || endpoint.contains("upload")) {
             return "POST";
@@ -562,9 +701,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         return "GET";
     }
 
-    /**
-     * Замена параметров пути на тестовые значения
-     */
     private String replacePathParameters(String endpoint) {
         return endpoint
                 .replace("{bank_code}", "vbank")
@@ -578,9 +714,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
                 .replace("{agreement_id}", "agr-test-001");
     }
 
-    /**
-     * Создание заголовков для запросов
-     */
     private Map<String, String> createHeaders(String token, String bankId) {
         Map<String, String> headers = new HashMap<>();
         headers.put("Authorization", "Bearer " + token);
@@ -596,16 +729,10 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         return headers;
     }
 
-    /**
-     * Проверка успешного ответа
-     */
     private boolean isSuccessfulResponse(HttpApiClient.ApiResponse response) {
         return response.getStatusCode() == 200 || response.getStatusCode() == 201 || response.getStatusCode() == 204;
     }
 
-    /**
-     * Добавление задержки для предотвращения 429 ошибки
-     */
     private void applyRateLimitDelay(int requestIndex) {
         try {
             int delay = BASE_DELAY_MS;
@@ -627,9 +754,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         }
     }
 
-    /**
-     * Выполнение запроса с повторными попытками при ошибке 429
-     */
     private HttpApiClient.ApiResponse executeRequestWithRetry(ApiClient apiClient, String method,
                                                               String url, String body,
                                                               Map<String, String> headers,
@@ -672,9 +796,6 @@ public class API5_BrokenFunctionLevelAuthScanner implements SecurityScanner {
         return null;
     }
 
-    /**
-     * Создание и добавление уязвимости в список
-     */
     private void createAndAddVulnerability(String title, String description, String endpoint,
                                            int statusCode, String attacker, String victim,
                                            String url, List<Vulnerability> vulnerabilities) {

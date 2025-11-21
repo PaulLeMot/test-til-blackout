@@ -4,7 +4,8 @@ import scanners.SecurityScanner;
 import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
-import core.HttpApiClient;
+import core.TestedEndpoint;
+import core.EndpointParameter;
 import java.util.*;
 
 public class API2_BrokenAuthScanner implements SecurityScanner {
@@ -19,7 +20,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
 
     @Override
     public String getName() {
-        return "API2_BrokenAuth";
+        return "OWASP API2: Broken Authentication Scanner";
     }
 
     @Override
@@ -28,25 +29,382 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
 
         List<Vulnerability> vulnerabilities = new ArrayList<>();
 
-        // Используем токены из конфигурации вместо повторной аутентификации
-        if (!preloadTokensFromConfig(config)) {
-            System.out.println("(API-2) Предупреждение: не удалось загрузить валидные токены из конфигурации");
-            return vulnerabilities;
+        // Если включен статический анализ, используем эндпоинты из конфигурации
+        if (config.isStaticAnalysisEnabled() && config.getTestedEndpoints() != null) {
+            vulnerabilities.addAll(scanEndpoints(config.getTestedEndpoints(), config, apiClient));
         }
 
-        testUnauthorizedAccess(config, apiClient, vulnerabilities);
-        testInvalidTokens(config, apiClient, vulnerabilities);
-        testAuthHeaders(config, apiClient, vulnerabilities);
-        testSensitiveEndpoints(config, apiClient, vulnerabilities);
-        testWithValidToken(config, apiClient, vulnerabilities);
-        testBruteforceProtection(config, apiClient, vulnerabilities);
-        testRateLimiting(config, apiClient, vulnerabilities);
-        testTokenSecurity(config, apiClient, vulnerabilities);
-        testJWTWeaknesses(config, vulnerabilities);
+        // Динамический анализ только если включен
+        if (config.isDynamicAnalysisEnabled()) {
+            // Используем токены из конфигурации вместо повторной аутентификации
+            if (!preloadTokensFromConfig(config)) {
+                System.out.println("(API-2) Предупреждение: не удалось загрузить валидные токены из конфигурации");
+                return vulnerabilities;
+            }
+
+            vulnerabilities.addAll(performDynamicAuthTests(config, apiClient));
+        }
 
         System.out.println("(API-2) Сканирование Broken Authentication завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
     }
+
+    @Override
+    public List<Vulnerability> scanEndpoints(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-2) Запуск СТАТИЧЕСКОГО анализа Broken Authentication на " + endpoints.size() + " эндпоинтах");
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Анализ структуры эндпоинтов
+        vulnerabilities.addAll(analyzeAuthenticationEndpoints(endpoints, config));
+        vulnerabilities.addAll(analyzeSensitiveParameters(endpoints, config));
+        vulnerabilities.addAll(analyzeSecuritySchemes(endpoints, config));
+        vulnerabilities.addAll(analyzeTokenSecurity(endpoints, config));
+
+        // Комбинированный анализ с динамическими тестами
+        if (config.getAnalysisMode() == ScanConfig.AnalysisMode.COMBINED) {
+            vulnerabilities.addAll(performCombinedAuthTests(endpoints, config, apiClient));
+        }
+
+        System.out.println("(API-2) Статический анализ Broken Authentication завершен. Найдено уязвимостей: " + vulnerabilities.size());
+        return vulnerabilities;
+    }
+
+    /**
+     * Анализ эндпоинтов аутентификации
+     */
+    private List<Vulnerability> analyzeAuthenticationEndpoints(List<TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Паттерны для идентификации эндпоинтов аутентификации
+        String[] authPatterns = {
+                "/auth", "/login", "/token", "/oauth", "/signin", "/signup",
+                "/register", "/password", "/reset", "/forgot", "/logout"
+        };
+
+        for (TestedEndpoint endpoint : endpoints) {
+            String path = endpoint.getPath().toLowerCase();
+            String method = endpoint.getMethod();
+
+            // Проверяем, является ли эндпоинт аутентификационным
+            boolean isAuthEndpoint = Arrays.stream(authPatterns)
+                    .anyMatch(pattern -> path.contains(pattern));
+
+            if (isAuthEndpoint) {
+                // Проверяем различные уязвимости аутентификации
+                Vulnerability vuln = analyzeAuthEndpointVulnerabilities(endpoint, config);
+                if (vuln != null) {
+                    vulnerabilities.add(vuln);
+                }
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Анализ уязвимостей конкретного эндпоинта аутентификации
+     */
+    private Vulnerability analyzeAuthEndpointVulnerabilities(TestedEndpoint endpoint, ScanConfig config) {
+        List<String> issues = new ArrayList<>();
+
+        // 1. Проверка использования HTTP вместо HTTPS
+        if (endpoint.getSource() != null && endpoint.getSource().toLowerCase().startsWith("http:")) {
+            issues.add("Используется HTTP вместо HTTPS");
+        }
+
+        // 2. Проверка чувствительных параметров в URL
+        if (endpoint.getParameters() != null) {
+            for (EndpointParameter param : endpoint.getParameters()) {
+                if (param.isSensitive() && "query".equals(param.getIn())) {
+                    issues.add("Чувствительный параметр '" + param.getName() + "' передается в query string");
+                }
+            }
+        }
+
+        // 3. Проверка слабых методов аутентификации
+        if (endpoint.getSummary() != null) {
+            String summary = endpoint.getSummary().toLowerCase();
+            if (summary.contains("basic auth") || summary.contains("basic authentication")) {
+                issues.add("Используется Basic Authentication без HTTPS");
+            }
+        }
+
+        // 4. Проверка отсутствия ограничений попыток входа
+        if (endpoint.getDescription() != null) {
+            String description = endpoint.getDescription().toLowerCase();
+            if (!description.contains("rate limit") && !description.contains("throttling") &&
+                    !description.contains("attempt") && !description.contains("lockout")) {
+                issues.add("Возможно отсутствие ограничений попыток входа");
+            }
+        }
+
+        if (!issues.isEmpty()) {
+            return createAuthVulnerability(endpoint, issues, config);
+        }
+
+        return null;
+    }
+
+    /**
+     * Анализ чувствительных параметров
+     */
+    private List<Vulnerability> analyzeSensitiveParameters(List<TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        for (TestedEndpoint endpoint : endpoints) {
+            if (endpoint.getParameters() != null) {
+                for (EndpointParameter param : endpoint.getParameters()) {
+                    if (param.isSensitive()) {
+                        Vulnerability vuln = createSensitiveParameterVulnerability(endpoint, param, config);
+                        vulnerabilities.add(vuln);
+                    }
+                }
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Анализ схем безопасности
+     */
+    private List<Vulnerability> analyzeSecuritySchemes(List<TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Проверяем наличие security headers в протестированных эндпоинтах
+        for (TestedEndpoint endpoint : endpoints) {
+            if (endpoint.isTested() && endpoint.getRequestHeaders() != null) {
+                Map<String, String> headers = endpoint.getRequestHeaders();
+
+                // Проверка отсутствия security headers
+                List<String> missingHeaders = new ArrayList<>();
+                if (!headers.containsKey("Authorization") && !headers.containsKey("X-API-Key")) {
+                    missingHeaders.add("Authorization/X-API-Key");
+                }
+
+                if (!missingHeaders.isEmpty()) {
+                    Vulnerability vuln = createSecurityHeadersVulnerability(endpoint, missingHeaders, config);
+                    vulnerabilities.add(vuln);
+                }
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Анализ безопасности токенов
+     */
+    private List<Vulnerability> analyzeTokenSecurity(List<TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Проверяем токены из конфигурации
+        Map<String, String> tokens = config.getUserTokens();
+        if (tokens != null) {
+            for (Map.Entry<String, String> entry : tokens.entrySet()) {
+                String token = entry.getValue();
+                if (token != null) {
+                    vulnerabilities.addAll(analyzeTokenVulnerabilities(token, entry.getKey(), config));
+                }
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Создание уязвимости для проблем аутентификации
+     */
+    private Vulnerability createAuthVulnerability(TestedEndpoint endpoint, List<String> issues, ScanConfig config) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API2:2023 - Broken Authentication");
+        vuln.setDescription(
+                "Обнаружены проблемы в механизме аутентификации для эндпоинта " +
+                        endpoint.getMethod() + " " + endpoint.getPath() + ":\n\n" +
+                        String.join("\n• ", issues) + "\n\n" +
+                        "Эти проблемы могут позволить злоумышленнику обойти аутентификацию или перехватить учетные данные."
+        );
+        vuln.setSeverity(Vulnerability.Severity.HIGH);
+        vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+        vuln.setEvidence(
+                "Статический анализ выявил следующие проблемы:\n" +
+                        "- Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "- Источник: " + endpoint.getSource() + "\n" +
+                        "- Проблемы: " + String.join(", ", issues) + "\n" +
+                        "- Параметры: " + (endpoint.getParameters() != null ? endpoint.getParameters().size() : 0)
+        );
+
+        vuln.setRecommendations(Arrays.asList(
+                "Использовать HTTPS для всех эндпоинтов аутентификации",
+                "Реализовать многофакторную аутентификацию для критических операций",
+                "Внедрить ограничение попыток входа и механизмы блокировки",
+                "Использовать безопасные методы хранения и передачи токенов",
+                "Регулярно обновлять и проверять механизмы аутентификации",
+                "Использовать стандартные протоколы аутентификации (OAuth 2.0, OpenID Connect)"
+        ));
+
+        return vuln;
+    }
+
+    /**
+     * Создание уязвимости для чувствительных параметров
+     */
+    private Vulnerability createSensitiveParameterVulnerability(TestedEndpoint endpoint, EndpointParameter param, ScanConfig config) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API2:2023 - Sensitive Data Exposure in Parameters");
+        vuln.setDescription(
+                "Чувствительный параметр '" + param.getName() + "' обнаружен в эндпоинте " +
+                        endpoint.getMethod() + " " + endpoint.getPath() + ".\n\n" +
+                        "Параметр передается через: " + param.getIn() + "\n" +
+                        "Это может привести к раскрытию конфиденциальной информации через логи, кеши браузера или history."
+        );
+        vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+        vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+        vuln.setParameter(param.getName());
+        vuln.setEvidence(
+                "Обнаружен чувствительный параметр:\n" +
+                        "- Имя параметра: " + param.getName() + "\n" +
+                        "- Расположение: " + param.getIn() + "\n" +
+                        "- Обязательный: " + param.isRequired() + "\n" +
+                        "- Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath()
+        );
+
+        vuln.setRecommendations(Arrays.asList(
+                "Не передавать чувствительные данные через URL parameters",
+                "Использовать заголовки Authorization для передачи токенов",
+                "Шифровать чувствительные данные при передаче",
+                "Регулярно проверять логи на наличие чувствительной информации",
+                "Использовать безопасные методы хранения паролей (хеширование с salt)"
+        ));
+
+        return vuln;
+    }
+
+    /**
+     * Создание уязвимости для security headers
+     */
+    private Vulnerability createSecurityHeadersVulnerability(TestedEndpoint endpoint, List<String> missingHeaders, ScanConfig config) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API2:2023 - Missing Security Headers");
+        vuln.setDescription(
+                "Отсутствуют важные security headers в запросах к эндпоинту " +
+                        endpoint.getMethod() + " " + endpoint.getPath() + ".\n\n" +
+                        "Отсутствующие заголовки: " + String.join(", ", missingHeaders) + "\n\n" +
+                        "Это может указывать на слабую реализацию механизмов аутентификации и авторизации."
+        );
+        vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+        vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+        vuln.setEvidence(
+                "Анализ заголовков запроса выявил отсутствие:\n" +
+                        "- Эндпоинт: " + endpoint.getMethod() + " " + endpoint.getPath() + "\n" +
+                        "- Отсутствующие заголовки: " + String.join(", ", missingHeaders) + "\n" +
+                        "- Всего заголовков в запросе: " +
+                        (endpoint.getRequestHeaders() != null ? endpoint.getRequestHeaders().size() : 0)
+        );
+
+        vuln.setRecommendations(Arrays.asList(
+                "Всегда использовать заголовок Authorization для передачи токенов доступа",
+                "Реализовать стандартные security headers (X-Content-Type-Options, X-Frame-Options)",
+                "Использовать HTTPS для всех запросов",
+                "Внедрить механизм CORS для контроля доступа к API",
+                "Регулярно обновлять и проверять security headers"
+        ));
+
+        return vuln;
+    }
+
+    /**
+     * Анализ уязвимостей токенов
+     */
+    private List<Vulnerability> analyzeTokenVulnerabilities(String token, String tokenType, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Проверка длины токена
+        if (token.length() < 100) {
+            Vulnerability vuln = new Vulnerability();
+            vuln.setTitle("API2:2023 - Short JWT Token");
+            vuln.setDescription("JWT token для " + tokenType + " слишком короткий, что может указывать на слабую безопасность");
+            vuln.setSeverity(Vulnerability.Severity.LOW);
+            vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
+            vuln.setEvidence("Длина токена: " + token.length() + " символов");
+            vuln.setRecommendations(Arrays.asList(
+                    "Использовать более длинные JWT токены (минимум 128 символов)",
+                    "Обеспечить достаточную энтропию при генерации токенов"
+            ));
+            vulnerabilities.add(vuln);
+        }
+
+        // Анализ JWT структуры
+        if (token.startsWith("eyJ")) {
+            try {
+                String[] parts = token.split("\\.");
+                if (parts.length == 3) {
+                    String header = new String(java.util.Base64.getUrlDecoder().decode(parts[0]));
+                    String payload = new String(java.util.Base64.getUrlDecoder().decode(parts[1]));
+
+                    // Проверка алгоритма подписи
+                    if (header.contains("none") || header.contains("HS256")) {
+                        Vulnerability vuln = new Vulnerability();
+                        vuln.setTitle("API2:2023 - Weak JWT Signature Algorithm");
+                        vuln.setDescription("JWT token для " + tokenType + " использует слабый алгоритм подписи");
+                        vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+                        vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
+                        vuln.setEvidence("JWT header: " + header);
+                        vuln.setRecommendations(Arrays.asList(
+                                "Использовать сильные алгоритмы подписи (RS256)",
+                                "Избегать алгоритма 'none' в production",
+                                "Регулярно ротировать ключи подписи"
+                        ));
+                        vulnerabilities.add(vuln);
+                    }
+
+                    // Проверка срока действия
+                    if (!payload.contains("\"exp\"")) {
+                        Vulnerability vuln = new Vulnerability();
+                        vuln.setTitle("API2:2023 - JWT Token Without Expiration");
+                        vuln.setDescription("JWT token для " + tokenType + " не имеет срока действия");
+                        vuln.setSeverity(Vulnerability.Severity.MEDIUM);
+                        vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
+                        vuln.setEvidence("JWT payload missing 'exp' claim");
+                        vuln.setRecommendations(Arrays.asList(
+                                "Всегда устанавливать срок действия для JWT токенов",
+                                "Использовать разумное время жизни токенов (15-60 минут)",
+                                "Реализовать механизм обновления токенов"
+                        ));
+                        vulnerabilities.add(vuln);
+                    }
+
+                    // Проверка на чувствительные данные
+                    if (payload.contains("\"password\"") || payload.contains("\"secret\"") || payload.contains("\"private_key\"")) {
+                        Vulnerability vuln = new Vulnerability();
+                        vuln.setTitle("API2:2023 - Sensitive Data in JWT Payload");
+                        vuln.setDescription("JWT token для " + tokenType + " содержит чувствительные данные");
+                        vuln.setSeverity(Vulnerability.Severity.HIGH);
+                        vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
+                        vuln.setEvidence("JWT payload contains sensitive fields");
+                        vuln.setRecommendations(Arrays.asList(
+                                "Никогда не хранить чувствительные данные в JWT payload",
+                                "Использовать reference tokens для чувствительной информации",
+                                "Шифровать JWT payload при необходимости хранения чувствительных данных"
+                        ));
+                        vulnerabilities.add(vuln);
+                    }
+                }
+            } catch (Exception e) {
+                System.out.println("(API-2) Ошибка анализа JWT токена: " + e.getMessage());
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    // ========== ДИНАМИЧЕСКИЕ МЕТОДЫ ==========
 
     /**
      * Загружаем токены из конфигурации вместо повторной аутентификации
@@ -117,6 +475,38 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
         return apiClient.executeRequest(method, url, body, headers);
     }
 
+    /**
+     * Динамические тесты аутентификации
+     */
+    private List<Vulnerability> performDynamicAuthTests(ScanConfig config, ApiClient apiClient) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        testUnauthorizedAccess(config, apiClient, vulnerabilities);
+        testInvalidTokens(config, apiClient, vulnerabilities);
+        testAuthHeaders(config, apiClient, vulnerabilities);
+        testSensitiveEndpoints(config, apiClient, vulnerabilities);
+        testWithValidToken(config, apiClient, vulnerabilities);
+        testBruteforceProtection(config, apiClient, vulnerabilities);
+        testRateLimiting(config, apiClient, vulnerabilities);
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Комбинированные тесты аутентификации
+     */
+    private List<Vulnerability> performCombinedAuthTests(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        System.out.println("(API-2) Выполнение комбинированных тестов аутентификации...");
+
+        // Здесь можно добавить логику, комбинирующую статические данные с динамическими тестами
+        // Например, тестировать только те эндпоинты, которые были выявлены как потенциально уязвимые в статическом анализе
+
+        return vulnerabilities;
+    }
+
+    // Оригинальные методы тестирования
     private void testUnauthorizedAccess(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
         System.out.println("(API-2) Тестирование несанкционированного доступа к защищенным endpoint...");
 
@@ -139,7 +529,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 noAuthHeaders.put("Accept", "application/json");
 
                 Object responseObj = executeRequestWithDelay(apiClient, "GET", fullUrl, null, noAuthHeaders);
-                HttpApiClient.ApiResponse response = (HttpApiClient.ApiResponse) responseObj;
+                core.ApiResponse response = (core.ApiResponse) responseObj;
 
                 if (isSuccessResponse(response) && !endpoint.equals("/") && !endpoint.equals("/health")) {
                     Vulnerability vuln = new Vulnerability();
@@ -149,8 +539,8 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
                     vuln.setEndpoint(endpoint);
                     vuln.setMethod("GET");
-                    vuln.setEvidence("Status " + response.getStatus() + " without Authorization header");
-                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
+                    vuln.setEvidence("Status " + response.getStatusCode() + " without Authorization header");
+                    vuln.setStatusCode(response.getStatusCode());
                     vuln.setRecommendations(Arrays.asList(
                             "Implement proper authentication checks",
                             "Require valid JWT tokens for all protected endpoints",
@@ -159,7 +549,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vulnerabilities.add(vuln);
                     System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Endpoint " + endpoint + " доступен без аутентификации");
                 } else {
-                    System.out.println("(API-2) Endpoint " + endpoint + " корректно защищен (статус: " + response.getStatus() + ")");
+                    System.out.println("(API-2) Endpoint " + endpoint + " корректно защищен (статус: " + response.getStatusCode() + ")");
                 }
 
             } catch (Exception e) {
@@ -191,7 +581,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 }
 
                 Object responseObj = executeRequestWithDelay(apiClient, "GET", testEndpoint, null, headers);
-                HttpApiClient.ApiResponse response = (HttpApiClient.ApiResponse) responseObj;
+                core.ApiResponse response = (core.ApiResponse) responseObj;
 
                 if (isSuccessResponse(response)) {
                     Vulnerability vuln = new Vulnerability();
@@ -201,8 +591,8 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
                     vuln.setEndpoint("/health");
                     vuln.setMethod("GET");
-                    vuln.setEvidence("Accepted invalid token and returned status " + response.getStatus());
-                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
+                    vuln.setEvidence("Accepted invalid token and returned status " + response.getStatusCode());
+                    vuln.setStatusCode(response.getStatusCode());
                     vuln.setRecommendations(Arrays.asList(
                             "Validate JWT signature and expiration",
                             "Reject tokens with invalid format",
@@ -212,7 +602,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: API принимает невалидный JWT токен");
                     break;
                 } else {
-                    System.out.println("(API-2) Невалидный токен корректно отклонен: " + response.getStatus());
+                    System.out.println("(API-2) Невалидный токен корректно отклонен: " + response.getStatusCode());
                 }
 
             } catch (Exception e) {
@@ -247,7 +637,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 headers.put(test.getKey(), test.getValue());
 
                 Object responseObj = executeRequestWithDelay(apiClient, "GET", testEndpoint, null, headers);
-                HttpApiClient.ApiResponse response = (HttpApiClient.ApiResponse) responseObj;
+                core.ApiResponse response = (core.ApiResponse) responseObj;
 
                 if (isSuccessResponse(response) && !test.getKey().equals("Authorization")) {
                     Vulnerability vuln = new Vulnerability();
@@ -257,8 +647,8 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
                     vuln.setEndpoint("/health");
                     vuln.setMethod("GET");
-                    vuln.setEvidence("Accepted non-standard header: " + test.getKey() + " with status " + response.getStatus());
-                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
+                    vuln.setEvidence("Accepted non-standard header: " + test.getKey() + " with status " + response.getStatusCode());
+                    vuln.setStatusCode(response.getStatusCode());
                     vuln.setRecommendations(Arrays.asList(
                             "Use only standard Authorization header with Bearer scheme",
                             "Reject authentication via non-standard headers",
@@ -301,7 +691,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 headers.put("Accept", "application/json");
 
                 Object responseObj = executeRequestWithDelay(apiClient, "GET", fullUrl, null, headers);
-                HttpApiClient.ApiResponse response = (HttpApiClient.ApiResponse) responseObj;
+                core.ApiResponse response = (core.ApiResponse) responseObj;
 
                 if (isSuccessResponse(response)) {
                     Vulnerability vuln = new Vulnerability();
@@ -311,8 +701,8 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
                     vuln.setEndpoint(endpoint);
                     vuln.setMethod("GET");
-                    vuln.setEvidence("Status " + response.getStatus() + " for sensitive endpoint without auth");
-                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
+                    vuln.setEvidence("Status " + response.getStatusCode() + " for sensitive endpoint without auth");
+                    vuln.setStatusCode(response.getStatusCode());
                     vuln.setRecommendations(Arrays.asList(
                             "Implement strict authentication for all sensitive endpoints",
                             "Use role-based access control",
@@ -320,8 +710,8 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     ));
                     vulnerabilities.add(vuln);
                     System.out.println("(API-2) КРИТИЧЕСКАЯ УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Чувствительный endpoint доступен без аутентификации");
-                } else if (response.getStatus() != 404) {
-                    System.out.println("(API-2) Чувствительный endpoint " + endpoint + " вернул: " + response.getStatus());
+                } else if (response.getStatusCode() != 404) {
+                    System.out.println("(API-2) Чувствительный endpoint " + endpoint + " вернул: " + response.getStatusCode());
                 }
 
             } catch (Exception e) {
@@ -353,9 +743,9 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 headers.put("Authorization", "Bearer " + cachedValidToken);
 
                 Object responseObj = executeRequestWithDelay(apiClient, "GET", fullUrl, null, headers);
-                HttpApiClient.ApiResponse response = (HttpApiClient.ApiResponse) responseObj;
+                core.ApiResponse response = (core.ApiResponse) responseObj;
 
-                if (response.getStatus() == 403) {
+                if (response.getStatusCode() == 403) {
                     Vulnerability vuln = new Vulnerability();
                     vuln.setTitle("Valid Token Rejected - Authorization Issue");
                     vuln.setDescription("Valid JWT token is rejected with 403 Forbidden");
@@ -364,7 +754,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setEndpoint(endpoint);
                     vuln.setMethod("GET");
                     vuln.setEvidence("Status 403 with valid token");
-                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
+                    vuln.setStatusCode(response.getStatusCode());
                     vuln.setRecommendations(Arrays.asList(
                             "Check token validation logic",
                             "Ensure proper scope/permission validation",
@@ -373,9 +763,9 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vulnerabilities.add(vuln);
                     System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Валидный токен отклонен с ошибкой 403");
                 } else if (isSuccessResponse(response)) {
-                    System.out.println("(API-2) " + endpoint + " корректно работает с валидным токеном (статус: " + response.getStatus() + ")");
+                    System.out.println("(API-2) " + endpoint + " корректно работает с валидным токеном (статус: " + response.getStatusCode() + ")");
                 } else {
-                    System.out.println("(API-2) " + endpoint + " вернул статус: " + response.getStatus() + " с валидным токеном");
+                    System.out.println("(API-2) " + endpoint + " вернул статус: " + response.getStatusCode() + " с валидным токеном");
                 }
 
             } catch (Exception e) {
@@ -402,17 +792,17 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                 headers.put("Content-Type", "application/x-www-form-urlencoded");
 
                 Object responseObj = executeRequestWithDelay(apiClient, "POST", loginUrl, requestBody, headers);
-                HttpApiClient.ApiResponse response = (HttpApiClient.ApiResponse) responseObj;
+                core.ApiResponse response = (core.ApiResponse) responseObj;
 
-                System.out.println("(API-2) Попытка брутфорс-атаки " + i + ": " + response.getStatus());
+                System.out.println("(API-2) Попытка брутфорс-атаки " + i + ": " + response.getStatusCode());
 
-                if (response.getStatus() == 429) {
+                if (response.getStatusCode() == 429) {
                     protectionDetected = true;
                     System.out.println("(API-2) Защита от брутфорс-атак обнаружена на попытке " + i);
                     break;
                 }
 
-                if (i >= 5 && (response.getStatus() == 401 || response.getStatus() == 422)) {
+                if (i >= 5 && (response.getStatusCode() == 401 || response.getStatusCode() == 422)) {
                     Vulnerability vuln = new Vulnerability();
                     vuln.setTitle("Missing Bruteforce Protection");
                     vuln.setDescription("No rate limiting or account lockout after " + i + " failed authentication attempts");
@@ -420,8 +810,8 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
                     vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
                     vuln.setEndpoint("/auth/bank-token");
                     vuln.setMethod("POST");
-                    vuln.setEvidence("Still returns " + response.getStatus() + " after " + i + " failed attempts");
-                    vuln.setStatusCode(response.getStatus());  // РЕАЛЬНЫЙ СТАТУС КОД
+                    vuln.setEvidence("Still returns " + response.getStatusCode() + " after " + i + " failed attempts");
+                    vuln.setStatusCode(response.getStatusCode());
                     vuln.setRecommendations(Arrays.asList(
                             "Implement account lockout after 5-10 failed attempts",
                             "Add rate limiting for authentication endpoints",
@@ -446,28 +836,23 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
         System.out.println("(API-2) Тестирование ограничения частоты запросов (rate limiting)...");
 
         String testEndpoint = config.getTargetBaseUrl() + "/health";
-        int rapidRequests = 10; // Уменьшил количество запросов
+        int rapidRequests = 10;
         int rateLimitTriggered = 0;
-
-        // Для этого теста временно отключаем нашу задержку
-        long originalInterval = MIN_REQUEST_INTERVAL;
 
         for (int i = 1; i <= rapidRequests; i++) {
             try {
                 Map<String, String> headers = new HashMap<>();
                 headers.put("Content-Type", "application/json");
 
-                // Для теста rate limiting используем обычный запрос без задержки
                 Object responseObj = apiClient.executeRequest("GET", testEndpoint, null, headers);
-                HttpApiClient.ApiResponse response = (HttpApiClient.ApiResponse) responseObj;
+                core.ApiResponse response = (core.ApiResponse) responseObj;
 
-                System.out.println("(API-2) Тест rate limiting " + i + ": " + response.getStatus());
+                System.out.println("(API-2) Тест rate limiting " + i + ": " + response.getStatusCode());
 
-                if (response.getStatus() == 429) {
+                if (response.getStatusCode() == 429) {
                     rateLimitTriggered++;
                 }
 
-                // Минимальная задержка только для этого теста
                 try {
                     Thread.sleep(100);
                 } catch (InterruptedException e) {
@@ -488,7 +873,7 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
             vuln.setEndpoint("/health");
             vuln.setMethod("GET");
             vuln.setEvidence("No 429 responses after " + rapidRequests + " requests");
-            vuln.setStatusCode(200);  // Используем 200, так как запросы прошли успешно
+            vuln.setStatusCode(200);
             vuln.setRecommendations(Arrays.asList(
                     "Implement rate limiting for all API endpoints",
                     "Use sliding window or token bucket algorithm",
@@ -501,130 +886,18 @@ public class API2_BrokenAuthScanner implements SecurityScanner {
         }
     }
 
-    private void testTokenSecurity(ScanConfig config, ApiClient apiClient, List<Vulnerability> vulnerabilities) {
-        System.out.println("(API-2) Тестирование безопасности токенов...");
-
-        if (cachedValidToken == null) return;
-
-        if (cachedValidToken.length() < 100) {
-            Vulnerability vuln = new Vulnerability();
-            vuln.setTitle("Short JWT Token");
-            vuln.setDescription("JWT token is too short, may be weak");
-            vuln.setSeverity(Vulnerability.Severity.LOW);
-            vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
-            vuln.setEvidence("Token length: " + cachedValidToken.length() + " characters");
-            vuln.setStatusCode(200);  // Это статический анализ, используем 200
-            vuln.setRecommendations(Arrays.asList(
-                    "Use longer JWT tokens (minimum 128 characters)",
-                    "Ensure proper entropy in token generation"
-            ));
-            vulnerabilities.add(vuln);
-            System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Слишком короткий JWT токен");
-        }
-
-        try {
-            String[] parts = cachedValidToken.split("\\.");
-            if (parts.length == 3) {
-                String payload = new String(java.util.Base64.getUrlDecoder().decode(parts[1]));
-                if (!payload.contains("\"iss\"") || !payload.contains("\"aud\"")) {
-                    Vulnerability vuln = new Vulnerability();
-                    vuln.setTitle("Missing Standard JWT Claims");
-                    vuln.setDescription("JWT token missing standard claims (iss, aud, etc.)");
-                    vuln.setSeverity(Vulnerability.Severity.LOW);
-                    vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
-                    vuln.setEvidence("JWT payload missing standard claims");
-                    vuln.setStatusCode(200);  // Это статический анализ, используем 200
-                    vuln.setRecommendations(Arrays.asList(
-                            "Include standard JWT claims: iss, aud, exp, iat",
-                            "Follow JWT best practices for claim structure"
-                    ));
-                    vulnerabilities.add(vuln);
-                    System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Отсутствуют стандартные JWT claims");
-                }
-            }
-        } catch (Exception e) {
-            System.out.println("(API-2) Ошибка анализа безопасности токена: " + e.getMessage());
-        }
+    // Вспомогательные методы
+    private Map<String, String> createDefaultHeaders(String token) {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("Authorization", "Bearer " + token);
+        headers.put("Accept", "application/json");
+        headers.put("Content-Type", "application/json");
+        headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        return headers;
     }
 
-    private void testJWTWeaknesses(ScanConfig config, List<Vulnerability> vulnerabilities) {
-        System.out.println("(API-2) Анализ слабостей JWT токенов...");
-
-        if (cachedValidToken == null) {
-            System.out.println("(API-2) Нет токена для анализа JWT слабостей");
-            return;
-        }
-
-        if (cachedValidToken.startsWith("eyJ")) {
-            String[] parts = cachedValidToken.split("\\.");
-            if (parts.length == 3) {
-                try {
-                    String header = new String(java.util.Base64.getUrlDecoder().decode(parts[0]));
-                    if (header.contains("none") || header.contains("HS256")) {
-                        Vulnerability vuln = new Vulnerability();
-                        vuln.setTitle("Weak JWT Signature Algorithm");
-                        vuln.setDescription("JWT uses weak signature algorithm that may be vulnerable to attacks");
-                        vuln.setSeverity(Vulnerability.Severity.MEDIUM);
-                        vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
-                        vuln.setEvidence("JWT header: " + header);
-                        vuln.setStatusCode(200);  // Это статический анализ, используем 200
-                        vuln.setRecommendations(Arrays.asList(
-                                "Use strong signature algorithms like RS256",
-                                "Avoid 'none' algorithm in production",
-                                "Regularly rotate signing keys"
-                        ));
-                        vulnerabilities.add(vuln);
-                        System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Слабый алгоритм подписи JWT");
-                    }
-
-                    String payload = new String(java.util.Base64.getUrlDecoder().decode(parts[1]));
-                    if (!payload.contains("\"exp\"")) {
-                        Vulnerability vuln = new Vulnerability();
-                        vuln.setTitle("JWT Token Without Expiration");
-                        vuln.setDescription("JWT tokens do not have expiration time");
-                        vuln.setSeverity(Vulnerability.Severity.MEDIUM);
-                        vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
-                        vuln.setEvidence("JWT payload missing 'exp' claim");
-                        vuln.setStatusCode(200);  // Это статический анализ, используем 200
-                        vuln.setRecommendations(Arrays.asList(
-                                "Always set expiration time for JWT tokens",
-                                "Use reasonable token lifetime (e.g., 15-60 minutes)",
-                                "Implement token refresh mechanism"
-                        ));
-                        vulnerabilities.add(vuln);
-                        System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: JWT токен без срока действия");
-                    }
-
-                    if (payload.contains("\"password\"") || payload.contains("\"secret\"") || payload.contains("\"private_key\"")) {
-                        Vulnerability vuln = new Vulnerability();
-                        vuln.setTitle("Sensitive Data in JWT Payload");
-                        vuln.setDescription("JWT token contains sensitive information in payload");
-                        vuln.setSeverity(Vulnerability.Severity.HIGH);
-                        vuln.setCategory(Vulnerability.Category.OWASP_API2_BROKEN_AUTH);
-                        vuln.setEvidence("JWT payload contains sensitive fields");
-                        vuln.setStatusCode(200);  // Это статический анализ, используем 200
-                        vuln.setRecommendations(Arrays.asList(
-                                "Never store sensitive data in JWT payload",
-                                "Use reference tokens for sensitive information",
-                                "Encrypt JWT payload if sensitive data is required"
-                        ));
-                        vulnerabilities.add(vuln);
-                        System.out.println("(API-2) УЯЗВИМОСТЬ ПОДТВЕРЖДЕНА: Чувствительные данные в JWT payload");
-                    }
-                } catch (Exception e) {
-                    System.out.println("(API-2) Ошибка анализа JWT: " + e.getMessage());
-                }
-            }
-        }
-    }
-
-    private String getValidToken(ScanConfig config) {
-        // Используем кэшированный токен
-        return cachedValidToken;
-    }
-
-    private boolean isSuccessResponse(HttpApiClient.ApiResponse response) {
-        int status = response.getStatus();
+    private boolean isSuccessResponse(core.ApiResponse response) {
+        int status = response.getStatusCode();
         return status >= 200 && status < 300;
     }
 }

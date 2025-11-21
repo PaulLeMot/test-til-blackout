@@ -5,6 +5,8 @@ import core.ScanConfig;
 import core.Vulnerability;
 import core.ApiClient;
 import core.HttpApiClient;
+import core.TestedEndpoint;
+import core.EndpointParameter;
 import scanners.SecurityScanner;
 import java.util.*;
 import java.util.concurrent.*;
@@ -31,36 +33,168 @@ public class API4_URCScanner implements SecurityScanner {
         System.out.println("(API-4) Запуск OWASP API4 Unrestricted Resource Consumption Scanner...");
         System.out.println("(API-4) Цель: Проверка устойчивости к атакам на ресурсы");
 
-        try {
-            // ИСПРАВЛЕНО: Используем уже полученные токены из конфига
-            Map<String, String> tokens = config.getUserTokens();
-            if (tokens == null || tokens.isEmpty()) {
-                System.err.println("(API-4) Не удалось получить токены для API4 сканирования");
-                return vulnerabilities;
+        // Если включен статический анализ, используем эндпоинты из конфигурации
+        if (config.isStaticAnalysisEnabled() && config.getTestedEndpoints() != null) {
+            vulnerabilities.addAll(scanEndpoints(config.getTestedEndpoints(), config, apiClient));
+        }
+
+        // Динамический анализ в комбинированном режиме или только динамический
+        if (config.getAnalysisMode() != ScanConfig.AnalysisMode.STATIC_ONLY) {
+            try {
+                // ИСПРАВЛЕНО: Используем уже полученные токены из конфига
+                Map<String, String> tokens = config.getUserTokens();
+                if (tokens == null || tokens.isEmpty()) {
+                    System.err.println("(API-4) Не удалось получить токены для API4 сканирования");
+                    return vulnerabilities;
+                }
+
+                // Берем первого доступного пользователя
+                String username = tokens.keySet().iterator().next();
+                String token = tokens.get(username);
+
+                System.out.println("(API-4) Используем токен для пользователя: " + username + ", начинаем нагрузочное тестирование...");
+
+                // Выполняем основные тесты в последовательном режиме
+                testRateLimiting(baseUrl, token, vulnerabilities, apiClient);
+                testLargePayloads(baseUrl, token, vulnerabilities, apiClient);
+                testDeepNesting(baseUrl, token, vulnerabilities, apiClient);
+                testMemoryConsumption(baseUrl, token, vulnerabilities, apiClient);
+                testExpensiveOperations(baseUrl, token, vulnerabilities, apiClient);
+                testZipBomb(baseUrl, token, vulnerabilities, apiClient);
+                testConcurrentRequests(baseUrl, token, vulnerabilities, apiClient);
+
+            } catch (Exception e) {
+                System.err.println("(API-4) Ошибка при сканировании API4: " + e.getMessage());
+                e.printStackTrace();
             }
-
-            // Берем первого доступного пользователя
-            String username = tokens.keySet().iterator().next();
-            String token = tokens.get(username);
-
-            System.out.println("(API-4) Используем токен для пользователя: " + username + ", начинаем нагрузочное тестирование...");
-
-            // Выполняем основные тесты в последовательном режиме
-            testRateLimiting(baseUrl, token, vulnerabilities, apiClient);
-            testLargePayloads(baseUrl, token, vulnerabilities, apiClient);
-            testDeepNesting(baseUrl, token, vulnerabilities, apiClient);
-            testMemoryConsumption(baseUrl, token, vulnerabilities, apiClient);
-            testExpensiveOperations(baseUrl, token, vulnerabilities, apiClient);
-            testZipBomb(baseUrl, token, vulnerabilities, apiClient);
-            testConcurrentRequests(baseUrl, token, vulnerabilities, apiClient);
-
-        } catch (Exception e) {
-            System.err.println("(API-4) Ошибка при сканировании API4: " + e.getMessage());
-            e.printStackTrace();
         }
 
         System.out.println("(API-4) API4 сканирование завершено. Найдено уязвимостей: " + vulnerabilities.size());
         return vulnerabilities;
+    }
+
+    @Override
+    public List<Vulnerability> scanEndpoints(List<TestedEndpoint> endpoints, ScanConfig config, ApiClient apiClient) {
+        System.out.println("(API-4) Запуск СТАТИЧЕСКОГО анализа URC на " + endpoints.size() + " эндпоинтах");
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Анализ структуры эндпоинтов для выявления потенциальных уязвимостей потребления ресурсов
+        vulnerabilities.addAll(analyzeEndpointsStructure(endpoints, config));
+
+        // Динамический анализ в комбинированном режиме
+        if (config.getAnalysisMode() != ScanConfig.AnalysisMode.STATIC_ONLY &&
+                config.getUserTokens() != null && !config.getUserTokens().isEmpty()) {
+
+            String baseUrl = config.getTargetBaseUrl();
+            String username = config.getUserTokens().keySet().iterator().next();
+            String token = config.getUserTokens().get(username);
+
+            System.out.println("(API-4) Комбинированный режим: выполняем динамические тесты...");
+
+            testRateLimiting(baseUrl, token, vulnerabilities, apiClient);
+            testLargePayloads(baseUrl, token, vulnerabilities, apiClient);
+            testDeepNesting(baseUrl, token, vulnerabilities, apiClient);
+        }
+
+        System.out.println("(API-4) Статический анализ URC завершен. Найдено уязвимостей: " + vulnerabilities.size());
+        return vulnerabilities;
+    }
+
+    /**
+     * Анализ структуры эндпоинтов для выявления потенциальных уязвимостей потребления ресурсов
+     */
+    private List<Vulnerability> analyzeEndpointsStructure(List<TestedEndpoint> endpoints, ScanConfig config) {
+        List<Vulnerability> vulnerabilities = new ArrayList<>();
+
+        // Паттерны эндпоинтов, которые могут быть уязвимы к атакам на ресурсы
+        String[] resourceIntensivePatterns = {
+                "/export", "/report", "/generate", "/download", "/upload",
+                "/batch", "/bulk", "/search", "/query", "/analytics",
+                "/statistics", "/metrics", "/logs", "/backup"
+        };
+
+        // Эндпоинты, которые могут принимать большие объемы данных
+        String[] largeDataPatterns = {
+                "/documents", "/files", "/images", "/attachments",
+                "/data", "/import", "/sync"
+        };
+
+        for (TestedEndpoint endpoint : endpoints) {
+            String path = endpoint.getPath();
+            String method = endpoint.getMethod();
+
+            // Проверка на ресурсоемкие операции
+            for (String pattern : resourceIntensivePatterns) {
+                if (path.contains(pattern)) {
+                    Vulnerability vuln = createStaticURCVulnerability(
+                            "Потенциально ресурсоемкая операция",
+                            "Эндпоинт " + method + " " + path + " может выполнять ресурсоемкие операции. " +
+                                    "Без proper rate limiting это может привести к DoS атакам.",
+                            Vulnerability.Severity.MEDIUM,
+                            endpoint,
+                            "Ресурсоемкий паттерн: " + pattern
+                    );
+                    vulnerabilities.add(vuln);
+                    break;
+                }
+            }
+
+            // Проверка на обработку больших данных
+            for (String pattern : largeDataPatterns) {
+                if (path.contains(pattern)) {
+                    Vulnerability vuln = createStaticURCVulnerability(
+                            "Обработка больших объемов данных",
+                            "Эндпоинт " + method + " " + path + " может обрабатывать большие объемы данных. " +
+                                    "Без ограничений размера запросов это может привести к исчерпанию ресурсов.",
+                            Vulnerability.Severity.MEDIUM,
+                            endpoint,
+                            "Большие данные паттерн: " + pattern
+                    );
+                    vulnerabilities.add(vuln);
+                    break;
+                }
+            }
+
+            // Проверка параметров, которые могут быть использованы для атак
+            if (endpoint.getParameters() != null) {
+                for (EndpointParameter param : endpoint.getParameters()) {
+                    if (isResourceIntensiveParameter(param)) {
+                        Vulnerability vuln = createStaticURCVulnerability(
+                                "Параметр, уязвимый к атакам на ресурсы",
+                                "Параметр '" + param.getName() + "' в эндпоинте " + method + " " + path +
+                                        " может быть использован для атак на потребление ресурсов.",
+                                Vulnerability.Severity.LOW,
+                                endpoint,
+                                "Уязвимый параметр: " + param.getName() + " (in: " + param.getIn() + ")"
+                        );
+                        vulnerabilities.add(vuln);
+                    }
+                }
+            }
+        }
+
+        return vulnerabilities;
+    }
+
+    /**
+     * Проверка, является ли параметр потенциально уязвимым к атакам на ресурсы
+     */
+    private boolean isResourceIntensiveParameter(EndpointParameter param) {
+        String name = param.getName().toLowerCase();
+
+        // Параметры, которые могут контролировать объем возвращаемых данных
+        String[] intensiveParams = {
+                "limit", "size", "page", "count", "depth", "level",
+                "timeout", "delay", "wait", "sleep", "rows", "offset"
+        };
+
+        for (String intensiveParam : intensiveParams) {
+            if (name.contains(intensiveParam)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void testRateLimiting(String baseUrl, String token,
@@ -540,6 +674,37 @@ public class API4_URCScanner implements SecurityScanner {
                 "Используйте кэширование для тяжелых операций",
                 "Настройте таймауты для обработки запросов",
                 "Ограничьте глубину вложенности JSON"
+        ));
+
+        return vuln;
+    }
+
+    private Vulnerability createStaticURCVulnerability(String title, String description,
+                                                       Vulnerability.Severity severity,
+                                                       TestedEndpoint endpoint, String evidence) {
+        Vulnerability vuln = new Vulnerability();
+        vuln.setTitle("API4:2023 - " + title);
+        vuln.setDescription(description);
+        vuln.setSeverity(severity);
+        vuln.setCategory(Vulnerability.Category.OWASP_API4_URC);
+        vuln.setEndpoint(endpoint.getPath());
+        vuln.setMethod(endpoint.getMethod());
+
+        String fullEvidence = String.format(
+                "Эндпоинт: %s %s\nИсточник: %s\nДоказательства: %s",
+                endpoint.getMethod(), endpoint.getPath(), endpoint.getSource(), evidence
+        );
+        vuln.setEvidence(fullEvidence);
+
+        vuln.setRecommendations(Arrays.asList(
+                "Реализуйте механизм ограничения запросов (rate limiting)",
+                "Ограничьте максимальный размер принимаемых запросов",
+                "Настройте лимиты для JSON парсера",
+                "Реализуйте мониторинг потребления ресурсов",
+                "Используйте кэширование для тяжелых операций",
+                "Настройте таймауты для обработки запросов",
+                "Ограничьте глубину вложенности JSON",
+                "Проведите нагрузочное тестирование эндпоинта"
         ));
 
         return vuln;
