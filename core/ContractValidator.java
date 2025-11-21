@@ -12,19 +12,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /**
- * Исправленная версия ContractValidator.java
- *
- * Основные исправления и улучшения:
- * - Нормализация имён параметров и ключей resourceIds (все ключи в lower-case)
- * - Универсальная замена path-параметров {param} регулярным выражением (независимо от регистра)
- * - Расширенный поиск ID в ответах (разные поля, Data.*, nested)
- * - Безопасная отправка form-data при получении токена (URLEncoder)
- * - Поддержка PATCH через X-HTTP-Method-Override
- * - Устранение ошибки "Illegal character in path" — плейсхолдеры заменяются на реальные значения ДО создания URI
- * - Более устойчивое чтение ответов (обработка null stream)
- * - Таймауты у HttpURLConnection для избегания зависаний
- *
- * Примечание: этот класс не зависит от сторонних библиотек кроме Jackson (com.fasterxml.jackson.databind).
+ * Упрощенная версия ContractValidator.java
+ * 
+ * Основные упрощения:
+ * - Убрана сложная логика пропуска эндпоинтов
+ * - Упрощена замена плейсхолдеров на реальные ID
+ * - Более прямолинейный подход к созданию ресурсов
  */
 public class ContractValidator {
 
@@ -37,7 +30,7 @@ public class ContractValidator {
     private String clientId;
     private String clientSecret;
 
-    // Хранение созданных ID ресурсов. Ключи нормализованы: baseUrl.toLowerCase() + ":" + fieldName.toLowerCase()
+    // Простое хранилище созданных ID ресурсов
     private final Map<String, String> resourceIds = new HashMap<>();
 
     public ContractValidator(String clientId, String clientSecret) {
@@ -80,9 +73,7 @@ public class ContractValidator {
     }
 
     /**
-     * Основной сценарий валидации: получение токена, парсинг спецификаций, создание ресурсов и проверка эндпоинтов.
-     * Здесь предполагается, что парсер спецификаций (OpenApiSpecParser) доступен и возвращает структуры,
-     * совместимые с используемыми в этом классе.
+     * Основной сценарий валидации
      */
     public List<ValidationResult> validateAllContracts() {
         List<ValidationResult> validationResults = new ArrayList<>();
@@ -103,7 +94,7 @@ public class ContractValidator {
             }
             System.out.println("✅ Токен получен успешно");
 
-            // Загружаем спецификации через парсер (который должен быть в проекте)
+            // Загружаем спецификации через парсер
             List<OpenApiSpecParser.ApiSpec> specs = OpenApiSpecParser.parseAllSpecs();
             if (specs == null || specs.isEmpty()) {
                 System.err.println("❌ Не найдено спецификаций для валидации");
@@ -111,11 +102,14 @@ public class ContractValidator {
             }
             System.out.println("✅ Загружено спецификаций: " + specs.size());
 
-            System.out.println("\n🔄 Создание базовых ресурсов для получения ID...");
-            createBasicResources(specs, accessToken);
+            System.out.println("\n🔄 Создание ресурсов для получения ID...");
+            createResources(specs, accessToken);
 
-            System.out.println("\n🔄 Создание сложных ресурсов...");
-            createComplexResources(specs, accessToken);
+            // Выводим все созданные ID для отладки
+            System.out.println("\n📋 СОЗДАННЫЕ РЕСУРСНЫЕ ID:");
+            for (Map.Entry<String, String> entry : resourceIds.entrySet()) {
+                System.out.println("   " + entry.getKey() + " = " + entry.getValue());
+            }
 
             for (OpenApiSpecParser.ApiSpec spec : specs) {
                 System.out.println("\n📋 ВАЛИДАЦИЯ: " + spec.title);
@@ -132,9 +126,10 @@ public class ContractValidator {
     }
 
     /**
-     * Создание базовых ресурсов: POST без path-параметров.
+     * Создание всех ресурсов для получения ID
      */
-    private void createBasicResources(List<OpenApiSpecParser.ApiSpec> specs, String accessToken) {
+    private void createResources(List<OpenApiSpecParser.ApiSpec> specs, String accessToken) {
+        // Сначала создаем ресурсы без path-параметров
         for (OpenApiSpecParser.ApiSpec spec : specs) {
             String baseUrlToUse = chooseBaseUrl(spec);
             if (baseUrlToUse == null) continue;
@@ -142,24 +137,26 @@ public class ContractValidator {
             for (OpenApiSpecParser.ApiEndpoint endpoint : spec.endpoints) {
                 try {
                     if ("POST".equals(endpoint.method) && endpoint.hasRequestBody && !hasPathParameters(endpoint)) {
-                        System.out.println("🔧 Создание базового ресурса: " + endpoint.path);
+                        System.out.println("🔧 Создание ресурса: " + endpoint.path);
+                        
                         String fullUrl = concatPaths(baseUrlToUse, endpoint.path);
                         String requestBody = generateRequestBodyFromSchema(endpoint);
+                        
                         String response = executeRequest("POST", fullUrl, requestBody, accessToken);
-                        extractResourceIdFromResponse(endpoint, response, baseUrlToUse);
-                        Thread.sleep(300);
+                        
+                        if (responseCode >= 200 && responseCode < 300) {
+                            extractResourceIdFromResponse(endpoint, response, baseUrlToUse);
+                        }
+                        
+                        Thread.sleep(200);
                     }
                 } catch (Exception e) {
-                    System.err.println("❌ Ошибка при создании базового ресурса " + endpoint.path + ": " + e.getMessage());
+                    System.err.println("❌ Ошибка при создании ресурса " + endpoint.path + ": " + e.getMessage());
                 }
             }
         }
-    }
 
-    /**
-     * Создание сложных ресурсов: POST с path-параметрами.
-     */
-    private void createComplexResources(List<OpenApiSpecParser.ApiSpec> specs, String accessToken) {
+        // Затем создаем ресурсы с path-параметрами
         for (OpenApiSpecParser.ApiSpec spec : specs) {
             String baseUrlToUse = chooseBaseUrl(spec);
             if (baseUrlToUse == null) continue;
@@ -167,141 +164,107 @@ public class ContractValidator {
             for (OpenApiSpecParser.ApiEndpoint endpoint : spec.endpoints) {
                 try {
                     if ("POST".equals(endpoint.method) && endpoint.hasRequestBody && hasPathParameters(endpoint)) {
-                        System.out.println("🔧 Создание сложного ресурса: " + endpoint.path);
+                        System.out.println("🔧 Создание ресурса с параметрами: " + endpoint.path);
+                        
+                        // Подготавливаем URL с реальными значениями
                         String fullUrl = prepareUrlWithRealIds(baseUrlToUse, endpoint);
+                        
                         String requestBody = generateRequestBodyFromSchema(endpoint);
                         String response = executeRequest("POST", fullUrl, requestBody, accessToken);
-                        extractResourceIdFromResponse(endpoint, response, baseUrlToUse);
-                        Thread.sleep(300);
+                        
+                        if (responseCode >= 200 && responseCode < 300) {
+                            extractResourceIdFromResponse(endpoint, response, baseUrlToUse);
+                        }
+                        
+                        Thread.sleep(200);
                     }
                 } catch (Exception e) {
-                    System.err.println("❌ Ошибка при создании сложного ресурса " + endpoint.path + ": " + e.getMessage());
+                    System.err.println("❌ Ошибка при создании ресурса " + endpoint.path + ": " + e.getMessage());
                 }
             }
         }
     }
 
     private boolean hasPathParameters(OpenApiSpecParser.ApiEndpoint endpoint) {
-        return endpoint.parameters != null && endpoint.parameters.stream().anyMatch(p -> "path".equalsIgnoreCase(p.in));
+        return endpoint.path.contains("{") && endpoint.path.contains("}");
     }
 
     /**
-     * Попытка извлечь ID ресурса из ответа JSON и сохранить его в resourceIds (ключи нормализованы).
+     * Извлечение ID ресурса из ответа
      */
     private void extractResourceIdFromResponse(OpenApiSpecParser.ApiEndpoint endpoint, String response, String baseUrl) {
         try {
-            if (response == null || response.trim().isEmpty()) return;
+            if (response == null || response.trim().isEmpty()) {
+                return;
+            }
 
             JsonNode root = mapper.readTree(response);
 
-            // Список кандидатных полей для ID
+            // Простой поиск ID в разных полях
             String[] idFields = {"id", "consentId", "accountId", "applicationId", "paymentId",
-                    "VRPId", "offerId", "customerLeadId", "productApplicationId", "paymentId", "consentid"};
+                    "VRPId", "offerId", "customerLeadId", "productApplicationId", "consentid"};
 
-            // Непосредственные поля в корне
             for (String field : idFields) {
                 JsonNode node = root.path(field);
                 if (!node.isMissingNode() && (node.isTextual() || node.isNumber())) {
                     String value = node.asText();
-                    storeResourceId(baseUrl, field, value);
+                    storeResourceId(field, value);
+                    System.out.println("✅ Извлечен ID: " + field + " = " + value);
                     return;
                 }
             }
 
-            // Data.*
+            // Поиск в Data.*
             JsonNode dataNode = root.path("Data");
             if (dataNode.isObject()) {
                 for (String field : idFields) {
                     JsonNode node = dataNode.path(field);
                     if (!node.isMissingNode() && (node.isTextual() || node.isNumber())) {
                         String value = node.asText();
-                        storeResourceId(baseUrl, field, value);
+                        storeResourceId(field, value);
+                        System.out.println("✅ Извлечен ID из Data: " + field + " = " + value);
                         return;
                     }
                 }
             }
 
-            // Ищем рекурсивно по дереву первые попавшиеся поля с именем id / *Id
-            String found = findIdRecursively(root);
-            if (found != null) {
-                storeResourceId(baseUrl, "id", found);
-            }
-
         } catch (Exception e) {
-            System.err.println("❌ Не удалось извлечь ID из ответа: " + e.getMessage());
+            // Игнорируем ошибки извлечения ID
         }
     }
 
-    private String findIdRecursively(JsonNode node) {
-        if (node == null || node.isMissingNode()) return null;
-        if (node.isObject()) {
-            Iterator<Map.Entry<String, JsonNode>> it = node.fields();
-            while (it.hasNext()) {
-                Map.Entry<String, JsonNode> e = it.next();
-                String key = e.getKey();
-                JsonNode val = e.getValue();
-                if (key != null && (key.equalsIgnoreCase("id") || key.toLowerCase().endsWith("id"))) {
-                    if (val.isTextual() || val.isNumber()) return val.asText();
-                }
-                String nested = findIdRecursively(val);
-                if (nested != null) return nested;
-            }
-        } else if (node.isArray()) {
-            for (JsonNode item : node) {
-                String nested = findIdRecursively(item);
-                if (nested != null) return nested;
-            }
-        }
-        return null;
-    }
-
-    private void storeResourceId(String baseUrl, String fieldName, String idValue) {
-        if (baseUrl == null || fieldName == null || idValue == null) return;
-        String key = normalizeKey(baseUrl) + ":" + normalizeKey(fieldName);
-        resourceIds.put(key, idValue);
-        System.out.println("✅ Создан ресурс: " + fieldName + " = " + idValue);
-    }
-
-    private String normalizeKey(String s) {
-        return s == null ? "" : s.toLowerCase(Locale.ROOT);
+    private void storeResourceId(String fieldName, String idValue) {
+        if (fieldName == null || idValue == null) return;
+        resourceIds.put(fieldName.toLowerCase(), idValue);
     }
 
     /**
-     * Подготовка URL: замена всех плейсхолдеров {param} на реальные значения, добавление query параметров.
-     * Проблема Illegal character in path решается здесь — до создания URI мы заменяем фигурные скобки.
+     * Подготовка URL: замена всех плейсхолдеров {param} на реальные значения
      */
     private String prepareUrlWithRealIds(String baseUrl, OpenApiSpecParser.ApiEndpoint endpoint) {
         String path = endpoint.path;
 
-        // Заменяем все {param} с помощью regex — независимо от регистра
-        // Находим все вхождения {paramName}
+        // Заменяем все {param} с помощью regex
         java.util.regex.Pattern p = java.util.regex.Pattern.compile("\\{([^/}]+)\\}");
         java.util.regex.Matcher m = p.matcher(path);
         StringBuffer sb = new StringBuffer();
 
         while (m.find()) {
-            String rawParamName = m.group(1); // original param from braces
-            String replacement = getRealParameterValueByName(rawParamName, baseUrl, endpoint);
-            if (replacement == null) {
-                // если не нашли — генерируем тестовое значение и используем его
-                replacement = generateParameterValue(rawParamName);
-            }
-            // escape replacement for usage in URL path (encode path segment)
-            String encoded = urlEncodePathSegment(replacement);
-            m.appendReplacement(sb, encoded);
+            String paramName = m.group(1);
+            String replacement = findParameterValue(paramName);
+            m.appendReplacement(sb, replacement);
         }
         m.appendTail(sb);
         String resolvedPath = sb.toString();
 
-        // Добавляем query-параметры, если есть обязательные query параметры (required=true)
+        // Добавляем query-параметры
         StringBuilder urlBuilder = new StringBuilder(concatPaths(baseUrl, resolvedPath));
-        boolean firstQueryParam = !urlBuilder.toString().contains("?");
+        boolean firstQueryParam = true;
 
         if (endpoint.parameters != null) {
             for (OpenApiSpecParser.ApiParameter param : endpoint.parameters) {
                 if ("query".equalsIgnoreCase(param.in) && param.required) {
-                    String val = getRealParameterValue(param, baseUrl);
-                    if (val == null) val = generateParameterValue(param.name);
+                    String val = findParameterValue(param.name);
                     if (firstQueryParam) {
                         urlBuilder.append("?");
                         firstQueryParam = false;
@@ -316,6 +279,82 @@ public class ContractValidator {
         return urlBuilder.toString();
     }
 
+    /**
+     * Поиск значения параметра в созданных ресурсах
+     */
+    private String findParameterValue(String paramName) {
+        if (paramName == null) return generateParameterValue(paramName);
+        
+        // Ищем точное совпадение
+        String key = paramName.toLowerCase();
+        if (resourceIds.containsKey(key)) {
+            return resourceIds.get(key);
+        }
+
+        // Ищем по синонимам
+        String[] synonyms = getParameterSynonyms(paramName);
+        for (String syn : synonyms) {
+            if (resourceIds.containsKey(syn.toLowerCase())) {
+                return resourceIds.get(syn.toLowerCase());
+            }
+        }
+
+        return generateParameterValue(paramName);
+    }
+
+    private String[] getParameterSynonyms(String paramName) {
+        if (paramName == null) return new String[0];
+        
+        switch (paramName.toLowerCase()) {
+            case "consentid":
+            case "consent-id":
+            case "consent_id":
+                return new String[]{"consentid"};
+            case "accountid":
+            case "externalaccountid":
+                return new String[]{"accountid"};
+            case "vrpid":
+                return new String[]{"vrpid", "paymentid"};
+            case "applicationid":
+                return new String[]{"applicationid"};
+            case "paymentid":
+                return new String[]{"paymentid"};
+            case "offerid":
+                return new String[]{"offerid"};
+            case "customerleadid":
+                return new String[]{"customerleadid"};
+            case "productapplicationid":
+                return new String[]{"productapplicationid"};
+            case "publicid":
+                return new String[]{"id"};
+            case "uin":
+                return new String[]{"id"};
+            default:
+                return new String[]{"id"};
+        }
+    }
+
+    /**
+     * Генерация значения параметра по имени
+     */
+    private String generateParameterValue(String paramName) {
+        if (paramName == null) return UUID.randomUUID().toString();
+        
+        switch (paramName.toLowerCase()) {
+            case "externalaccountid":
+            case "accountid":
+                return "test-account-" + UUID.randomUUID().toString().substring(0, 8);
+            case "publicid":
+                return "test-public-id-123";
+            case "uin":
+                return "18810150200605213474";
+            case "id":
+                return UUID.randomUUID().toString();
+            default:
+                return "test-" + paramName + "-" + UUID.randomUUID().toString().substring(0, 8);
+        }
+    }
+
     private String concatPaths(String base, String path) {
         if (base == null) return path;
         if (path == null || path.isEmpty()) return base;
@@ -325,118 +364,15 @@ public class ContractValidator {
     }
 
     /**
-     * По имени параметра (как в плейсхолдере) пытаемся найти значение среди ресурсо-идов, синомимов и примеров.
-     */
-    private String getRealParameterValueByName(String rawParamName, String baseUrl, OpenApiSpecParser.ApiEndpoint endpoint) {
-        // пытаемся найти параметр в списке endpoint.parameters по разным вариантам имени
-        if (endpoint.parameters != null) {
-            for (OpenApiSpecParser.ApiParameter p : endpoint.parameters) {
-                if (p.name != null && p.name.equalsIgnoreCase(rawParamName)) {
-                    return getRealParameterValue(p, baseUrl);
-                }
-            }
-        }
-        // если не нашли — попробуем напрямую в resourceIds по синонимам
-        String[] synonyms = getParameterSynonyms(rawParamName);
-        for (String syn : synonyms) {
-            String key = normalizeKey(baseUrl) + ":" + normalizeKey(syn);
-            if (resourceIds.containsKey(key)) return resourceIds.get(key);
-        }
-        // fallback: use example or generated
-        return null;
-    }
-
-    /**
-     * Возвращает реальное значение параметра (если найдено в resourceIds или из примера).
-     */
-    private String getRealParameterValue(OpenApiSpecParser.ApiParameter param, String baseUrl) {
-        if (param == null) return null;
-        // 1) check exact resource key (normalized)
-        String key = normalizeKey(baseUrl) + ":" + normalizeKey(param.name);
-        if (resourceIds.containsKey(key)) return resourceIds.get(key);
-
-        // 2) check synonyms
-        String[] synonyms = getParameterSynonyms(param.name);
-        for (String syn : synonyms) {
-            String k = normalizeKey(baseUrl) + ":" + normalizeKey(syn);
-            if (resourceIds.containsKey(k)) return resourceIds.get(k);
-        }
-
-        // 3) example from spec
-        if (param.example != null && !param.example.isEmpty()) return param.example;
-
-        // 4) fallback generate value
-        return generateParameterValue(param.name);
-    }
-
-    private String[] getParameterSynonyms(String paramName) {
-        if (paramName == null) return new String[]{"id"};
-        switch (paramName.toLowerCase(Locale.ROOT)) {
-            case "consentid":
-            case "consent-id":
-            case "consent_id":
-                return new String[]{"consentId", "consentid", "id"};
-            case "accountid":
-            case "externalaccountid":
-                return new String[]{"externalAccountID", "externalAccountId", "accountId", "id"};
-            case "vrpid":
-            case "vrpId":
-                return new String[]{"VRPId", "vrpId", "paymentId", "id"};
-            case "applicationid":
-                return new String[]{"applicationId", "id"};
-            case "paymentid":
-                return new String[]{"paymentId", "id"};
-            case "offerid":
-                return new String[]{"offerId", "id"};
-            case "customerleadid":
-                return new String[]{"customerLeadId", "id"};
-            case "productapplicationid":
-                return new String[]{"productApplicationId", "id"};
-            case "publicid":
-                return new String[]{"publicId", "id"};
-            case "uin":
-                return new String[]{"uin", "id"};
-            default:
-                return new String[]{"id", paramName};
-        }
-    }
-
-    /**
-     * Генерация значения параметра по имени (тестовое значение).
-     */
-    private String generateParameterValue(String paramName) {
-        if (paramName == null) return UUID.randomUUID().toString();
-        switch (paramName.toLowerCase(Locale.ROOT)) {
-            case "externalaccountid":
-            case "accountid":
-                return "0dbcb7ee-6c59-483b-966a-44d11557665b";
-            case "correlation-id":
-            case "correlationid":
-                return UUID.randomUUID().toString();
-            case "authorization":
-                return "Bearer " + (accessToken != null ? accessToken : "");
-            case "publicid":
-                return "test-public-id-123";
-            case "uin":
-                return "18810150200605213474";
-            case "id":
-                return UUID.randomUUID().toString();
-            default:
-                return "test-value-" + UUID.randomUUID().toString().substring(0, 8);
-        }
-    }
-
-    /**
-     * Генерация тела запроса по схеме или по пути, адаптирована из предыдущей версии.
+     * Генерация тела запроса
      */
     private String generateRequestBodyFromSchema(OpenApiSpecParser.ApiEndpoint endpoint) {
         try {
             if (endpoint.requestBodySchema != null) {
                 return generateJsonFromSchema(endpoint.requestBodySchema);
             }
-            return generateRequestBodyByPath(endpoint.path);
+            return generateDefaultRequestBody();
         } catch (Exception e) {
-            System.err.println("❌ Ошибка генерации тела: " + e.getMessage());
             return generateDefaultRequestBody();
         }
     }
@@ -454,110 +390,39 @@ public class ContractValidator {
                 return mapper.writeValueAsString(requestBody);
             }
         } catch (Exception e) {
-            System.err.println("❌ Ошибка generateJsonFromSchema: " + e.getMessage());
+            // ignore
         }
         return generateDefaultRequestBody();
     }
 
     private Object generateValueFromFieldSchema(String fieldName, JsonNode schema) {
         String type = schema.path("type").asText("string");
-        String format = schema.path("format").asText("");
         switch (type) {
             case "string":
-                if ("uuid".equals(format)) return UUID.randomUUID().toString();
-                if ("date-time".equals(format)) return new Date().toInstant().toString();
-                return generateStringValue(fieldName);
+                return "test-" + fieldName;
             case "integer":
             case "number":
-                return schema.path("minimum").asInt(100);
+                return 100;
             case "boolean":
                 return true;
             case "array":
-                JsonNode items = schema.path("items");
-                return Collections.singletonList(generateValueFromFieldSchema(fieldName, items));
-            default:
-                return generateStringValue(fieldName);
-        }
-    }
-
-    private String generateStringValue(String fieldName) {
-        if (fieldName == null) return "test-value";
-        switch (fieldName.toLowerCase(Locale.ROOT)) {
-            case "name":
-            case "username":
-                return "testuser";
-            case "email":
-                return "test@example.com";
-            case "phone":
-            case "phonenumber":
-                return "+79123456789";
-            case "description":
-                return "Test description";
-            case "programid":
-                return "A7DV56B";
-            case "catalogid":
-                return "C9AP78DS9K";
-            case "redemptionreferencenumber":
-                return UUID.randomUUID().toString();
-            case "redemptionamount":
-                return "50";
-            case "valueperpoint":
-                return "0.01";
+                return Collections.singletonList("test-value");
             default:
                 return "test-value";
         }
     }
 
-    private String generateRequestBodyByPath(String path) {
-        if (path == null) return generateDefaultRequestBody();
-        if (path.contains("redemption")) {
-            return "{"
-                    + "\"redemptionReferenceNumber\": \"" + UUID.randomUUID().toString() + "\","
-                    + "\"redemptionAmount\": 50,"
-                    + "\"valuePerPoint\": 0.01,"
-                    + "\"programId\": \"A7DV56B\","
-                    + "\"catalogId\": \"C9AP78DS9K\""
-                    + "}";
-        } else if (path.contains("application") || path.contains("lead")) {
-            return "{"
-                    + "\"name\": \"Test Application\","
-                    + "\"description\": \"Test application for validation\","
-                    + "\"amount\": 1000,"
-                    + "\"currency\": \"RUB\""
-                    + "}";
-        } else if (path.contains("payment")) {
-            return "{"
-                    + "\"amount\": 100,"
-                    + "\"currency\": \"RUB\","
-                    + "\"description\": \"Test payment\","
-                    + "\"recipient\": \"test-recipient\""
-                    + "}";
-        } else {
-            return generateDefaultRequestBody();
-        }
-    }
-
     private String generateDefaultRequestBody() {
-        return "{"
-                + "\"test\": \"data\","
-                + "\"timestamp\": \"" + System.currentTimeMillis() + "\","
-                + "\"reference\": \"" + UUID.randomUUID().toString() + "\""
-                + "}";
+        return "{\"test\": \"data\", \"reference\": \"" + UUID.randomUUID().toString() + "\"}";
     }
 
     /**
-     * Выполнение HTTP запроса (GET/POST/PUT/DELETE/PATCH), поддерживает X-HTTP-Method-Override для PATCH.
+     * Выполнение HTTP запроса
      */
     private String executeRequest(String method, String url, String requestBody, String accessToken) throws Exception {
-        // Перед созданием URI убеждаемся, что url не содержит незаменённых фигурных скобок
-        if (url.contains("{") || url.contains("}")) {
-            throw new IllegalArgumentException("URL содержит неразрешённые плейсхолдеры: " + url);
-        }
-
         URL requestUrl = new URI(url).toURL();
         HttpURLConnection conn = (HttpURLConnection) requestUrl.openConnection();
 
-        // таймауты
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(15000);
 
@@ -600,7 +465,7 @@ public class ContractValidator {
     }
 
     /**
-     * Получение access token через OAuth2 client_credentials с URLEncoding.
+     * Получение access token
      */
     private String getAccessToken() throws Exception {
         if (clientId == null || clientSecret == null) {
@@ -625,7 +490,6 @@ public class ContractValidator {
         }
 
         responseCode = conn.getResponseCode();
-        System.out.println("Response Code при получении токена: " + responseCode);
 
         InputStream stream = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream();
         if (stream == null) {
@@ -650,7 +514,7 @@ public class ContractValidator {
     }
 
     /**
-     * Анализ ответа и назначение статуса валидации.
+     * Анализ ответа и назначение статуса валидации
      */
     private void analyzeResponse(ValidationResult result, OpenApiSpecParser.ApiEndpoint endpoint) {
         if (result.statusCode >= 200 && result.statusCode < 300) {
@@ -685,7 +549,7 @@ public class ContractValidator {
     }
 
     /**
-     * Валидация всей спецификации: последовательная проверка эндпоинтов.
+     * Валидация всей спецификации
      */
     private List<ValidationResult> validateApiSpec(OpenApiSpecParser.ApiSpec spec, String accessToken) {
         List<ValidationResult> results = new ArrayList<>();
@@ -705,15 +569,13 @@ public class ContractValidator {
 
         System.out.println("🌐 Базовый URL: " + baseUrlToUse);
         System.out.println("📊 Эндпоинтов для проверки: " + spec.endpoints.size());
-        System.out.println("-".repeat(60));
 
         for (OpenApiSpecParser.ApiEndpoint endpoint : spec.endpoints) {
             try {
-                System.out.println("\n🔹 Проверка: " + endpoint.method + " " + endpoint.path);
                 ValidationResult result = validateEndpoint(endpoint, baseUrlToUse, accessToken, spec.title);
                 results.add(result);
                 printEndpointResult(result);
-                Thread.sleep(300);
+                Thread.sleep(200);
             } catch (Exception e) {
                 System.err.println("❌ Ошибка при валидации эндпоинта: " + e.getMessage());
                 ValidationResult errorResult = new ValidationResult();
@@ -766,12 +628,7 @@ public class ContractValidator {
             default -> "❓";
         };
 
-        System.out.println(statusIcon + " " + result.method + " " + result.endpoint);
-        System.out.println("   Статус: " + result.statusCode + " - " + result.message);
-
-        if (result.operationId != null && !"N/A".equals(result.operationId)) {
-            System.out.println("   OperationId: " + result.operationId);
-        }
+        System.out.println(statusIcon + " " + result.method + " " + result.endpoint + " - " + result.message);
     }
 
     private static void printValidationSummary(List<ValidationResult> results) {
@@ -782,12 +639,10 @@ public class ContractValidator {
         long successCount = results.stream().filter(r -> r.status == ValidationStatus.SUCCESS).count();
         long warningCount = results.stream().filter(r -> r.status == ValidationStatus.WARNING).count();
         long errorCount = results.stream().filter(r -> r.status == ValidationStatus.ERROR).count();
-        long unknownCount = results.stream().filter(r -> r.status == ValidationStatus.UNKNOWN).count();
 
         System.out.println("✅ Успешных: " + successCount);
         System.out.println("⚠️  Предупреждений: " + warningCount);
         System.out.println("❌ Ошибок: " + errorCount);
-        System.out.println("❓ Неизвестных: " + unknownCount);
         System.out.println("📈 Всего проверок: " + results.size());
 
         Map<String, List<ValidationResult>> bySpec = new HashMap<>();
@@ -813,27 +668,13 @@ public class ContractValidator {
         }
     }
 
-    private static String urlEncodePathSegment(String s) {
-        // Простая кодировка для сегмента пути (замена пробелов и некоторых спецсимволов)
-        if (s == null) return "";
-        return s.replace(" ", "%20").replace("{", "%7B").replace("}", "%7D");
-    }
-
-    // безопасное кодирование для form data
-    private static String urlEncodeForm(String s) {
-        return urlEncode(s);
-    }
-
-    // helper for path concatenation
     private String chooseBaseUrl(OpenApiSpecParser.ApiSpec spec) {
         if (this.baseUrl != null && !this.baseUrl.isEmpty()) return this.baseUrl;
         if (spec.baseUrls != null && !spec.baseUrls.isEmpty()) return spec.baseUrls.get(0);
         return null;
     }
 
-    // Преобразования и поиск в resourceIds доступны через normalizeKey и resourceIds map
-
-    // Классы вспомогательные (ValidationResult и статусы)
+    // Классы вспомогательные
     public static class ValidationResult {
         public String specName;
         public String endpoint;
@@ -854,13 +695,3 @@ public class ContractValidator {
         SUCCESS, WARNING, ERROR, UNKNOWN
     }
 }
-
-/*
- * Зависимость: предполагается, что OpenApiSpecParser находится в проекте и предоставляет типы:
- * OpenApiSpecParser.ApiSpec { String title; List<String> baseUrls; List<ApiEndpoint> endpoints; }
- * OpenApiSpecParser.ApiEndpoint { String method; String path; String operationId; boolean hasRequestBody;
- *      List<ApiParameter> parameters; JsonNode requestBodySchema; }
- * OpenApiSpecParser.ApiParameter { String name; String in; boolean required; String example; }
- *
- * Если парсер назван иначе — нужно адаптировать вызовы.
- */
